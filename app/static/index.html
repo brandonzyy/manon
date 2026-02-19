@@ -331,6 +331,8 @@ function handleMsg(msg){
   else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
   else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
   else if(t==='cli-stream'){appendCliStream(msg.content,msg.cli)}
+  else if(t==='cli-task-progress'){showCliTaskProgress(msg)}
+  else if(t==='cli-review-result'){showCliReviewResult(msg)}
   else if(t==='monitor-state'&&msg.sessions){
     const s=msg.sessions.find(x=>x.devId);
     if(s){$('statUser').textContent=s.devId;updateStage(s.status)}
@@ -433,6 +435,24 @@ addMessage=function(content,role){
   const live=document.querySelector('.cli-stream-live');
   if(live)live.classList.remove('cli-stream-live');
   _origAddMsg(content,role);
+}
+function showCliTaskProgress(msg){
+  const p=msg.phase;
+  if(p==='tasks_ready'&&msg.tasks){
+    const list=msg.tasks.map(t=>`  ${t.id}. ${t.title}`).join('\n');
+    addMessage(`任务拆解完成（${msg.tasks.length} 个子任务）：\n${list}`,'system');
+  }else if(p==='executing'){
+    addTimeline('task-executing',{label:`[${msg.taskIndex}/${msg.taskTotal}] ${msg.title}`});
+  }else if(p==='done'){
+    addMessage(msg.message||'全部完成','system');
+  }
+}
+function showCliReviewResult(msg){
+  const icon=msg.passed?'✓':'✗';
+  let text=`Review ${icon} 任务#${msg.taskId}: ${msg.summary||''}`;
+  if(msg.issues&&msg.issues.length) text+='\n  问题：'+msg.issues.join('; ');
+  addTimeline(msg.passed?'review-passed':'review-failed',{label:text});
+  if(!msg.passed) addMessage(text,'system');
 }
 function approveSpec(){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-approved'}));

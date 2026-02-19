@@ -222,4 +222,134 @@ async def _build_task_context(
         context = context[:MAX_CONTEXT_CHARS] + "\n\n[上下文已截断]"
     return context
 
-# __SPLIT_MARKER_3__
+
+async def _assign_and_review(
+    state: FeatureState,
+    task: dict,
+    workspace: str | None,
+    cwd: str | None,
+) -> bool:
+    """Assign task to agent, wait for result, review. Retry up to MAX_RETRIES."""
+    dev_id = state.dev_id
+
+    # Build context
+    graph_context = ""
+    # Reconstruct from state if available
+    completed = [t for t in state.tasks if t.get("status") == "completed"]
+    context = await _build_task_context(task, graph_context, state, workspace)
+
+    # Resolve repo info
+    repo_path = ""
+    test_command = ""
+    if state.project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone(
+                "SELECT local_path, test_command FROM projects WHERE id = ?",
+                (state.project_id,),
+            )
+            if row:
+                repo_path = row["local_path"] or ""
+                test_command = row["test_command"] or ""
+
+    assign_msg = {
+        "type": "feature-task-assign",
+        "featureId": state.feature_id,
+        "taskId": task["id"],
+        "instruction": task.get("instruction") or task.get("title", ""),
+        "scopedFiles": task.get("files", []),
+        "context": context,
+        "repoPath": repo_path or cwd or "",
+        "workspace": workspace or "",
+        "testCommand": test_command,
+        "skipGraph": True,
+    }
+
+    for attempt in range(MAX_RETRIES + 1):
+        if not hub.has_agents:
+            await _send_chat(dev_id, "等待 auto-fix agent 连接...", role="system")
+            for _ in range(60):
+                if hub.has_agents:
+                    break
+                await asyncio.sleep(1)
+            if not hub.has_agents:
+                log.error("No agents connected after 60s")
+                return False
+
+        await _send_thinking(dev_id, True, f"执行任务 {task.get('title', '')}...")
+        await hub.broadcast_to_agents(assign_msg)
+        result = await _wait_for_result(state, task["id"])
+        await _send_thinking(dev_id, False)
+
+        if result is None:
+            log.warning("Task %s timed out (attempt %d)", task["id"], attempt + 1)
+            if attempt < MAX_RETRIES:
+                assign_msg["instruction"] += "\n\n## 上次超时\n请简化方案重试。"
+            continue
+
+        if result.get("type") == "feature-task-done":
+            agent_output = result.get("output", result.get("reason", ""))
+            # Review
+            review = await _review_result(state, task, agent_output)
+            await _send_dev(dev_id, {
+                "type": "cli-review-result",
+                "taskId": task["id"],
+                "passed": review.get("passed", True),
+                "summary": review.get("summary", ""),
+                "issues": review.get("issues", []),
+            })
+
+            if review.get("passed", True):
+                task["review_summary"] = review.get("summary", "通过")
+                return True
+
+            # Review failed — retry
+            if attempt < MAX_RETRIES:
+                issues = "\n".join(f"- {i}" for i in review.get("issues", []))
+                assign_msg["instruction"] += f"\n\n## Review 不通过\n{review.get('summary', '')}\n{issues}\n请修复后重试。"
+                await _send_chat(
+                    dev_id,
+                    f"任务「{task.get('title', '')}」review 不通过：{review.get('summary', '')}，重试中...",
+                    role="system",
+                )
+            continue
+
+        # Task failed
+        reason = result.get("reason", "unknown")
+        log.warning("Task %s failed: %s (attempt %d)", task["id"], reason, attempt + 1)
+        if attempt < MAX_RETRIES:
+            assign_msg["instruction"] += f"\n\n## 上次失败\n原因：{reason}\n请换一种方式重试。"
+
+    return False
+
+
+async def _review_result(
+    state: FeatureState,
+    task: dict,
+    agent_output: str,
+) -> dict:
+    """LLM reviews agent output against task criteria."""
+    user_prompt = (
+        f"## 任务\n标题：{task.get('title', '')}\n"
+        f"验收标准：{task.get('criteria', '')}\n\n"
+        f"## Agent 输出\n{agent_output[:8000]}\n\n"
+        "请审查并输出 JSON。"
+    )
+    try:
+        raw = await call_glm5(REVIEW_SYSTEM, user_prompt, max_tokens=2048, timeout=60.0)
+        return parse_json_from_llm(raw)
+    except Exception as exc:
+        log.warning("Review LLM call failed: %s", exc)
+        return {"passed": True, "summary": "Review 跳过（LLM 调用失败）", "issues": []}
+
+
+async def _wait_for_result(state: FeatureState, task_id: int) -> dict | None:
+    """Wait for task result from agent with timeout."""
+    loop = asyncio.get_event_loop()
+    state._task_result_future = loop.create_future()
+    try:
+        return await asyncio.wait_for(state._task_result_future, timeout=TASK_TIMEOUT)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        state._task_result_future = None

@@ -267,15 +267,13 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
 
 
 async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
-    """Handle claude-chat / codebuddy-chat — spawn CLI, stream output back.
+    """Handle claude-chat / codebuddy-chat — orchestrated pipeline.
 
-    Mandatory LoomGraph context injection: every CLI chat query first hits
-    the project's knowledge graph so the agent has codebase awareness.
+    Flow: LoomGraph query → task decomposition → agent execution → review.
     """
-    import asyncio
     from datetime import datetime
-    from ..services.claude_cli import run_cli_chat
     from ..services import loomgraph
+    from .cli_orchestrator import orchestrate_cli_request
 
     cli = "claude" if msg.get("type") == "claude-chat" else "codebuddy"
     prompt = msg.get("content", "")
@@ -310,7 +308,6 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
                     graph_context += "\n### 相关引用\n" + "\n".join(
                         f"- {r}" for r in refs[:10]
                     ) + "\n"
-                # Record query in left panel
                 await _send_dev(dev_id, {
                     "type": "llm-query",
                     "caller": f"{cli}-chat",
@@ -318,31 +315,16 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
                     "query": prompt[:120],
                     "ts": datetime.now().isoformat(),
                 })
+            await _send_thinking(dev_id, False)
         except Exception as exc:
+            await _send_thinking(dev_id, False)
             log.warning("LoomGraph query failed for %s chat: %s", cli, exc)
 
-    # Build enriched prompt with graph context
-    if graph_context:
-        enriched_prompt = (
-            f"## 用户问题\n{prompt}\n{graph_context}\n"
-            "请基于以上知识图谱上下文和项目代码回答用户问题。"
-        )
-    else:
-        enriched_prompt = prompt
+    # ── Orchestrated pipeline ──
+    state = _ensure_session(dev_id)
+    state.feature_id = state.feature_id or str(uuid.uuid4())[:8]
+    state.project_id = project_id
+    state.status = Status.EXECUTING
 
-    await _send_thinking(dev_id, True, f"{cli} 正在处理...")
-
-    async def on_line(line: str):
-        await _send_dev(dev_id, {"type": "cli-stream", "cli": cli, "content": line})
-
-    try:
-        result = await run_cli_chat(
-            cli, enriched_prompt, cwd=cwd, max_turns=10,
-            on_output=on_line, timeout=300.0,
-        )
-        await _send_thinking(dev_id, False)
-        if result.strip():
-            await _send_chat(dev_id, result.strip(), role=cli)
-    except Exception as exc:
-        await _send_thinking(dev_id, False)
-        await _send_chat(dev_id, f"{cli} 执行失败：{exc}", role="system")
+    await orchestrate_cli_request(state, prompt, graph_context, cwd, workspace)
+    state.status = Status.IDLE
