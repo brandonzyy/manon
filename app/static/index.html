@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0e0;--text2:#888;--accent:#4a90e2;--green:#34c759;--red:#ff3b30;--yellow:#f5a623;--blue:#4a90e2;--purple:#af52de;--cyan:#5eead4}
@@ -99,6 +100,29 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .msg .role{display:none}
 .msg.claude{background:transparent;border-left:2px solid var(--purple);margin:4px 0;padding:8px 22px;margin-left:24px}
 .msg.codebuddy{background:transparent;border-left:2px solid var(--yellow);margin:4px 0;padding:8px 22px;margin-left:24px}
+
+/* ── Markdown in chat (dark theme, adapted from Donnie) ── */
+.msg .md-body{font-family:'Inter','Noto Sans SC',sans-serif;font-size:13px;line-height:1.7;white-space:normal}
+.msg .md-body h1{font-size:18px;font-weight:700;color:var(--accent);margin:12px 0 6px}
+.msg .md-body h2{font-size:16px;font-weight:700;color:var(--accent);margin:10px 0 4px}
+.msg .md-body h3{font-size:14px;font-weight:600;color:var(--cyan);margin:8px 0 4px}
+.msg .md-body h4,.msg .md-body h5,.msg .md-body h6{font-size:13px;font-weight:600;color:var(--text2);margin:6px 0 2px}
+.msg .md-body p{margin:4px 0}
+.msg .md-body ul,.msg .md-body ol{padding-left:20px;margin:4px 0}
+.msg .md-body li{margin:2px 0;line-height:1.7}
+.msg .md-body blockquote{margin:6px 0;padding:4px 12px;border-left:3px solid var(--accent);background:rgba(74,144,226,.06);color:var(--text2)}
+.msg .md-body code{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px;color:var(--cyan)}
+.msg .md-body pre{margin:6px 0;padding:8px 12px;background:rgba(255,255,255,.04);border-radius:6px;overflow-x:auto}
+.msg .md-body pre code{background:none;padding:0;font-size:12px;color:var(--text)}
+.msg .md-body table{width:100%;border-collapse:collapse;margin:6px 0;font-size:12px}
+.msg .md-body th,.msg .md-body td{padding:4px 8px;border:1px solid var(--border);text-align:left}
+.msg .md-body th{background:rgba(255,255,255,.04);font-weight:600}
+.msg .md-body a{color:var(--accent);text-decoration:none}
+.msg .md-body a:hover{text-decoration:underline}
+.msg .md-body hr{border:none;border-top:1px solid var(--border);margin:8px 0}
+.msg .md-body strong{font-weight:700;color:var(--text)}
+.msg .md-body em{font-style:italic}
+.msg .md-body img{max-width:100%;border-radius:6px}
 .cli-stream{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;color:var(--text2);padding:2px 24px;line-height:1.5;max-width:none;margin:0;word-break:break-all}
 .thinking-bar{display:flex;align-items:center;gap:8px;padding:6px 24px;color:var(--accent);font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace}
 .spinner{width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
@@ -411,7 +435,13 @@ function addMessage(content,role){
   // Hide welcome on first message
   const w=$('cliWelcome');if(w)w.style.display='none';
   const el=document.createElement('div');el.className=`msg ${role}`;
-  el.textContent=content;
+  if(role!=='user'&&role!=='system'&&typeof marked!=='undefined'){
+    const md=document.createElement('div');md.className='md-body';
+    md.innerHTML=marked.parse(content);
+    el.appendChild(md);
+  } else {
+    el.textContent=content;
+  }
   const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
 }
 function updateWelcome(){
@@ -510,7 +540,10 @@ function addQuery(q){
   const list=$('queryList');
   if(queries.length===1)list.innerHTML='';
   const el=document.createElement('div');el.className='query-item';
-  el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${q.duration_ms?`<div class="q-dur">${q.duration_ms}ms</div>`:''}`;
+  const durStr=q.duration_ms?`${q.duration_ms}ms`:'';
+  const tokStr=q.context_tokens?`~${q.context_tokens} tok`:'';
+  const metaStr=[durStr,tokStr].filter(Boolean).join(' · ');
+  el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
   list.insertBefore(el,list.firstChild);
 }
 

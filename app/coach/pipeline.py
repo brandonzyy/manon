@@ -100,6 +100,7 @@ def _is_question(prompt: str) -> bool:
 
 async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     """Unified Manon handler — answers questions or auto-starts pipeline."""
+    import time
     from datetime import datetime
     from matrixone_graph import MatrixoneGraph
     from ..services.llm import call_glm5
@@ -117,6 +118,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
 
     # Query graph for context
     graph_context = ""
+    context_tokens = 0
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
@@ -126,15 +128,23 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         if row and row["local_path"]:
             try:
                 await _send_thinking(dev_id, True, "查询知识图谱...")
+                t0 = time.monotonic()
                 mg = MatrixoneGraph.get(row["local_path"])
                 result = await mg.query(prompt, top_k=10, depth=1)
+                graph_ms = int((time.monotonic() - t0) * 1000)
                 if result.context:
                     graph_context = result.context
+                    context_tokens = len(graph_context) // 2  # rough CJK estimate
+                    await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens} tokens ({graph_ms}ms)")
                     await _send_dev(dev_id, {
                         "type": "llm-query", "caller": "manon",
                         "command": "matrixone_graph.query(hybrid)",
                         "query": prompt[:120], "ts": datetime.now().isoformat(),
+                        "duration_ms": graph_ms,
+                        "context_tokens": context_tokens,
                     })
+                else:
+                    await _send_thinking(dev_id, True, f"知识图谱无匹配结果 ({graph_ms}ms)")
                 await _send_thinking(dev_id, False)
             except Exception as exc:
                 await _send_thinking(dev_id, False)
@@ -142,8 +152,18 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
 
     # Classify intent: question → chat, otherwise → feature pipeline
     if not _is_question(prompt):
+        # Include recent chat history so pipeline LLM understands context
+        history = _chat_history.get(dev_id, [])
+        context_desc = prompt
+        if history:
+            recent = history[-6:]  # last 3 turns
+            lines = []
+            for h in recent:
+                role = "用户" if h["role"] == "user" else "Manon"
+                lines.append(f"{role}: {h['content'][:300]}")
+            context_desc = "## 对话上下文\n" + "\n".join(lines) + f"\n\n## 当前需求\n{prompt}"
         await _start_feature(dev_id, {
-            "description": prompt,
+            "description": context_desc,
             "projectId": project_id,
         })
         return
@@ -160,10 +180,13 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
 
     messages = [{"role": "system", "content": system}] + history
 
-    await _send_thinking(dev_id, True, "思考中...")
+    await _send_thinking(dev_id, True, f"调用 LLM (~{context_tokens} tokens 上下文)...")
     try:
+        t0 = time.monotonic()
         reply = await call_glm5(None, None, messages=messages, max_tokens=4096)
+        llm_ms = int((time.monotonic() - t0) * 1000)
         history.append({"role": "assistant", "content": reply})
+        await _send_thinking(dev_id, True, f"LLM 完成 ({llm_ms}ms)")
         await _send_thinking(dev_id, False)
         await _send_chat(dev_id, reply)
     except Exception as exc:
