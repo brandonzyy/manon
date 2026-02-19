@@ -201,7 +201,6 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <div class="stat-card">
         <div class="stat-val cyan" id="statChunks">—</div>
         <div class="stat-label">Chunks</div>
-        <div class="pipeline-indicator"><span class="pipeline-dot idle" id="pipelineDot"></span><span id="pipelineText">Idle</span></div>
       </div>
     </div>
   </div>
@@ -336,6 +335,7 @@ function handleMsg(msg){
     const s=msg.sessions.find(x=>x.devId);
     if(s){$('statUser').textContent=s.devId;updateStage(s.status)}
   }
+  else if(t==='cli-ready'){showCliReady(msg)}
   else if(t==='loomgraph-stats')updateLoomgraphStats(msg);
   else if(t==='llm-query')addQuery(msg);
   else if(t==='error')addMessage(msg.message,'system');
@@ -345,17 +345,17 @@ function handleMsg(msg){
 function resetStats(){stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};updateLoomgraphStats(stats)}
 function updateLoomgraphStats(s){
   stats={entities:0,relations:0,files:0,chunks:0,...s};
-  $('statEntities').textContent=stats.entities||'—';
-  $('statRelations').textContent=stats.relations||'—';
-  $('statFiles').textContent=stats.files||'—';
-  $('statChunks').textContent=stats.chunks||'—';
+  $('statEntities').textContent=stats.entities??'—';
+  $('statRelations').textContent=stats.relations??'—';
+  $('statFiles').textContent=stats.files??'—';
+  $('statChunks').textContent=stats.chunks??'—';
   $('statUpdate').textContent=fmtTime(stats.lastUpdate);
   const sc=stats.score;
   if(sc&&sc.score!==undefined){
     const v=Math.round(sc.score),pct=Math.min(v/100,1);
     $('scoreArc').style.strokeDashoffset=CIRC*(1-pct);$('scoreArc').style.stroke=scoreColor(v);
     $('scoreNum').textContent=v;$('scoreNum').style.color=scoreColor(v);
-    const labels={cq:'CQ',ts:'TS',mt:'MT',dc:'DC'};const dims=$('scoreDims');dims.innerHTML='';
+    const labels={cq:'CQ',ts:'TS',mt:'MT',dc:'DC',ir:'IR',mc:'MC',tc:'TC',cs:'CS'};const dims=$('scoreDims');dims.innerHTML='';
     for(const[k,label] of Object.entries(labels)){if(sc[k]!==undefined){const d=document.createElement('div');d.className='score-dim';d.innerHTML=`<span>${label}</span><span class="score-dim-val">${sc[k]}</span>`;dims.appendChild(d)}}
   }
   const et=stats.entityTypes||{};const total=Object.values(et).reduce((a,b)=>a+b,0);
@@ -378,7 +378,7 @@ function updateStage(stage){
 // ── Chat ──
 function addMessage(content,role){
   const el=document.createElement('div');el.className=`msg ${role}`;
-  const label=role==='manon'?'Manon':role==='user'?'你':'系统';
+  const label=role==='manon'?'Manon':role==='user'?'你':role==='claude'?'Claude Code':role==='codebuddy'?'CodeBuddy':'系统';
   el.innerHTML=`<div class="role">${label}</div>${esc(content)}`;
   const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
 }
@@ -401,6 +401,23 @@ function setMode(mode){
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===mode));
   const placeholder={coach:'描述你的功能需求...',claude:'Ask Claude anything...',codebuddy:'Ask CodeBuddy anything...'};
   $('input').placeholder=placeholder[mode]||'';
+  if((mode==='claude'||mode==='codebuddy')&&ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type:'cli-init',cli:mode,projectId}));
+  }
+}
+
+function showCliReady(msg){
+  const name=msg.cli==='claude'?'Claude Code':'CodeBuddy';
+  const cliOk=msg.available;
+  const gs=msg.graphStatus;
+  let lines=[`── ${name} 模式 ──`];
+  lines.push(cliOk?'CLI: 已就绪':'CLI: 未找到，请先安装 '+name);
+  if(gs==='connected') lines.push(`知识图谱: 已连接 (${msg.entities||0} entities, ${msg.relations||0} relations)`);
+  else if(gs==='not_indexed') lines.push('知识图谱: 项目未索引，建议先初始化');
+  else if(gs==='disconnected') lines.push('知识图谱: LightRAG 未连接');
+  else lines.push('知识图谱: 请先选择项目');
+  if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 LoomGraph 上下文。');
+  addMessage(lines.join('\n'),'system');
 }
 
 function appendCliStream(content,cli){

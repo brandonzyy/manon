@@ -61,6 +61,15 @@ td{padding:8px 12px;border-bottom:1px solid var(--border)}
     </div>
   </div>
   <div class="card full-width">
+    <h2>LoomGraph 索引 <span class="badge" id="idx-badge" style="display:none">索引中</span></h2>
+    <div class="stat-row">
+      <div class="stat"><div class="value" id="s-entities">—</div><div class="label">实体</div></div>
+      <div class="stat"><div class="value" id="s-relations">—</div><div class="label">关系</div></div>
+      <div class="stat"><div class="value" id="s-files">—</div><div class="label">文件</div></div>
+      <div class="stat"><div class="value" id="s-chunks">—</div><div class="label">Chunks</div></div>
+    </div>
+  </div>
+  <div class="card full-width">
     <h2>活跃会话 <span class="badge" id="session-count">0</span></h2>
     <table>
       <thead><tr><th>开发者</th><th>Feature</th><th>项目</th><th>状态</th><th>任务进度</th></tr></thead>
@@ -106,7 +115,33 @@ function renderState(state) {
   document.getElementById('session-table').innerHTML = rows || '<tr><td colspan="5" style="color:var(--text2)">暂无活跃会话</td></tr>';
   document.getElementById('s-tasks-done').textContent = done;
   document.getElementById('s-tasks-failed').textContent = failed;
+  // Indexing status
+  const idx = state.indexing || {};
+  const idxBadge = document.getElementById('idx-badge');
+  const idxCount = Object.keys(idx).length;
+  if (idxCount > 0) { idxBadge.textContent = `索引中 (${idxCount})`; idxBadge.style.display = ''; }
+  else { idxBadge.style.display = 'none'; }
 }
+
+// Poll LoomGraph stats from API
+async function pollStats() {
+  try {
+    const r = await fetch('/api/v1/projects', {headers:{Authorization:'Bearer dev'}});
+    if (!r.ok) return;
+    const projects = await r.json();
+    if (!projects.length) return;
+    // Use first project's stats
+    const sr = await fetch(`/api/v1/projects/${projects[0].id}/stats`, {headers:{Authorization:'Bearer dev'}});
+    if (!sr.ok) return;
+    const s = await sr.json();
+    document.getElementById('s-entities').textContent = s.entities ?? '—';
+    document.getElementById('s-relations').textContent = s.relations ?? '—';
+    document.getElementById('s-files').textContent = s.files ?? '—';
+    document.getElementById('s-chunks').textContent = s.chunks ?? '—';
+  } catch {}
+}
+setInterval(pollStats, 15000);
+pollStats();
 
 function addLog(msg) {
   const ts = new Date().toLocaleTimeString();

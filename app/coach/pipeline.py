@@ -87,6 +87,8 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
         await _handle_plan_rejected(dev_id, msg)
     elif msg_type in ("claude-chat", "codebuddy-chat"):
         await _handle_cli_chat(dev_id, msg)
+    elif msg_type == "cli-init":
+        await _handle_cli_init(dev_id, msg)
     else:
         await _send_dev(dev_id, {"type": "error", "message": f"Unknown message type: {msg_type}"})
 
@@ -213,25 +215,120 @@ async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
         await assign_task(state, task)
 
 
+async def _handle_cli_init(dev_id: str, msg: dict) -> None:
+    """Check CLI availability + LoomGraph status when user switches to CLI mode."""
+    import json as _json
+    import shutil
+    from ..services import loomgraph
+
+    cli = msg.get("cli", "claude")
+    project_id = msg.get("projectId", "")
+
+    # Check CLI binary
+    bin_name = "claude" if cli == "claude" else "codebuddy"
+    cli_available = shutil.which(bin_name) is not None
+
+    # Check project LoomGraph status
+    graph_status = "no_project"
+    graph_stats = {}
+    workspace = None
+    if project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone(
+                "SELECT workspace, index_stats FROM projects WHERE id = ?",
+                (project_id,),
+            )
+            if row:
+                workspace = row["workspace"]
+                if row["index_stats"]:
+                    try:
+                        graph_stats = _json.loads(row["index_stats"])
+                    except Exception:
+                        pass
+                if workspace:
+                    try:
+                        s = await loomgraph.status()
+                        graph_status = "connected" if s.get("success") else "disconnected"
+                    except Exception:
+                        graph_status = "disconnected"
+                else:
+                    graph_status = "not_indexed"
+
+    await _send_dev(dev_id, {
+        "type": "cli-ready",
+        "cli": cli,
+        "available": cli_available,
+        "graphStatus": graph_status,
+        "workspace": workspace or "",
+        "entities": graph_stats.get("entities", 0),
+        "relations": graph_stats.get("relations", 0),
+    })
+
+
 async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
-    """Handle claude-chat / codebuddy-chat — spawn CLI, stream output back."""
+    """Handle claude-chat / codebuddy-chat — spawn CLI, stream output back.
+
+    Mandatory LoomGraph context injection: every CLI chat query first hits
+    the project's knowledge graph so the agent has codebase awareness.
+    """
     import asyncio
+    from datetime import datetime
     from ..services.claude_cli import run_cli_chat
+    from ..services import loomgraph
 
     cli = "claude" if msg.get("type") == "claude-chat" else "codebuddy"
     prompt = msg.get("content", "")
     if not prompt:
         return
 
-    # Resolve project cwd
+    # Resolve project cwd + workspace
     cwd = None
+    workspace = None
     project_id = msg.get("projectId", "")
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
-            row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id = ?", (project_id,))
+            row = await db.execute_fetchone(
+                "SELECT local_path, workspace FROM projects WHERE id = ?", (project_id,),
+            )
             if row:
                 cwd = row["local_path"]
+                workspace = row["workspace"]
+
+    # ── Mandatory LoomGraph query ──
+    graph_context = ""
+    if workspace:
+        try:
+            await _send_thinking(dev_id, True, "查询知识图谱...")
+            result = await loomgraph.search(prompt, mode="hybrid", workspace=workspace)
+            if result.get("success") and result.get("data", {}).get("response"):
+                data = result["data"]
+                graph_context = f"\n\n## 项目知识图谱上下文 (LoomGraph)\n\n{data['response']}\n"
+                refs = data.get("references") or []
+                if refs:
+                    graph_context += "\n### 相关引用\n" + "\n".join(
+                        f"- {r}" for r in refs[:10]
+                    ) + "\n"
+                # Record query in left panel
+                await _send_dev(dev_id, {
+                    "type": "llm-query",
+                    "caller": f"{cli}-chat",
+                    "command": "loomgraph.search(hybrid)",
+                    "query": prompt[:120],
+                    "ts": datetime.now().isoformat(),
+                })
+        except Exception as exc:
+            log.warning("LoomGraph query failed for %s chat: %s", cli, exc)
+
+    # Build enriched prompt with graph context
+    if graph_context:
+        enriched_prompt = (
+            f"## 用户问题\n{prompt}\n{graph_context}\n"
+            "请基于以上知识图谱上下文和项目代码回答用户问题。"
+        )
+    else:
+        enriched_prompt = prompt
 
     await _send_thinking(dev_id, True, f"{cli} 正在处理...")
 
@@ -239,7 +336,10 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
         await _send_dev(dev_id, {"type": "cli-stream", "cli": cli, "content": line})
 
     try:
-        result = await run_cli_chat(cli, prompt, cwd=cwd, max_turns=10, on_output=on_line, timeout=300.0)
+        result = await run_cli_chat(
+            cli, enriched_prompt, cwd=cwd, max_turns=10,
+            on_output=on_line, timeout=300.0,
+        )
         await _send_thinking(dev_id, False)
         if result.strip():
             await _send_chat(dev_id, result.strip(), role=cli)

@@ -54,7 +54,7 @@ async def loomgraph_status(project_id: str):
 
 @router.post("/projects/{project_id}/init")
 async def init_project(project_id: str):
-    """Initialize LoomGraph for the project — verify connectivity + test query."""
+    """Initialize LoomGraph for the project — verify connectivity + return DB stats."""
     proj = await _get_project(project_id)
     results = {}
     # 1. Check system status
@@ -62,14 +62,19 @@ async def init_project(project_id: str):
         results["status_check"] = await loomgraph.status()
     except Exception as exc:
         results["status_check"] = {"error": str(exc)}
-    # 2. Test query
-    try:
-        result = await loomgraph.search("project structure overview", mode="local", workspace=proj["workspace"])
-        results["stats"] = loomgraph.parse_response_stats(result)
+    # 2. Return stats from DB
+    import json as _json
+    from ..db import db_pool as _db_pool
+    async with _db_pool() as db:
+        row = await db.execute_fetchone("SELECT index_stats FROM projects WHERE id=?", (project_id,))
+    if row and row["index_stats"]:
+        stats = _json.loads(row["index_stats"])
+        stats.pop("status", None)
+        results["stats"] = stats
         results["status"] = "ok"
-    except Exception as exc:
-        results["status"] = "error"
-        results["error"] = str(exc)
+    else:
+        results["stats"] = {"entities": 0, "relations": 0, "files": 0, "chunks": 0}
+        results["status"] = "not_indexed"
     return results
 
 

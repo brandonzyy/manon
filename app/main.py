@@ -163,9 +163,14 @@ async def _monitor_broadcast_loop():
                 "status": state.status.value if hasattr(state.status, 'value') else str(state.status),
                 "tasks": [{"id": t.get("id"), "status": t.get("status")} for t in state.tasks],
             })
+        # Collect indexing status from in-memory tasks
+        from .routers.projects import _index_tasks
+        indexing = {pid: {"status": info["status"]} for pid, info in _index_tasks.items()
+                    if info["status"] == "indexing"}
         await hub.broadcast_to_monitors({
             "type": "monitor-state",
             "agentCount": len(hub._agents),
             "devCount": len(hub._devs),
             "sessions": sessions,
+            "indexing": indexing,
         })

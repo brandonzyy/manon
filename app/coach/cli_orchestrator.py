@@ -1,0 +1,225 @@
+"""CLI Orchestrator — LoomGraph → task decomposition → auto-fix agent → review.
+
+Replaces the simple CLI subprocess approach with an intelligent pipeline:
+1. LoomGraph hybrid query (already done by caller)
+2. LLM decomposes user request into sub-tasks
+3. For each task: query graph → build context → assign to agent → review
+4. Report results back to user
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime
+
+from ..services.llm import call_glm5, parse_json_from_llm
+from ..services import loomgraph
+from ..ws_hub import hub
+from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking
+
+log = logging.getLogger("manon.coach.cli_orchestrator")
+
+TASK_TIMEOUT = 10 * 60  # 10 min per task
+MAX_RETRIES = 2
+MAX_CONTEXT_CHARS = 300_000  # ≈100K tokens
+
+DECOMPOSE_SYSTEM = """你是 Manon 的任务拆解引擎。根据用户需求和代码知识图谱上下文，拆解为可独立执行的子任务。
+规则：
+1. 每个子任务涉及 3-5 个文件，有明确验收标准
+2. 按依赖顺序排列（先基础后上层）
+3. 每个子任务的指令+代码上下文控制在 100K token 以内
+4. 渐进式披露：后续任务可引用前序产出
+5. 指令具体到函数/类级别
+6. graph_queries 字段指定需要从图谱补充查询的关键词
+7. 如果需求简单（单文件修改、简单问答），只输出 1 个任务即可
+
+输出严格 JSON 数组（不要 markdown 代码块包裹）：
+[{"id":1,"title":"任务标题","instruction":"详细开发指令","files":["path/..."],"criteria":"验收标准","graph_queries":["关键词1","关键词2"],"order":1}]"""
+
+REVIEW_SYSTEM = """你是 Manon 的代码审查引擎。审查 auto-fix agent 的任务执行结果。
+审查维度：
+1. 是否满足验收标准
+2. 是否引入 bug 或安全问题
+3. 代码风格是否一致
+
+输出严格 JSON（不要 markdown 代码块包裹）：
+{"passed":true/false,"summary":"一句话总结","issues":["问题1"],"suggestions":["建议1"]}"""
+
+
+async def orchestrate_cli_request(
+    state: FeatureState,
+    prompt: str,
+    graph_context: str,
+    cwd: str | None,
+    workspace: str | None,
+) -> None:
+    """Main entry — decompose → execute each task → report."""
+    dev_id = state.dev_id
+
+    try:
+        # Step 1: Decompose
+        await _send_thinking(dev_id, True, "拆解任务...")
+        await _send_dev(dev_id, {
+            "type": "cli-task-progress",
+            "phase": "decomposing",
+            "message": "正在分析需求并拆解任务...",
+        })
+        tasks = await _decompose_with_graph(state, prompt, graph_context)
+        await _send_thinking(dev_id, False)
+
+        if not tasks:
+            await _send_chat(dev_id, "无法拆解任务，请尝试更具体的描述。", role="system")
+            return
+
+        state.tasks = [{"status": "pending", **t} for t in tasks]
+        state.current_task_idx = -1
+
+        # Notify frontend
+        await _send_dev(dev_id, {
+            "type": "cli-task-progress",
+            "phase": "tasks_ready",
+            "message": f"已拆解为 {len(tasks)} 个子任务",
+            "tasks": [{"id": t["id"], "title": t["title"]} for t in tasks],
+        })
+        task_titles = "\n".join(f"  {t['id']}. {t['title']}" for t in tasks)
+        await _send_chat(dev_id, f"已拆解为 {len(tasks)} 个子任务：\n{task_titles}", role="manon")
+
+        # Step 2: Execute each task
+        for i, task in enumerate(state.tasks):
+            state.current_task_idx = i
+            task["status"] = "in_progress"
+
+            await _send_dev(dev_id, {
+                "type": "cli-task-progress",
+                "phase": "executing",
+                "taskId": task["id"],
+                "taskIndex": i + 1,
+                "taskTotal": len(state.tasks),
+                "title": task.get("title", ""),
+            })
+
+            success = await _assign_and_review(state, task, workspace, cwd)
+
+            if success:
+                task["status"] = "completed"
+                await _send_dev(dev_id, {
+                    "type": "feature-task-status",
+                    "featureId": state.feature_id,
+                    "taskId": task["id"],
+                    "status": "completed",
+                })
+            else:
+                task["status"] = "failed"
+                await _send_dev(dev_id, {
+                    "type": "feature-task-status",
+                    "featureId": state.feature_id,
+                    "taskId": task["id"],
+                    "status": "failed",
+                })
+                await _send_chat(
+                    dev_id,
+                    f"任务「{task.get('title', '')}」执行失败，继续下一个任务。",
+                    role="system",
+                )
+
+        # Step 3: Summary
+        done = sum(1 for t in state.tasks if t["status"] == "completed")
+        failed = sum(1 for t in state.tasks if t["status"] == "failed")
+        await _send_dev(dev_id, {
+            "type": "cli-task-progress",
+            "phase": "done",
+            "message": f"全部完成：{done} 成功，{failed} 失败",
+        })
+        await _send_chat(
+            dev_id,
+            f"任务执行完毕：{done}/{len(state.tasks)} 成功" +
+            (f"，{failed} 个失败" if failed else "") + "。",
+            role="manon",
+        )
+
+    except Exception as exc:
+        await _send_thinking(dev_id, False)
+        log.error("CLI orchestration failed: %s", exc, exc_info=True)
+        await _send_chat(dev_id, f"编排执行失败：{exc}", role="system")
+
+
+async def _decompose_with_graph(
+    state: FeatureState,
+    prompt: str,
+    graph_context: str,
+) -> list[dict]:
+    """LLM decomposes user request into sub-tasks using graph context."""
+    user_prompt = f"## 用户需求\n{prompt}\n"
+    if graph_context:
+        user_prompt += f"\n{graph_context}\n"
+    user_prompt += "\n请拆解为子任务列表。"
+
+    raw = await call_glm5(DECOMPOSE_SYSTEM, user_prompt, max_tokens=8192, timeout=90.0)
+    tasks = parse_json_from_llm(raw)
+    if isinstance(tasks, dict):
+        tasks = [tasks]
+    log.info("Decomposed CLI request into %d tasks", len(tasks))
+    return tasks
+
+
+async def _query_graph_for_task(
+    task: dict,
+    workspace: str | None,
+) -> str:
+    """Query LoomGraph for task-specific context using graph_queries."""
+    queries = task.get("graph_queries", [])
+    if not queries or not workspace:
+        return ""
+
+    parts: list[str] = []
+    for q in queries[:5]:  # limit to 5 queries per task
+        try:
+            result = await loomgraph.search(q, mode="hybrid", workspace=workspace)
+            if result.get("success") and result.get("data", {}).get("response"):
+                parts.append(f"### {q}\n{result['data']['response']}")
+        except Exception as exc:
+            log.debug("Graph query '%s' failed: %s", q, exc)
+
+    return "\n\n".join(parts) if parts else ""
+
+
+async def _build_task_context(
+    task: dict,
+    graph_context: str,
+    state: FeatureState,
+    workspace: str | None,
+) -> str:
+    """Assemble full context for a single task, capped at MAX_CONTEXT_CHARS."""
+    parts: list[str] = []
+
+    # Task instruction
+    parts.append(f"## 当前任务\n标题：{task.get('title', '')}\n指令：{task.get('instruction', '')}")
+    parts.append(f"验收标准：{task.get('criteria', '')}")
+    if task.get("files"):
+        parts.append(f"涉及文件：{', '.join(task['files'])}")
+
+    # Previous task summaries
+    completed = [t for t in state.tasks if t.get("status") == "completed"]
+    if completed:
+        summaries = "\n".join(
+            f"  - {t.get('title', '')}: {t.get('review_summary', '已完成')}"
+            for t in completed
+        )
+        parts.append(f"## 前序任务产出\n{summaries}")
+
+    # Task-specific graph context
+    task_graph = await _query_graph_for_task(task, workspace)
+    if task_graph:
+        parts.append(f"## 任务相关图谱上下文\n{task_graph}")
+
+    # Original graph context (truncated if needed)
+    if graph_context:
+        parts.append(f"## 项目知识图谱上下文\n{graph_context}")
+
+    context = "\n\n".join(parts)
+    if len(context) > MAX_CONTEXT_CHARS:
+        context = context[:MAX_CONTEXT_CHARS] + "\n\n[上下文已截断]"
+    return context
+
+# __SPLIT_MARKER_3__

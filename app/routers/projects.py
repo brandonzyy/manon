@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -79,20 +81,26 @@ async def setup_project(body: ProjectSetup):
     # Start indexing in background
     async def _bg_index():
         try:
+            # Mark indexing in DB
+            async with db_pool() as db:
+                await db.execute("UPDATE projects SET index_stats=? WHERE id=?",
+                                 (json.dumps({"status": "indexing"}), pid))
+                await db.commit()
             _index_tasks[pid]["status"] = "indexing"
             result = await loomgraph.index_repo(local_path, workspace=workspace)
             _index_tasks[pid]["status"] = "done"
             _index_tasks[pid]["result"] = result
             # Save stats to DB
-            import json
-            from datetime import datetime, timezone
             stats_json = json.dumps({
+                "status": "done",
                 "entities": result.get("entities", 0),
                 "relations": result.get("relations", 0),
                 "files": result.get("files", 0),
                 "chunks": result.get("chunks", 0),
                 "skipped": result.get("skipped", 0),
                 "errors_count": len(result.get("errors", [])),
+                "entityTypes": result.get("entityTypes", {}),
+                "score": result.get("health"),
                 "lastUpdate": datetime.now(timezone.utc).isoformat(),
             })
             async with db_pool() as db:
@@ -102,6 +110,10 @@ async def setup_project(body: ProjectSetup):
         except Exception as exc:
             _index_tasks[pid]["status"] = "error"
             _index_tasks[pid]["result"] = {"error": str(exc)}
+            async with db_pool() as db:
+                await db.execute("UPDATE projects SET index_stats=? WHERE id=?",
+                                 (json.dumps({"status": "error", "error": str(exc)}), pid))
+                await db.commit()
             log.error("Background indexing failed for %s: %s", pid, exc)
 
     _index_tasks[pid] = {"status": "started", "result": {}}
@@ -117,24 +129,24 @@ async def setup_project(body: ProjectSetup):
 
 @router.get("/projects/{project_id}/index-status")
 async def index_status(project_id: str):
-    """Poll background indexing status."""
+    """Poll background indexing status — reads from DB (survives restart)."""
+    # In-memory task has priority (live progress)
     info = _index_tasks.get(project_id)
-    if not info:
-        return {"status": "unknown"}
-    resp = {"status": info["status"]}
-    if info["status"] in ("done", "error"):
-        resp["result"] = info["result"]
-        if info["status"] == "done":
-            # Return stats from DB (reliable) instead of LightRAG search
-            try:
-                import json as _json
-                async with db_pool() as db:
-                    row = await db.execute_fetchone("SELECT index_stats FROM projects WHERE id=?", (project_id,))
-                if row and row["index_stats"]:
-                    resp["stats"] = _json.loads(row["index_stats"])
-            except Exception:
-                pass
-    return resp
+    if info and info["status"] == "indexing":
+        return {"status": "indexing"}
+
+    # Fall back to DB
+    async with db_pool() as db:
+        row = await db.execute_fetchone("SELECT index_stats FROM projects WHERE id=?", (project_id,))
+    if not row or not row["index_stats"]:
+        return {"status": "not_started"}
+    stats = json.loads(row["index_stats"])
+    db_status = stats.pop("status", "done")
+    if db_status == "indexing":
+        return {"status": "interrupted"}  # was indexing when Manon restarted
+    if db_status == "error":
+        return {"status": "error", "result": {"error": stats.get("error", "unknown")}}
+    return {"status": "done", "result": stats, "stats": stats}
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
@@ -189,3 +201,94 @@ async def sync_project(project_id: str):
         await db.execute("UPDATE projects SET local_path=?, updated_at=datetime('now') WHERE id=?", (local_path, project_id))
         await db.commit()
     return {"status": "synced", "local_path": local_path}
+
+
+class PushUpdate(BaseModel):
+    files: list[str] | None = None  # changed file paths (relative to repo root)
+    commit: str | None = None       # commit hash (for logging)
+
+
+@router.post("/projects/{project_id}/push-update")
+async def push_update(project_id: str, body: PushUpdate | None = None):
+    """Post-push incremental update — file-level chunk refresh + entity update.
+
+    Call after git push to keep the index fresh.
+    Accepts optional changed file list; auto-detects via git diff if omitted.
+    """
+    async with db_pool() as db:
+        row = await db.execute_fetchone(
+            "SELECT local_path, workspace FROM projects WHERE id=?", (project_id,)
+        )
+    if not row:
+        raise HTTPException(404, "Project not found")
+
+    local_path = row["local_path"]
+    workspace = row["workspace"]
+    changed_files = body.files if body else None
+
+    # Auto-detect changed files via git diff if not provided
+    if not changed_files and local_path:
+        import subprocess
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+                cwd=local_path, capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                changed_files = [f.strip() for f in out.stdout.strip().split("\n") if f.strip()]
+        except Exception:
+            pass
+
+    # Run incremental update in background
+    async def _bg_update():
+        try:
+            async with db_pool() as db:
+                await db.execute("UPDATE projects SET index_stats=json_set(COALESCE(index_stats,'{}'),'$.status','updating') WHERE id=?", (project_id,))
+                await db.commit()
+            _index_tasks[project_id] = {"status": "updating", "result": {}}
+
+            result = await loomgraph.update_index(
+                local_path, changed_files=changed_files, workspace=workspace,
+            )
+
+            # Merge result into existing stats
+            async with db_pool() as db:
+                existing = await db.execute_fetchone("SELECT index_stats FROM projects WHERE id=?", (project_id,))
+                stats = json.loads(existing["index_stats"]) if existing and existing["index_stats"] else {}
+                stats["status"] = "done"
+                stats["lastUpdate"] = datetime.now(timezone.utc).isoformat()
+                stats["lastPushUpdate"] = {
+                    "strategy": result.get("strategy", "full"),
+                    "files": result.get("files", 0),
+                    "chunks_cleared": result.get("chunks_cleared", 0),
+                    "chunks": result.get("chunks", 0),
+                    "entities": result.get("entities", 0),
+                    "commit": body.commit if body else None,
+                }
+                # Accumulate totals
+                if result.get("strategy") == "hot-update":
+                    stats["chunks"] = (stats.get("chunks", 0) or 0) + result.get("chunks", 0)
+                else:
+                    stats.update({
+                        "entities": result.get("entities", 0),
+                        "relations": result.get("relations", 0),
+                        "files": result.get("files", 0),
+                        "chunks": result.get("chunks", 0),
+                    })
+                await db.execute("UPDATE projects SET index_stats=?, updated_at=datetime('now') WHERE id=?",
+                                 (json.dumps(stats), project_id))
+                await db.commit()
+
+            _index_tasks[project_id] = {"status": "done", "result": result}
+            log.info("Push-update done for %s: %s", project_id, result.get("strategy", "full"))
+        except Exception as exc:
+            _index_tasks[project_id] = {"status": "error", "result": {"error": str(exc)}}
+            log.error("Push-update failed for %s: %s", project_id, exc)
+
+    asyncio.create_task(_bg_update())
+
+    return {
+        "status": "accepted",
+        "project_id": project_id,
+        "changed_files": len(changed_files) if changed_files else "auto-detect",
+    }
