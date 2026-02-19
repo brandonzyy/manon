@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manon 马浓 — AI 架构师</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0e0;--text2:#888;--accent:#4a90e2;--green:#34c759;--red:#ff3b30;--yellow:#f5a623;--blue:#4a90e2;--purple:#af52de;--cyan:#5eead4}
+body{font-family:'Inter','Noto Sans SC',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Header ── */
+header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:14px;flex-shrink:0}
+header h1{font-size:16px;font-weight:700}
+header h1 span{color:var(--accent);font-weight:400;font-size:12px;margin-left:6px}
+.ws-status{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);margin-left:auto}
+.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--red)}
+.ws-dot.on{background:var(--green)}
+.hbadge{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text2);display:flex;align-items:center;gap:5px;text-decoration:none}
+.hbadge:hover{border-color:var(--text2);color:var(--text)}
+select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;font-family:inherit}
+.mode-toggle{display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.mode-btn{padding:4px 12px;font-size:11px;background:transparent;border:none;color:var(--text2);cursor:pointer;font-family:inherit;transition:all .15s}
+.mode-btn:not(:last-child){border-right:1px solid var(--border)}
+.mode-btn.active{background:var(--accent);color:#fff}
+.mode-btn:hover:not(.active){background:rgba(255,255,255,.05)}
+
+/* ── Top Status Bar (1/4 height) ── */
+.status-bar{height:25vh;min-height:180px;display:grid;grid-template-columns:auto 1fr auto;gap:14px;padding:14px 20px;flex-shrink:0;border-bottom:1px solid var(--border)}
+/* ── Code Health (left) ── */
+.score-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:140px}
+.score-ring{position:relative;width:72px;height:72px;margin-bottom:4px}
+.score-ring svg{transform:rotate(-90deg)}
+.score-ring-bg{fill:none;stroke:var(--border);stroke-width:6}
+.score-ring-fg{fill:none;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .8s ease,stroke .3s}
+.score-num{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:22px;font-weight:800}
+.score-label{font-size:11px;color:var(--text2);margin-bottom:2px}
+.score-dims{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;width:100%;margin-top:6px}
+.score-dim{font-size:9px;color:var(--text2);display:flex;justify-content:space-between;padding:2px 5px;background:rgba(255,255,255,.03);border-radius:3px}
+.score-dim-val{font-weight:600}
+
+/* ── Metrics 2x2 (center) ── */
+.metrics-center{display:flex;flex-direction:column;justify-content:center}
+.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
+.stat-val{font-size:22px;font-weight:700;margin-bottom:2px}
+.stat-label{font-size:11px;color:var(--text2)}
+.stat-val.green{color:var(--green)}.stat-val.blue{color:var(--blue)}.stat-val.purple{color:var(--purple)}.stat-val.yellow{color:var(--yellow)}.stat-val.cyan{color:var(--cyan)}
+.entity-types-bar{display:flex;gap:2px;margin-top:6px;height:5px;border-radius:3px;overflow:hidden}
+.et-seg{height:100%;border-radius:3px}
+.pipeline-indicator{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text2);margin-top:3px}
+.pipeline-dot{width:7px;height:7px;border-radius:50%}
+.pipeline-dot.idle{background:var(--green)}.pipeline-dot.busy{background:var(--yellow);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Info (right) ── */
+.info-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;justify-content:center;gap:12px;min-width:150px}
+.info-row{text-align:center}
+.info-val{font-size:18px;font-weight:700;color:var(--yellow)}
+.info-label{font-size:11px;color:var(--text2);margin-top:2px}
+.pipeline-steps{display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.ps{display:inline-flex;align-items:center;gap:3px;font-size:9px;color:var(--text2);padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.03)}
+.ps.active{color:var(--accent);background:rgba(74,144,226,.1)}
+.ps.done{color:var(--green);background:rgba(52,199,89,.1)}
+.ps-dot{width:5px;height:5px;border-radius:50%;background:var(--border)}
+.ps.active .ps-dot{background:var(--accent)}.ps.done .ps-dot{background:var(--green)}
+
+/* ── Bottom Interaction (3/4 height) ── */
+.interaction{flex:1;display:grid;grid-template-columns:1fr 2fr 1fr;overflow:hidden;min-height:0}
+
+/* ── Queries Panel (left) ── */
+.side-panel{background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.side-panel.right{border-right:none;border-left:1px solid var(--border)}
+.side-panel-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:6px}
+.side-panel-title .count{background:var(--accent);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px}
+.side-scroll{flex:1;overflow-y:auto;padding:8px}
+.query-item{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;font-size:11px;border-left:3px solid var(--border);transition:border-color .2s}
+.query-item:hover{border-left-color:var(--accent)}
+.query-item .q-head{display:flex;justify-content:space-between;margin-bottom:3px}
+.query-item .q-caller{font-weight:600;color:var(--accent)}
+.query-item .q-ts{color:var(--text2);font-size:10px}
+.query-item .q-cmd{color:var(--purple);font-size:10px;margin-right:6px}
+.query-item .q-text{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.query-item .q-dur{font-size:10px;color:var(--text2);margin-top:2px}
+
+/* ── Chat Area (center) ── */
+.chat-area{display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border);border-right:1px solid var(--border)}
+.messages{flex:1;overflow-y:auto;padding:16px 20px}
+.msg{max-width:600px;margin-bottom:14px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.msg.manon{background:var(--card);border:1px solid var(--border)}
+.msg.system{background:rgba(255,255,255,.03);border:1px solid var(--border);color:var(--text2);font-size:12px}
+.msg.user{background:var(--accent);color:#fff;margin-left:auto;max-width:420px}
+.msg .role{font-size:10px;color:var(--text2);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.msg.user .role{color:rgba(255,255,255,.6)}
+.msg.claude{background:linear-gradient(135deg,rgba(175,82,222,.08),rgba(74,144,226,.08));border:1px solid rgba(175,82,222,.2)}
+.msg.codebuddy{background:linear-gradient(135deg,rgba(245,166,35,.08),rgba(52,199,89,.08));border:1px solid rgba(245,166,35,.2)}
+.cli-stream{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;color:var(--text2);padding:2px 20px;line-height:1.5;max-width:600px;margin:0 auto;word-break:break-all}
+.thinking-bar{display:flex;align-items:center;gap:8px;padding:6px 20px;color:var(--accent);font-size:12px}
+.spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.confirm-bar{padding:8px 20px;display:flex;gap:8px;border-top:1px solid var(--border)}
+.btn{padding:6px 16px;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:500;font-family:inherit}
+.btn-ok{background:var(--green);color:#fff}.btn-no{background:var(--card);color:var(--text);border:1px solid var(--border)}
+.input-area{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+#input{flex:1;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;resize:none;font-family:inherit}
+#input:focus{outline:none;border-color:var(--accent)}
+#sendBtn{padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500}
+#sendBtn:hover{opacity:.9}
+
+/* ── Timeline Panel (right) ── */
+.tl-item{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;font-size:11px;border-left:3px solid var(--border)}
+.tl-item.ok{border-left-color:var(--green)}.tl-item.err{border-left-color:var(--red)}.tl-item.run{border-left-color:var(--accent)}
+.tl-item .tl-head{display:flex;justify-content:space-between;margin-bottom:2px}
+.tl-item .tl-event{font-weight:600}
+.tl-item .tl-ts{color:var(--text2);font-size:10px}
+.tl-item .tl-detail{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px}
+
+/* ── Settings Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:420px;max-height:80vh;overflow-y:auto;padding:24px}
+.modal h2{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.modal h2 svg{width:18px;height:18px;opacity:.6}
+.modal-section{margin-bottom:18px}
+.modal-section h3{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:10px}
+.modal-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.modal-row label{font-size:12px;color:var(--text2)}
+.modal-row select{padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;min-width:160px}
+.modal-row select:focus{outline:none;border-color:var(--accent)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)}
+.modal-actions .btn{padding:6px 20px}
+.settings-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;color:var(--text2);display:flex;align-items:center;gap:4px;font-size:11px;font-family:inherit;transition:all .15s}
+.settings-btn:hover{border-color:var(--text2);color:var(--text)}
+.settings-btn svg{width:14px;height:14px}
+
+/* ── Welcome Overlay ── */
+.welcome-overlay{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:24px}
+.welcome-overlay h2{font-size:28px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.welcome-overlay p{color:var(--text2);font-size:14px;max-width:400px;text-align:center;line-height:1.6}
+.welcome-btn{padding:12px 32px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s}
+.welcome-btn:hover{opacity:.9}
+
+/* ── Setup Modal ── */
+.setup-modal{width:480px;max-height:85vh;overflow-y:auto}
+.setup-tabs{display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px}
+.setup-tab{flex:1;padding:8px;font-size:12px;background:transparent;border:none;color:var(--text2);cursor:pointer;font-family:inherit;transition:all .15s}
+.setup-tab.active{background:var(--accent);color:#fff}
+.setup-field{margin-bottom:14px}
+.setup-field label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px}
+.setup-field input{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit}
+.setup-field input:focus{outline:none;border-color:var(--accent)}
+.setup-progress{margin-top:14px;display:none}
+.setup-progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.setup-progress-fill{height:100%;background:var(--accent);width:0%;transition:width .3s}
+.setup-progress-text{font-size:11px;color:var(--text2);margin-top:6px}
+.add-proj-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;color:var(--text2);font-size:14px;font-family:inherit;line-height:1;transition:all .15s}
+.add-proj-btn:hover{border-color:var(--accent);color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Manon<span>马浓 · AI 架构师</span></h1>
+  <div class="mode-toggle">
+    <button class="mode-btn active" onclick="setMode('coach')">Coach</button>
+    <button class="mode-btn" onclick="setMode('claude')">Claude</button>
+    <button class="mode-btn" onclick="setMode('codebuddy')">CodeBuddy</button>
+  </div>
+  <select class="proj" id="projectSelect"><option value="">加载中...</option></select>
+  <button class="add-proj-btn" onclick="openSetupModal()" title="新建项目">+</button>
+  <button class="settings-btn" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型</button>
+  <div class="ws-status"><div class="ws-dot" id="wsDot"></div><span id="wsLabel">未连接</span></div>
+  <a href="/monitor" class="hbadge">Monitor</a>
+</header>
+<!-- Status Bar (top 1/4) -->
+<div class="status-bar">
+  <!-- Left: Code Health -->
+  <div class="score-card">
+    <div class="score-ring"><svg width="72" height="72" viewBox="0 0 72 72"><circle class="score-ring-bg" cx="36" cy="36" r="30"/><circle class="score-ring-fg" id="scoreArc" cx="36" cy="36" r="30" stroke="var(--text2)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/></svg><div class="score-num" id="scoreNum">—</div></div>
+    <div class="score-label">Code Health</div>
+    <div class="score-dims" id="scoreDims"></div>
+  </div>
+  <!-- Center: Entities / Relations / Files / Chunks 2x2 -->
+  <div class="metrics-center">
+    <div class="metrics-grid">
+      <div class="stat-card">
+        <div class="stat-val green" id="statEntities">—</div>
+        <div class="stat-label">Entities</div>
+        <div class="entity-types-bar" id="entityTypesBar"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val blue" id="statRelations">—</div>
+        <div class="stat-label">Relations</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val purple" id="statFiles">—</div>
+        <div class="stat-label">Files</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val cyan" id="statChunks">—</div>
+        <div class="stat-label">Chunks</div>
+        <div class="pipeline-indicator"><span class="pipeline-dot idle" id="pipelineDot"></span><span id="pipelineText">Idle</span></div>
+      </div>
+    </div>
+  </div>
+  <!-- Right: Last Update + Pipeline -->
+  <div class="info-card">
+    <div class="info-row">
+      <div class="info-val" id="statUpdate">—</div>
+      <div class="info-label">Last Update</div>
+    </div>
+    <div class="info-row">
+      <div class="info-val" id="statUser" style="font-size:14px;color:var(--text)">—</div>
+      <div class="info-label">Developer</div>
+    </div>
+    <div class="pipeline-steps" id="pipelineSteps"></div>
+  </div>
+</div>
+
+<!-- Interaction Area (bottom 3/4) -->
+<div class="interaction">
+  <!-- Left: Queries -->
+  <div class="side-panel">
+    <div class="side-panel-title">Queries <span class="count" id="queryCount">0</span></div>
+    <div class="side-scroll" id="queryList"><div class="empty-hint">暂无查询记录</div></div>
+  </div>
+  <!-- Center: Chat -->
+  <div class="chat-area">
+    <div class="messages" id="messages"></div>
+    <div class="thinking-bar" id="thinking" style="display:none"><div class="spinner"></div><span id="thinkingLabel">思考中...</span></div>
+    <div class="confirm-bar" id="specConfirm" style="display:none">
+      <button class="btn btn-ok" onclick="approveSpec()">确认开发</button>
+      <button class="btn btn-no" onclick="rejectSpec()">修改意见</button>
+    </div>
+    <div class="input-area">
+      <textarea id="input" placeholder="描述你的功能需求..." rows="2"></textarea>
+      <button id="sendBtn" onclick="sendMessage()">发送</button>
+    </div>
+  </div>
+  <!-- Right: Timeline -->
+  <div class="side-panel right">
+    <div class="side-panel-title">Timeline <span class="count" id="tlCount">0</span></div>
+    <div class="side-scroll" id="timelineList"><div class="empty-hint">暂无事件</div></div>
+  </div>
+</div>
+<!-- Welcome Overlay -->
+<div class="welcome-overlay" id="welcomeOverlay" style="display:none">
+  <h2>Manon 马浓</h2>
+  <p>AI 架构师，帮你理解代码、设计方案、拆解任务。<br>先初始化一个项目开始工作。</p>
+  <button class="welcome-btn" onclick="openSetupModal()">初始化项目</button>
+</div>
+<!-- Setup Modal -->
+<div class="modal-overlay" id="setupModal" style="display:none" onclick="if(event.target===this)closeSetupModal()">
+  <div class="modal setup-modal">
+    <h2>初始化项目</h2>
+    <div class="setup-tabs">
+      <button class="setup-tab active" onclick="switchSetupTab('local')">本地文件夹</button>
+      <button class="setup-tab" onclick="switchSetupTab('git')">Git 仓库</button>
+    </div>
+    <div id="setupLocal">
+      <div class="setup-field"><label>文件夹路径</label><input id="setupLocalPath" placeholder="C:\Users\...\my-project" oninput="autoFillName('local')"></div>
+      <div class="setup-field"><label>项目名称</label><input id="setupLocalName" placeholder="自动推导"></div>
+    </div>
+    <div id="setupGit" style="display:none">
+      <div class="setup-field"><label>Git URL</label><input id="setupGitUrl" placeholder="https://github.com/user/repo.git"></div>
+      <div class="setup-field"><label>分支</label><input id="setupGitBranch" value="main"></div>
+      <div class="setup-field"><label>项目名称</label><input id="setupGitName" placeholder="自动推导"></div>
+    </div>
+    <div class="setup-progress" id="setupProgress">
+      <div class="setup-progress-bar"><div class="setup-progress-fill" id="setupProgressFill"></div></div>
+      <div class="setup-progress-text" id="setupProgressText">准备中...</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-no" onclick="closeSetupModal()">取消</button>
+      <button class="btn btn-ok" id="setupSubmitBtn" onclick="submitSetup()">开始初始化</button>
+    </div>
+  </div>
+</div>
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>模型配置</h2>
+    <div class="modal-section">
+      <h3>Coach Pipeline (Manon)</h3>
+      <div class="modal-row"><label>主模型</label><select id="cfgCoachModel"></select></div>
+      <div class="modal-row"><label>备用模型</label><select id="cfgCoachFallback"></select></div>
+    </div>
+    <div class="modal-section">
+      <h3>Auto-Fix Agent</h3>
+      <div class="modal-row"><label>主模型</label><select id="cfgAgentModel"></select></div>
+      <div class="modal-row"><label>备用模型</label><select id="cfgAgentFallback"></select></div>
+      <div class="modal-row"><label>压缩模型</label><select id="cfgAgentCompress"></select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-no" onclick="closeSettings()">取消</button>
+      <button class="btn btn-ok" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+<script>
+const CIRC=2*Math.PI*30;
+const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
+const STAGE_L={idle:'空闲',clarifying:'确认',['spec-ready']:'规格',['user-confirming']:'确认',designing:'设计',decomposing:'拆解',executing:'执行',done:'完成',failed:'失败'};
+let ws=null,projectId='',currentStage='idle',chatMode='coach';
+let queries=[],timeline=[];
+let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
+
+function $(id){return document.getElementById(id)}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function fmtTime(ts){if(!ts)return'—';try{return new Date(ts).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return ts}}
+function scoreColor(s){return s>=85?'var(--green)':s>=60?'var(--yellow)':'var(--red)'}
+
+// ── WebSocket ──
+function connectWS(){
+  const p=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${p}://${location.host}/ws/dev`);
+  ws.onopen=()=>{$('wsDot').classList.add('on');$('wsLabel').textContent='已连接'};
+  ws.onclose=()=>{$('wsDot').classList.remove('on');$('wsLabel').textContent='已断开';setTimeout(connectWS,3000)};
+  ws.onmessage=e=>{try{handleMsg(JSON.parse(e.data))}catch{}};
+}
+
+function handleMsg(msg){
+  const t=msg.type;
+  addTimeline(t,msg);
+  if(t==='coach-chat')addMessage(msg.content,msg.role||'manon');
+  else if(t==='coach-thinking'){$('thinking').style.display=msg.active?'flex':'none';$('thinkingLabel').textContent=msg.label||'思考中...'}
+  else if(t==='feature-spec-ready'){updateStage('user-confirming');$('specConfirm').style.display='flex'}
+  else if(t==='feature-tasks-ready'){updateStage('executing')}
+  else if(t==='feature-task-status')addTimeline('task-'+msg.status,msg);
+  else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
+  else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
+  else if(t==='cli-stream'){appendCliStream(msg.content,msg.cli)}
+  else if(t==='monitor-state'&&msg.sessions){
+    const s=msg.sessions.find(x=>x.devId);
+    if(s){$('statUser').textContent=s.devId;updateStage(s.status)}
+  }
+  else if(t==='loomgraph-stats')updateLoomgraphStats(msg);
+  else if(t==='llm-query')addQuery(msg);
+  else if(t==='error')addMessage(msg.message,'system');
+}
+
+// ── Stats ──
+function resetStats(){stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};updateLoomgraphStats(stats)}
+function updateLoomgraphStats(s){
+  stats={entities:0,relations:0,files:0,chunks:0,...s};
+  $('statEntities').textContent=stats.entities||'—';
+  $('statRelations').textContent=stats.relations||'—';
+  $('statFiles').textContent=stats.files||'—';
+  $('statChunks').textContent=stats.chunks||'—';
+  $('statUpdate').textContent=fmtTime(stats.lastUpdate);
+  const sc=stats.score;
+  if(sc&&sc.score!==undefined){
+    const v=Math.round(sc.score),pct=Math.min(v/100,1);
+    $('scoreArc').style.strokeDashoffset=CIRC*(1-pct);$('scoreArc').style.stroke=scoreColor(v);
+    $('scoreNum').textContent=v;$('scoreNum').style.color=scoreColor(v);
+    const labels={cq:'CQ',ts:'TS',mt:'MT',dc:'DC'};const dims=$('scoreDims');dims.innerHTML='';
+    for(const[k,label] of Object.entries(labels)){if(sc[k]!==undefined){const d=document.createElement('div');d.className='score-dim';d.innerHTML=`<span>${label}</span><span class="score-dim-val">${sc[k]}</span>`;dims.appendChild(d)}}
+  }
+  const et=stats.entityTypes||{};const total=Object.values(et).reduce((a,b)=>a+b,0);
+  const bar=$('entityTypesBar');bar.innerHTML='';
+  const colors={function:'#4a90e2',class:'#af52de',method:'#34c759',module:'#f5a623',data:'#5eead4'};
+  if(total>0)for(const[type,count] of Object.entries(et).sort((a,b)=>b[1]-a[1])){const seg=document.createElement('div');seg.className='et-seg';seg.style.width=(count/total*100)+'%';seg.style.background=colors[type]||'#888';bar.appendChild(seg)}
+}
+
+// ── Pipeline ──
+function updateStage(stage){
+  currentStage=stage;
+  const el=$('pipelineSteps');
+  el.innerHTML=STAGES.map(s=>{
+    const idx=STAGES.indexOf(s),cur=STAGES.indexOf(currentStage);
+    const cls=s===currentStage?'active':idx<cur?'done':'';
+    return `<span class="ps ${cls}"><span class="ps-dot"></span>${STAGE_L[s]||s}</span>`;
+  }).join('');
+}
+
+// ── Chat ──
+function addMessage(content,role){
+  const el=document.createElement('div');el.className=`msg ${role}`;
+  const label=role==='manon'?'Manon':role==='user'?'你':'系统';
+  el.innerHTML=`<div class="role">${label}</div>${esc(content)}`;
+  const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
+}
+function sendMessage(){
+  const text=$('input').value.trim();if(!text||!ws||ws.readyState!==1)return;
+  if(chatMode==='claude'||chatMode==='codebuddy'){
+    ws.send(JSON.stringify({type:chatMode+'-chat',content:text,projectId}));
+    addMessage(text,'user');
+  } else {
+    if(currentStage==='idle'||currentStage==='done'||currentStage==='failed')
+      ws.send(JSON.stringify({type:'feature-request',description:text,projectId})),updateStage('clarifying');
+    else ws.send(JSON.stringify({type:'user-response',content:text}));
+    addMessage(text,'user');
+  }
+  $('input').value='';
+}
+
+function setMode(mode){
+  chatMode=mode;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===mode));
+  const placeholder={coach:'描述你的功能需求...',claude:'Ask Claude anything...',codebuddy:'Ask CodeBuddy anything...'};
+  $('input').placeholder=placeholder[mode]||'';
+}
+
+function appendCliStream(content,cli){
+  const box=$('messages');
+  let el=box.querySelector('.cli-stream-live');
+  if(!el){el=document.createElement('div');el.className='cli-stream cli-stream-live';box.appendChild(el)}
+  el.textContent+=content+'\n';
+  box.scrollTop=box.scrollHeight;
+}
+// Clear live stream block when a full message arrives
+const _origAddMsg=addMessage;
+addMessage=function(content,role){
+  const live=document.querySelector('.cli-stream-live');
+  if(live)live.classList.remove('cli-stream-live');
+  _origAddMsg(content,role);
+}
+function approveSpec(){
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-approved'}));
+  $('specConfirm').style.display='none';addMessage('已确认，开始开发','user');updateStage('designing');
+}
+function rejectSpec(){
+  const r=prompt('请输入修改意见：');if(!r)return;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-rejected',reason:r}));
+  $('specConfirm').style.display='none';addMessage('修改意见：'+r,'user');updateStage('clarifying');
+}
+
+// ── Queries ──
+function addQuery(q){
+  queries.unshift(q);if(queries.length>200)queries.length=200;
+  $('queryCount').textContent=queries.length;
+  const list=$('queryList');
+  if(queries.length===1)list.innerHTML='';
+  const el=document.createElement('div');el.className='query-item';
+  el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${q.duration_ms?`<div class="q-dur">${q.duration_ms}ms</div>`:''}`;
+  list.insertBefore(el,list.firstChild);
+}
+
+// ── Timeline ──
+function addTimeline(event,msg){
+  const entry={event,ts:new Date().toISOString(),detail:msg.content||msg.reason||msg.label||''};
+  timeline.unshift(entry);if(timeline.length>200)timeline.length=200;
+  $('tlCount').textContent=timeline.length;
+  const list=$('timelineList');
+  if(timeline.length===1)list.innerHTML='';
+  const cls=event.includes('done')||event.includes('completed')?'ok':event.includes('fail')||event.includes('error')?'err':event.includes('progress')||event.includes('executing')?'run':'';
+  const el=document.createElement('div');el.className=`tl-item ${cls}`;
+  el.innerHTML=`<div class="tl-head"><span class="tl-event">${esc(event)}</span><span class="tl-ts">${fmtTime(entry.ts)}</span></div><div class="tl-detail">${esc(entry.detail).slice(0,120)}</div>`;
+  list.insertBefore(el,list.firstChild);
+}
+
+// ── Init ──
+let setupTab='local';
+async function loadProjects(){
+  try{
+    const r=await fetch('/api/v1/projects',{headers:{Authorization:'Bearer dev'}});
+    if(!r.ok){$('projectSelect').innerHTML='<option value="">无需认证</option>';return}
+    const ps=await r.json();const sel=$('projectSelect');
+    if(!ps.length){
+      sel.innerHTML='<option value="">无项目</option>';
+      $('welcomeOverlay').style.display='flex';
+      return;
+    }
+    $('welcomeOverlay').style.display='none';
+    sel.innerHTML=ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    projectId=ps[0].id;sel.onchange=()=>{projectId=sel.value;resetStats();loadStats()};
+    loadStats();
+  }catch{$('projectSelect').innerHTML='<option value="">连接失败</option>'}
+}
+$('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+
+function openSetupModal(){$('welcomeOverlay').style.display='none';$('setupModal').style.display='flex';switchSetupTab('local')}
+function closeSetupModal(){$('setupModal').style.display='none';$('setupProgress').style.display='none';$('setupSubmitBtn').disabled=false;$('setupSubmitBtn').textContent='开始初始化';if(!projectId)$('welcomeOverlay').style.display='flex'}
+function switchSetupTab(tab){
+  setupTab=tab;
+  document.querySelectorAll('.setup-tab').forEach(b=>b.classList.toggle('active',b.textContent.includes(tab==='local'?'本地':'Git')));
+  $('setupLocal').style.display=tab==='local'?'block':'none';
+  $('setupGit').style.display=tab==='git'?'block':'none';
+}
+function autoFillName(tab){
+  const path=tab==='local'?$('setupLocalPath').value:$('setupGitUrl').value;
+  const nameEl=tab==='local'?$('setupLocalName'):$('setupGitName');
+  if(!nameEl.dataset.manual){
+    const parts=path.replace(/\\/g,'/').replace(/\/$/,'').split('/');
+    nameEl.value=parts[parts.length-1]?.replace(/\.git$/,'')||'';
+  }
+}
+async function submitSetup(){
+  const btn=$('setupSubmitBtn');btn.disabled=true;btn.textContent='初始化中...';
+  $('setupProgress').style.display='block';$('setupProgressFill').style.width='20%';$('setupProgressText').textContent='创建项目...';
+  let body;
+  if(setupTab==='local'){
+    const path=$('setupLocalPath').value.trim();
+    if(!path){btn.disabled=false;btn.textContent='开始初始化';$('setupProgress').style.display='none';return}
+    body={source:'local',path,name:$('setupLocalName').value.trim()||undefined};
+  }else{
+    const url=$('setupGitUrl').value.trim();
+    if(!url){btn.disabled=false;btn.textContent='开始初始化';$('setupProgress').style.display='none';return}
+    body={source:'git',path:url,branch:$('setupGitBranch').value.trim()||'main',name:$('setupGitName').value.trim()||undefined};
+  }
+  try{
+    const r=await fetch('/api/v1/projects/setup',{method:'POST',headers:{Authorization:'Bearer dev','Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await r.json();
+    if(!r.ok){throw new Error(data.detail||'Setup failed')}
+    $('setupProgressFill').style.width='40%';$('setupProgressText').textContent='索引代码中（后台进行）...';
+    addMessage(`项目 "${data.project.name}" 已创建，正在后台索引...`,'system');
+    // Poll for indexing status
+    const pid=data.project.id;
+    const poll=setInterval(async()=>{
+      try{
+        const sr=await fetch(`/api/v1/projects/${pid}/index-status`,{headers:{Authorization:'Bearer dev'}});
+        const st=await sr.json();
+        if(st.status==='done'){
+          clearInterval(poll);
+          $('setupProgressFill').style.width='100%';$('setupProgressText').textContent='索引完成！';
+          if(st.stats)updateLoomgraphStats(st.stats);
+          const res=st.result||{};
+          addMessage(`索引完成：${res.files||0} 个文件，${res.entities||0} 个实体。`,'system');
+          setTimeout(async()=>{projectId=pid;await loadProjects();closeSetupModal()},800);
+        }else if(st.status==='error'){
+          clearInterval(poll);
+          $('setupProgressFill').style.width='0%';$('setupProgressText').textContent='索引失败：'+(st.result?.error||'unknown');
+          btn.disabled=false;btn.textContent='重试';
+        }else{
+          // Still indexing, animate progress
+          const cur=parseFloat($('setupProgressFill').style.width)||40;
+          if(cur<90)$('setupProgressFill').style.width=(cur+2)+'%';
+        }
+      }catch{}
+    },3000);
+  }catch(e){
+    $('setupProgressFill').style.width='0%';$('setupProgressText').textContent='失败：'+e.message;
+    btn.disabled=false;btn.textContent='重试';
+  }
+}
+
+async function loadStats(){
+  if(!projectId)return;
+  try{
+    const r=await fetch(`/api/v1/projects/${projectId}/stats`,{headers:{Authorization:'Bearer dev'}});
+    if(r.ok){const data=await r.json();updateLoomgraphStats(data)}
+  }catch{}
+}
+updateStage('idle');loadProjects();connectWS();
+
+// ── Settings ──
+let availableModels=[];
+async function openSettings(){
+  try{
+    const r=await fetch('/api/v1/settings');
+    const data=await r.json();
+    availableModels=data.models||[];
+    const cfg=data.config||{};
+    const selects=['cfgCoachModel','cfgCoachFallback','cfgAgentModel','cfgAgentFallback','cfgAgentCompress'];
+    const keys=['coach_model','coach_model_fallback','agent_model','agent_model_fallback','agent_compress_model'];
+    selects.forEach((id,i)=>{
+      const sel=$(id);sel.innerHTML=availableModels.map(m=>`<option value="${m.id}"${m.id===cfg[keys[i]]?' selected':''}>${m.name} — ${m.desc}</option>`).join('');
+    });
+  }catch(e){addMessage('加载设置失败：'+e.message,'system');return}
+  $('settingsModal').style.display='flex';
+}
+function closeSettings(){$('settingsModal').style.display='none'}
+async function saveSettings(){
+  const body={
+    coach_model:$('cfgCoachModel').value,
+    coach_model_fallback:$('cfgCoachFallback').value,
+    agent_model:$('cfgAgentModel').value,
+    agent_model_fallback:$('cfgAgentFallback').value,
+    agent_compress_model:$('cfgAgentCompress').value,
+  };
+  try{
+    const r=await fetch('/api/v1/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await r.json();
+    if(data.status==='ok'){
+      addMessage(`模型配置已更新：${data.updated.join(', ')||'无变更'}`,'system');
+      closeSettings();
+    }else addMessage('保存失败','system');
+  }catch(e){addMessage('保存失败：'+e.message,'system')}
+}
+</script>
+</body>
+</html>

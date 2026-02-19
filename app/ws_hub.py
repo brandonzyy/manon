@@ -1,4 +1,4 @@
-"""WebSocket hub — manages developer connections + upstream API Server link."""
+"""WebSocket hub — manages developer, agent, and monitor connections."""
 
 from __future__ import annotations
 
@@ -7,37 +7,36 @@ import json
 import logging
 from typing import Any
 
-import websockets
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 log = logging.getLogger("manon.ws")
 
 
 class WSHub:
-    """Manages two kinds of connections:
-    1. Developer clients (FastAPI WebSocket at /ws/dev)
-    2. Upstream API Server coach channel (websockets client to /ws/coach)
+    """Manages three kinds of connections:
+    1. Developer clients (/ws/dev)
+    2. Auto-fix agents (/ws/agent)
+    3. Monitor dashboards (/ws/monitor)
     """
 
     def __init__(self) -> None:
-        # dev_id → WebSocket
         self._devs: dict[str, WebSocket] = {}
-        self._upstream_ws: Any | None = None
-        self._upstream_task: asyncio.Task | None = None
-        self._upstream_url: str = ""
-        # callback for incoming upstream messages
-        self._on_upstream_msg: Any | None = None
-        self._counter = 0
+        self._agents: dict[str, WebSocket] = {}
+        self._monitors: list[WebSocket] = []
+        self._dev_counter = 0
+        self._agent_counter = 0
+        # Callback for agent messages (set by main.py)
+        self._on_agent_msg: Any | None = None
 
-    # ---- developer connections ----
+    # ── developer connections ──
 
-    def _next_id(self) -> str:
-        self._counter += 1
-        return f"dev-{self._counter}"
+    def _next_dev_id(self) -> str:
+        self._dev_counter += 1
+        return f"dev-{self._dev_counter}"
 
     async def accept_dev(self, ws: WebSocket) -> str:
         await ws.accept()
-        dev_id = self._next_id()
+        dev_id = self._next_dev_id()
         self._devs[dev_id] = ws
         log.info("Developer %s connected (%d total)", dev_id, len(self._devs))
         return dev_id
@@ -63,46 +62,69 @@ class WSHub:
         for did in dead:
             self.remove_dev(did)
 
-    # ---- upstream API Server connection ----
+    # ── agent connections ──
 
-    async def connect_upstream(self, url: str, on_msg=None) -> None:
-        self._upstream_url = url
-        self._on_upstream_msg = on_msg
-        self._upstream_task = asyncio.create_task(self._upstream_loop())
+    def _next_agent_id(self) -> str:
+        self._agent_counter += 1
+        return f"agent-{self._agent_counter}"
 
-    async def _upstream_loop(self) -> None:
-        backoff = 5
-        while True:
+    async def accept_agent(self, ws: WebSocket) -> str:
+        await ws.accept()
+        agent_id = self._next_agent_id()
+        self._agents[agent_id] = ws
+        log.info("Agent %s connected (%d total)", agent_id, len(self._agents))
+        return agent_id
+
+    def remove_agent(self, agent_id: str) -> None:
+        self._agents.pop(agent_id, None)
+        log.info("Agent %s disconnected (%d remain)", agent_id, len(self._agents))
+
+    async def send_to_agent(self, agent_id: str, data: dict) -> None:
+        ws = self._agents.get(agent_id)
+        if ws:
             try:
-                async with websockets.connect(self._upstream_url) as ws:
-                    self._upstream_ws = ws
-                    log.info("Connected to upstream %s", self._upstream_url)
-                    backoff = 5
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                            if self._on_upstream_msg:
-                                await self._on_upstream_msg(msg)
-                        except json.JSONDecodeError:
-                            pass
-            except Exception as exc:
-                log.warning("Upstream disconnected: %s, retry in %ds", exc, backoff)
-                self._upstream_ws = None
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 300)
-
-    async def send_upstream(self, data: dict) -> None:
-        if self._upstream_ws:
-            try:
-                await self._upstream_ws.send(json.dumps(data))
+                await ws.send_json(data)
             except Exception:
-                log.warning("Failed to send upstream message")
+                self.remove_agent(agent_id)
+
+    async def broadcast_to_agents(self, data: dict) -> None:
+        dead: list[str] = []
+        for aid, ws in self._agents.items():
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(aid)
+        for aid in dead:
+            self.remove_agent(aid)
+
+    @property
+    def has_agents(self) -> bool:
+        return len(self._agents) > 0
+
+    # ── monitor connections ──
+
+    async def accept_monitor(self, ws: WebSocket) -> None:
+        await ws.accept()
+        self._monitors.append(ws)
+        log.info("Monitor connected (%d total)", len(self._monitors))
+
+    def remove_monitor(self, ws: WebSocket) -> None:
+        if ws in self._monitors:
+            self._monitors.remove(ws)
+        log.info("Monitor disconnected (%d remain)", len(self._monitors))
+
+    async def broadcast_to_monitors(self, data: dict) -> None:
+        dead: list[WebSocket] = []
+        for ws in self._monitors:
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.remove_monitor(ws)
 
     async def shutdown(self) -> None:
-        if self._upstream_task:
-            self._upstream_task.cancel()
-        if self._upstream_ws:
-            await self._upstream_ws.close()
+        pass
 
 
 # Singleton

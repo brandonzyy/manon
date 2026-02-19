@@ -13,11 +13,12 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
-    git_url     TEXT NOT NULL,
+    git_url     TEXT NOT NULL DEFAULT '',
     branch      TEXT NOT NULL DEFAULT 'main',
     workspace   TEXT,
     local_path  TEXT,
     test_command TEXT,
+    index_stats  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -58,6 +59,11 @@ async def init_db(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(path) as conn:
         await conn.executescript(_SCHEMA)
+        # Seed default dev API key
+        await conn.execute(
+            "INSERT OR IGNORE INTO api_keys (key, label) VALUES (?, ?)",
+            ("dev", "Local development key"),
+        )
         await conn.commit()
 
 

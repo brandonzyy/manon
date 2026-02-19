@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+import webbrowser
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db
@@ -16,11 +22,7 @@ from .routers import health
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("manon")
 
-
-async def _on_upstream_message(msg: dict) -> None:
-    """Handle messages from API Server (task done/failed) → forward to pipeline."""
-    from .coach.pipeline import handle_upstream_message
-    await handle_upstream_message(msg)
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -28,25 +30,52 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     await init_db(settings.db_path)
     log.info("DB initialized at %s", settings.db_path)
-    await hub.connect_upstream(settings.api_server_ws, on_msg=_on_upstream_message)
-    log.info("Upstream connection started → %s", settings.api_server_ws)
+    # Set env var so loomgraph internal get_settings() finds LightRAG
+    os.environ.setdefault("LOOMGRAPH_LIGHTRAG__API_URL", settings.lightrag_url)
+    # Configure LoomGraph (direct Python API)
+    from .services.loomgraph import configure as configure_loomgraph
+    configure_loomgraph(
+        lightrag_url=settings.lightrag_url,
+        workspace=settings.loomgraph_workspace,
+    )
+    log.info("LoomGraph: %s  Workspace: %s", settings.lightrag_url, settings.loomgraph_workspace)
+    # Start monitor broadcast loop
+    monitor_task = asyncio.create_task(_monitor_broadcast_loop())
+    log.info("Manon Gateway ready (no upstream — direct agent management)")
+    # Auto-open browser
+    webbrowser.open(f"http://localhost:{settings.port}")
     yield
+    monitor_task.cancel()
     await hub.shutdown()
     log.info("Manon Gateway shut down")
 
 
 app = FastAPI(title="Manon Gateway", version="0.1.0", lifespan=lifespan)
 app.include_router(health.router)
+@app.get("/", include_in_schema=False)
+async def root():
+    return FileResponse(STATIC_DIR / "index.html")
 
-# Late imports to avoid circular deps at module level
+
+@app.get("/monitor", include_in_schema=False)
+async def monitor_page():
+    return FileResponse(STATIC_DIR / "monitor.html")
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
 def _include_routers():
-    from .routers import projects, query, indexing
+    from .routers import projects, query, indexing, settings
     app.include_router(projects.router, prefix="/api/v1")
     app.include_router(query.router, prefix="/api/v1")
     app.include_router(indexing.router, prefix="/api/v1")
+    app.include_router(settings.router, prefix="/api/v1")
 
 _include_routers()
 
+
+# ── WebSocket: Developer ──
 
 @app.websocket("/ws/dev")
 async def ws_dev(ws: WebSocket):
@@ -62,7 +91,81 @@ async def ws_dev(ws: WebSocket):
             msg["_dev_id"] = dev_id
             from .coach.pipeline import handle_dev_message
             await handle_dev_message(dev_id, msg)
+            await hub.broadcast_to_monitors({**msg, "_dir": "in"})
     except WebSocketDisconnect:
         pass
     finally:
         hub.remove_dev(dev_id)
+
+
+# ── WebSocket: Agent (auto-fix.js connects here) ──
+
+@app.websocket("/ws/agent")
+async def ws_agent(ws: WebSocket):
+    agent_id = await hub.accept_agent(ws)
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            msg["_agent_id"] = agent_id
+            await _handle_agent_message(agent_id, msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        hub.remove_agent(agent_id)
+
+
+async def _handle_agent_message(agent_id: str, msg: dict) -> None:
+    """Route messages from auto-fix agent to coach pipeline."""
+    t = msg.get("type", "")
+    # Forward to monitors
+    await hub.broadcast_to_monitors({**msg, "_dir": "agent-in"})
+
+    if t in ("feature-task-done", "feature-task-failed"):
+        from .coach.pipeline import handle_agent_result
+        await handle_agent_result(msg)
+    elif t == "agent-status":
+        log.info("Agent %s status: %s", agent_id, msg.get("status"))
+    elif t == "agent-log":
+        pass  # silently forward to monitors (already done above)
+    elif t == "graph-effectiveness":
+        log.info("Graph effectiveness: hit_rate=%s%%", msg.get("hitRate"))
+
+
+# ── WebSocket: Monitor ──
+
+@app.websocket("/ws/monitor")
+async def ws_monitor(ws: WebSocket):
+    await hub.accept_monitor(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        hub.remove_monitor(ws)
+
+
+async def _monitor_broadcast_loop():
+    """Periodically push state snapshot to monitor clients."""
+    while True:
+        await asyncio.sleep(3)
+        from .coach.pipeline import _sessions
+        sessions = []
+        for dev_id, state in _sessions.items():
+            sessions.append({
+                "devId": dev_id,
+                "featureId": state.feature_id,
+                "projectId": state.project_id,
+                "status": state.status.value if hasattr(state.status, 'value') else str(state.status),
+                "tasks": [{"id": t.get("id"), "status": t.get("status")} for t in state.tasks],
+            })
+        await hub.broadcast_to_monitors({
+            "type": "monitor-state",
+            "agentCount": len(hub._agents),
+            "devCount": len(hub._devs),
+            "sessions": sessions,
+        })

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve venv paths
+_MANON_ROOT = Path(__file__).resolve().parent.parent
+_VENV_BIN = _MANON_ROOT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin")
 
 
 class ManonSettings(BaseSettings):
@@ -15,8 +20,12 @@ class ManonSettings(BaseSettings):
     db_path: str = "./manon.db"
     repos_dir: str = "./repos"
 
-    # LoomGraph
-    loomgraph_bin: str = "loomgraph"
+    # LoomGraph / CodeIndex — local venv binaries
+    loomgraph_bin: str = str(_VENV_BIN / "loomgraph")
+    codeindex_bin: str = str(_VENV_BIN / "codeindex")
+    lightrag_url: str = "http://117.131.45.179:3010"
+    embedding_url: str = "http://117.131.45.179:3002"
+    loomgraph_workspace: str = "donnie_default"
 
     # API Server (auto-fix hub)
     api_server_ws: str = "ws://localhost:3501/ws/coach"

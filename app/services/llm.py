@@ -22,6 +22,17 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+def _active_model() -> str:
+    """Return coach model from runtime config, falling back to static settings."""
+    from ..routers.settings import get_runtime_config
+    return get_runtime_config().get("coach_model") or get_settings().llm_model
+
+
+def _active_fallback() -> str:
+    from ..routers.settings import get_runtime_config
+    return get_runtime_config().get("coach_model_fallback") or get_settings().llm_model_fallback
+
+
 async def llm_chat(
     messages: list[dict],
     *,
@@ -31,7 +42,7 @@ async def llm_chat(
 ) -> str:
     """Low-level chat completion call."""
     s = get_settings()
-    model = model or s.llm_model
+    model = model or _active_model()
     client = _get_client()
     resp = await client.post(
         s.llm_api_url,
@@ -54,8 +65,7 @@ async def call_glm5(
     timeout: float = 120.0,
 ) -> str:
     """High-level wrapper with fallback, mirroring coach-llm.js callGLM5."""
-    s = get_settings()
-    model = model or s.llm_model
+    model = model or _active_model()
     msgs = messages or [
         {"role": "system", "content": system_prompt or ""},
         {"role": "user", "content": user_prompt or ""},
@@ -63,7 +73,7 @@ async def call_glm5(
     try:
         return await llm_chat(msgs, model=model, max_tokens=max_tokens, timeout=timeout)
     except Exception as exc:
-        fallback = s.llm_model_fallback
+        fallback = _active_fallback()
         if fallback and fallback != model:
             log.warning("%s failed (%s), falling back to %s", model, exc, fallback)
             return await llm_chat(msgs, model=fallback, max_tokens=max_tokens, timeout=timeout)

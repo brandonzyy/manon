@@ -5,3 +5,5 @@ pydantic-settings>=2.7,<3
 aiosqlite>=0.21,<1
 httpx>=0.28,<1
 pyyaml>=6,<7
+ai-codeindex>=0.19.0
+# loomgraph — install from local wheel (not on PyPI)

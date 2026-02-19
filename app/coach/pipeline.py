@@ -85,12 +85,14 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
         await _handle_plan_approved(dev_id)
     elif msg_type == "feature-plan-rejected":
         await _handle_plan_rejected(dev_id, msg)
+    elif msg_type in ("claude-chat", "codebuddy-chat"):
+        await _handle_cli_chat(dev_id, msg)
     else:
         await _send_dev(dev_id, {"type": "error", "message": f"Unknown message type: {msg_type}"})
 
 
-async def handle_upstream_message(msg: dict) -> None:
-    """Handle messages from API Server (task done/failed)."""
+async def handle_agent_result(msg: dict) -> None:
+    """Handle task results from auto-fix agent (replaces handle_upstream_message)."""
     msg_type = msg.get("type", "")
     if msg_type in ("feature-task-done", "feature-task-failed"):
         feature_id = msg.get("featureId", "")
@@ -99,6 +101,11 @@ async def handle_upstream_message(msg: dict) -> None:
                 if not state._task_result_future.done():
                     state._task_result_future.set_result(msg)
                 break
+
+
+async def handle_upstream_message(msg: dict) -> None:
+    """Legacy — redirects to handle_agent_result."""
+    await handle_agent_result(msg)
 
 
 # ---- Internal handlers ----
@@ -204,3 +211,38 @@ async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
         task["instruction"] = f"{task.get('instruction', '')}\n\n## 用户补充指导\n{guidance}"
         state.failed_attempts = 0
         await assign_task(state, task)
+
+
+async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
+    """Handle claude-chat / codebuddy-chat — spawn CLI, stream output back."""
+    import asyncio
+    from ..services.claude_cli import run_cli_chat
+
+    cli = "claude" if msg.get("type") == "claude-chat" else "codebuddy"
+    prompt = msg.get("content", "")
+    if not prompt:
+        return
+
+    # Resolve project cwd
+    cwd = None
+    project_id = msg.get("projectId", "")
+    if project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id = ?", (project_id,))
+            if row:
+                cwd = row["local_path"]
+
+    await _send_thinking(dev_id, True, f"{cli} 正在处理...")
+
+    async def on_line(line: str):
+        await _send_dev(dev_id, {"type": "cli-stream", "cli": cli, "content": line})
+
+    try:
+        result = await run_cli_chat(cli, prompt, cwd=cwd, max_turns=10, on_output=on_line, timeout=300.0)
+        await _send_thinking(dev_id, False)
+        if result.strip():
+            await _send_chat(dev_id, result.strip(), role=cli)
+    except Exception as exc:
+        await _send_thinking(dev_id, False)
+        await _send_chat(dev_id, f"{cli} 执行失败：{exc}", role="system")

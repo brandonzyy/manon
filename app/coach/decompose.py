@@ -148,7 +148,19 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
     }
 
     for attempt in range(MAX_RETRIES + 1):
-        await hub.send_upstream(assign_msg)
+        if not hub.has_agents:
+            log.warning("No agents connected — waiting for auto-fix to connect")
+            await _send_chat(state.dev_id, "等待 auto-fix agent 连接...", role="system")
+            # Wait up to 60s for an agent to connect
+            for _ in range(60):
+                if hub.has_agents:
+                    break
+                await asyncio.sleep(1)
+            if not hub.has_agents:
+                log.error("No agents connected after 60s")
+                return False
+
+        await hub.broadcast_to_agents(assign_msg)
         result = await _wait_for_result(state, task["id"])
 
         if result is None:
