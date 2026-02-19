@@ -71,6 +71,79 @@ async def _send_chat(dev_id: str, content: str, role: str = "manon") -> None:
     await _send_dev(dev_id, {"type": "coach-chat", "role": role, "content": content})
 
 
+# Manon chat history per dev (separate from pipeline state)
+_chat_history: dict[str, list[dict]] = {}
+
+_MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可以：
+- 回答关于项目代码的问题（基于知识图谱上下文）
+- 分析代码结构、依赖关系、技术债务
+- 讨论架构设计和最佳实践
+- 帮助理解代码逻辑和调用链
+
+如果用户想要修改代码或开发新功能，建议他们使用 /feature 命令进入开发流程。
+回答简洁、专业，用中文。"""
+
+
+async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
+    """Free-form conversation with MatrixoneGraph context."""
+    from datetime import datetime
+    from matrixone_graph import MatrixoneGraph
+    from ..services.llm import call_glm5
+
+    prompt = msg.get("content", "").strip()
+    if not prompt:
+        return
+    project_id = msg.get("projectId", "")
+
+    # Query graph for context
+    graph_context = ""
+    if project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone(
+                "SELECT local_path FROM projects WHERE id = ?", (project_id,),
+            )
+        if row and row["local_path"]:
+            try:
+                await _send_thinking(dev_id, True, "查询知识图谱...")
+                mg = MatrixoneGraph.get(row["local_path"])
+                result = await mg.query(prompt, top_k=10, depth=1)
+                if result.context:
+                    graph_context = result.context
+                    await _send_dev(dev_id, {
+                        "type": "llm-query", "caller": "manon-chat",
+                        "command": "matrixone_graph.query(hybrid)",
+                        "query": prompt[:120], "ts": datetime.now().isoformat(),
+                    })
+                await _send_thinking(dev_id, False)
+            except Exception as exc:
+                await _send_thinking(dev_id, False)
+                log.warning("MatrixoneGraph query failed for manon-chat: %s", exc)
+
+    # Build messages
+    history = _chat_history.setdefault(dev_id, [])
+    history.append({"role": "user", "content": prompt})
+    # Keep last 20 turns
+    if len(history) > 40:
+        history[:] = history[-40:]
+
+    system = _MANON_SYSTEM
+    if graph_context:
+        system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
+
+    messages = [{"role": "system", "content": system}] + history
+
+    await _send_thinking(dev_id, True, "思考中...")
+    try:
+        reply = await call_glm5(None, None, messages=messages, max_tokens=4096)
+        history.append({"role": "assistant", "content": reply})
+        await _send_thinking(dev_id, False)
+        await _send_chat(dev_id, reply)
+    except Exception as exc:
+        await _send_thinking(dev_id, False)
+        await _send_chat(dev_id, f"LLM 调用失败：{exc}", role="system")
+
+
 # ---- Entry points called from main.py ----
 
 async def handle_dev_message(dev_id: str, msg: dict) -> None:
@@ -79,6 +152,8 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
 
     if msg_type == "feature-request":
         await _start_feature(dev_id, msg)
+    elif msg_type == "manon-chat":
+        await _handle_manon_chat(dev_id, msg)
     elif msg_type == "user-response":
         await _handle_user_response(dev_id, msg)
     elif msg_type == "feature-plan-approved":

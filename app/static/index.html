@@ -162,7 +162,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 <header>
   <h1>Manon<span>马浓 · AI 架构师</span></h1>
   <div class="mode-toggle">
-    <button class="mode-btn active" onclick="setMode('coach')">Coach</button>
+    <button class="mode-btn active" onclick="setMode('manon')">Manon</button>
     <button class="mode-btn" onclick="setMode('claude')">Claude</button>
     <button class="mode-btn" onclick="setMode('codebuddy')">CodeBuddy</button>
   </div>
@@ -233,7 +233,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <button class="btn btn-no" onclick="rejectSpec()">修改意见</button>
     </div>
     <div class="input-area">
-      <textarea id="input" placeholder="描述你的功能需求..." rows="2"></textarea>
+      <textarea id="input" placeholder="聊天或 /feature 描述 进入开发流程" rows="2"></textarea>
       <button id="sendBtn" onclick="sendMessage()">发送</button>
     </div>
   </div>
@@ -281,7 +281,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
   <div class="modal">
     <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>模型配置</h2>
     <div class="modal-section">
-      <h3>Coach Pipeline (Manon)</h3>
+      <h3>Manon Pipeline</h3>
       <div class="modal-row"><label>主模型</label><select id="cfgCoachModel"></select></div>
       <div class="modal-row"><label>备用模型</label><select id="cfgCoachFallback"></select></div>
     </div>
@@ -301,7 +301,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 const CIRC=2*Math.PI*20;
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
 const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',done:'开发完成',failed:'执行失败'};
-let ws=null,projectId='',currentStage='idle',chatMode='coach';
+let ws=null,projectId='',currentStage='idle',chatMode='manon';
 let queries=[],timeline=[];
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
 
@@ -408,9 +408,16 @@ function sendMessage(){
     ws.send(JSON.stringify({type:chatMode+'-chat',content:text,projectId}));
     addMessage(text,'user');
   } else {
-    if(currentStage==='idle'||currentStage==='done'||currentStage==='failed')
-      ws.send(JSON.stringify({type:'feature-request',description:text,projectId})),updateStage('clarifying');
-    else ws.send(JSON.stringify({type:'user-response',content:text}));
+    // Manon mode: /feature triggers pipeline, otherwise free chat
+    const inPipeline=currentStage!=='idle'&&currentStage!=='done'&&currentStage!=='failed';
+    if(text.startsWith('/feature ')){
+      const desc=text.slice(9).trim();
+      ws.send(JSON.stringify({type:'feature-request',description:desc,projectId}));updateStage('clarifying');
+    } else if(inPipeline){
+      ws.send(JSON.stringify({type:'user-response',content:text}));
+    } else {
+      ws.send(JSON.stringify({type:'manon-chat',content:text,projectId}));
+    }
     addMessage(text,'user');
   }
   $('input').value='';
@@ -419,7 +426,7 @@ function sendMessage(){
 function setMode(mode){
   chatMode=mode;
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===mode));
-  const placeholder={coach:'描述你的功能需求...',claude:'Ask Claude anything...',codebuddy:'Ask CodeBuddy anything...'};
+  const placeholder={manon:'聊天或 /feature 描述 进入开发流程',claude:'Ask Claude anything...',codebuddy:'Ask CodeBuddy anything...'};
   $('input').placeholder=placeholder[mode]||'';
   if((mode==='claude'||mode==='codebuddy')&&ws&&ws.readyState===1){
     ws.send(JSON.stringify({type:'cli-init',cli:mode,projectId}));
