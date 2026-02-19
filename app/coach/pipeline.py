@@ -79,13 +79,27 @@ _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可
 - 分析代码结构、依赖关系、技术债务
 - 讨论架构设计和最佳实践
 - 帮助理解代码逻辑和调用链
-
-如果用户想要修改代码或开发新功能，建议他们使用 /feature 命令进入开发流程。
 回答简洁、专业，用中文。"""
 
 
+def _is_question(prompt: str) -> bool:
+    """Heuristic: detect if the prompt is a question rather than a feature request."""
+    p = prompt.strip()
+    if p.endswith("?") or p.endswith("？"):
+        return True
+    q_starts = (
+        "什么", "为什么", "怎么", "如何", "哪", "是不是", "能不能", "有没有",
+        "请问", "请解释", "请说明", "请分析", "解释", "说明", "分析", "介绍",
+        "看看", "查看", "了解", "告诉我", "帮我看",
+    )
+    for q in q_starts:
+        if p.startswith(q):
+            return True
+    return False
+
+
 async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
-    """Free-form conversation with MatrixoneGraph context."""
+    """Unified Manon handler — answers questions or auto-starts pipeline."""
     from datetime import datetime
     from matrixone_graph import MatrixoneGraph
     from ..services.llm import call_glm5
@@ -94,6 +108,12 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     if not prompt:
         return
     project_id = msg.get("projectId", "")
+
+    # If pipeline is active, route as user-response
+    state = get_session(dev_id)
+    if state and state.status not in (Status.IDLE, Status.DONE, Status.FAILED):
+        await _handle_user_response(dev_id, {"content": prompt})
+        return
 
     # Query graph for context
     graph_context = ""
@@ -111,19 +131,26 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 if result.context:
                     graph_context = result.context
                     await _send_dev(dev_id, {
-                        "type": "llm-query", "caller": "manon-chat",
+                        "type": "llm-query", "caller": "manon",
                         "command": "matrixone_graph.query(hybrid)",
                         "query": prompt[:120], "ts": datetime.now().isoformat(),
                     })
                 await _send_thinking(dev_id, False)
             except Exception as exc:
                 await _send_thinking(dev_id, False)
-                log.warning("MatrixoneGraph query failed for manon-chat: %s", exc)
+                log.warning("MatrixoneGraph query failed: %s", exc)
 
-    # Build messages
+    # Classify intent: question → chat, otherwise → feature pipeline
+    if not _is_question(prompt):
+        await _start_feature(dev_id, {
+            "description": prompt,
+            "projectId": project_id,
+        })
+        return
+
+    # Chat mode — answer directly with graph context
     history = _chat_history.setdefault(dev_id, [])
     history.append({"role": "user", "content": prompt})
-    # Keep last 20 turns
     if len(history) > 40:
         history[:] = history[-40:]
 

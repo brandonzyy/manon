@@ -165,3 +165,9 @@ async def _monitor_broadcast_loop():
             "sessions": sessions,
             "indexing": indexing,
         })
+
+
+if __name__ == "__main__":
+    import uvicorn
+    settings = get_settings()
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.port, log_level="info")

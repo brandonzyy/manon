@@ -14,7 +14,7 @@ _VENV_BIN = _MANON_ROOT / ".venv" / ("Scripts" if sys.platform == "win32" else "
 
 
 class ManonSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MANON_")
+    model_config = SettingsConfigDict(env_prefix="MANON_", env_file=".env", env_file_encoding="utf-8")
 
     port: int = 3600
     db_path: str = "./manon.db"
