@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  manon-gateway:
+    build: .
+    ports:
+      - "3600:3600"
+    environment:
+      MANON_LLM_API_KEY: ${MANON_LLM_API_KEY}
+      MANON_API_SERVER_WS: ws://api-server:3501/ws/coach
+      MANON_DB_PATH: /data/manon.db
+      MANON_REPOS_DIR: /data/repos
+    volumes:
+      - manon-data:/data
+    restart: unless-stopped
+
+volumes:
+  manon-data:

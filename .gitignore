@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+manon.db
+repos/
+.venv/
+*.egg-info/
+dist/
+build/

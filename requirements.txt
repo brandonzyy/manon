@@ -1,0 +1,7 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+websockets>=14,<15
+pydantic-settings>=2.7,<3
+aiosqlite>=0.21,<1
+httpx>=0.28,<1
+pyyaml>=6,<7

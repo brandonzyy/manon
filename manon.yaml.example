@@ -1,0 +1,19 @@
+# Manon Gateway Configuration
+port: 3600
+db_path: ./manon.db
+repos_dir: ./repos
+
+# LoomGraph CLI binary path
+loomgraph_bin: loomgraph
+
+# API Server WebSocket (auto-fix agent hub)
+api_server_ws: ws://localhost:3501/ws/coach
+
+# LLM API (ZhiPu GLM-5)
+llm_api_url: https://open.bigmodel.cn/api/coding/paas/v4/chat/completions
+llm_model: GLM-5
+llm_model_fallback: GLM-4.7
+llm_api_key: ""  # or set MANON_LLM_API_KEY env var
+
+# Authentication
+api_keys: []  # pre-seeded API keys; or manage via DB
