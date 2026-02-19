@@ -117,8 +117,16 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
     entities: list[Entity] = []
     relations: list[Relation] = []
     fp = str(pr.path)
+    # Add a module-level entity so import relations have a valid source
+    entities.append(Entity(
+        id=module, kind="module", name=module,
+        description=f"module: {module}",
+        file_path=fp, line_start=0, line_end=0,
+    ))
+    local_names: set[str] = set()
     for sym in pr.symbols:
         eid = _make_entity_id(module, sym.name)
+        local_names.add(sym.name)
         entities.append(Entity(
             id=eid, kind=sym.kind, name=sym.name,
             description=_build_description(sym),
@@ -127,8 +135,10 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
     for call in pr.calls:
         if call.callee is None:
             continue
+        caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
+        callee_id = _make_entity_id(module, call.callee) if call.callee in local_names else call.callee
         relations.append(Relation(
-            src_id=call.caller, tgt_id=call.callee,
+            src_id=caller_id, tgt_id=callee_id,
             kind="calls", description=f"{call.caller} -> {call.callee}",
             file_path=fp, weight=1.0,
         ))

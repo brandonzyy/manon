@@ -102,6 +102,25 @@ async def index_project(project_id: str, clear: bool = Query(False)):
         raise HTTPException(400, "Project has no local_path")
     mg = MatrixoneGraph.get(local_path)
     result = await mg.index_report(incremental=not clear)
+    # Persist stats to DB
+    import json as _json
+    from datetime import datetime, timezone
+    stats_obj = {
+        "status": "done",
+        "entities": result.get("entities", 0),
+        "relations": result.get("relations", 0),
+        "files": result.get("files", 0),
+        "chunks": result.get("chunks", 0),
+        "skipped": result.get("skipped", 0),
+        "errors_count": len(result.get("errors", [])),
+        "entityTypes": result.get("entityTypes", {}),
+        "score": result.get("health", {}),
+        "lastUpdate": datetime.now(timezone.utc).isoformat(),
+    }
+    async with db_pool() as db:
+        await db.execute("UPDATE projects SET index_stats=?, updated_at=datetime('now') WHERE id=?",
+                         (_json.dumps(stats_obj, ensure_ascii=False), project_id))
+        await db.commit()
     return {"result": result}
 
 
