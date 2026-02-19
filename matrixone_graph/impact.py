@@ -1,0 +1,425 @@
+"""Impact analysis — git diff → changed symbols → graph caller traversal → risk.
+
+Replaces loomgraph's ImpactAnalyzer which queried LightRAG with NL ("What calls X?").
+Now uses CodeGraph predecessor traversal directly — no LLM calls, instant results.
+
+Designed for LLM consumers: returns structured ImpactResult with to_dict() for JSON.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from codeindex.parser import parse_file
+
+from .store import CodeGraph, Entity, Relation
+
+
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
+
+class ChangeType(Enum):
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+
+
+@dataclass
+class ChangedFile:
+    path: str
+    change_type: ChangeType
+    added_lines: list[tuple[int, int]] = field(default_factory=list)
+    deleted_lines: list[tuple[int, int]] = field(default_factory=list)
+
+
+@dataclass
+class ChangedSymbol:
+    name: str
+    file: str
+    change_type: ChangeType
+    lines_changed: int = 0
+    line_start: int = 0
+    line_end: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "file": self.file,
+                "change_type": self.change_type.value,
+                "lines_changed": self.lines_changed}
+
+@dataclass
+class Caller:
+    name: str
+    file: str
+    line: int = 0
+    depth: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"name": self.name, "file": self.file, "line": self.line}
+        if self.depth > 1:
+            d["depth"] = self.depth
+        return d
+
+
+@dataclass
+class RiskAssessment:
+    level: str  # "low", "medium", "high"
+    reason: str
+    suggestions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"level": self.level, "reason": self.reason,
+                "suggestions": self.suggestions}
+
+
+@dataclass
+class ImpactResult:
+    commit: str
+    changed_symbols: list[ChangedSymbol]
+    direct_callers: list[Caller] = field(default_factory=list)
+    indirect_callers: list[Caller] = field(default_factory=list)
+    affected_modules: list[str] = field(default_factory=list)
+    affected_tests: list[str] = field(default_factory=list)
+    risk: RiskAssessment | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "commit": self.commit,
+            "changed_symbols": [s.to_dict() for s in self.changed_symbols],
+            "direct_callers": [c.to_dict() for c in self.direct_callers],
+            "indirect_callers": [c.to_dict() for c in self.indirect_callers],
+            "affected_modules": self.affected_modules,
+            "affected_tests": self.affected_tests,
+        }
+        if self.risk:
+            d["risk"] = self.risk.to_dict()
+        return d
+
+
+# ---------------------------------------------------------------------------
+# Git diff parser
+# ---------------------------------------------------------------------------
+
+_FILE_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+class GitDiffParser:
+    """Parse git diff output into ChangedFile objects."""
+
+    def __init__(self, repo_path: Path = Path(".")) -> None:
+        self.repo_path = repo_path
+
+    def _git(self, *args: str) -> str:
+        r = subprocess.run(
+            ["git", "-C", str(self.repo_path), *args],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
+        return r.stdout
+
+    def for_commit(self, commit: str = "HEAD") -> list[ChangedFile]:
+        ref = f"{commit}~1..{commit}"
+        return self._parse(self._git("diff", ref, "--unified=0"))
+
+    def staged(self) -> list[ChangedFile]:
+        return self._parse(self._git("diff", "--cached", "--unified=0"))
+
+    def branch_diff(self, base: str, head: str = "HEAD") -> list[ChangedFile]:
+        return self._parse(self._git("diff", f"{base}..{head}", "--unified=0"))
+
+    def current_commit(self) -> str:
+        return self._git("rev-parse", "--short", "HEAD").strip()
+
+    def _parse(self, diff: str) -> list[ChangedFile]:
+        files: list[ChangedFile] = []
+        cur: ChangedFile | None = None
+        is_new = is_del = False
+        for line in diff.split("\n"):
+            m = _FILE_RE.match(line)
+            if m:
+                if cur:
+                    files.append(cur)
+                cur = ChangedFile(path=m.group(2), change_type=ChangeType.MODIFIED)
+                is_new = is_del = False
+                continue
+            if cur:
+                if line.startswith("new file"):
+                    is_new = True
+                    cur.change_type = ChangeType.ADDED
+                    continue
+                if line.startswith("deleted file"):
+                    is_del = True
+                    cur.change_type = ChangeType.DELETED
+                    continue
+            hm = _HUNK_RE.match(line)
+            if hm and cur:
+                os, oc = int(hm.group(1)), int(hm.group(2) or 1)
+                ns, nc = int(hm.group(3)), int(hm.group(4) or 1)
+                if oc > 0 and not is_new:
+                    cur.deleted_lines.append((os, os + oc - 1))
+                if nc > 0 and not is_del:
+                    cur.added_lines.append((ns, ns + nc - 1))
+        if cur:
+            files.append(cur)
+        return files
+
+
+# ---------------------------------------------------------------------------
+# Symbol extractor — uses codeindex Python API (not subprocess)
+# ---------------------------------------------------------------------------
+
+class ChangedSymbolExtractor:
+    """Extract code symbols from changed files using codeindex parser."""
+
+    def __init__(self, repo_path: Path = Path(".")) -> None:
+        self.repo_path = repo_path
+
+    def extract(self, files: list[ChangedFile]) -> list[ChangedSymbol]:
+        symbols: list[ChangedSymbol] = []
+        for f in files:
+            symbols.extend(self._from_file(f))
+        return symbols
+
+    def _from_file(self, cf: ChangedFile) -> list[ChangedSymbol]:
+        if cf.change_type == ChangeType.DELETED:
+            return [ChangedSymbol(
+                name=f"<deleted:{Path(cf.path).stem}>",
+                file=cf.path, change_type=ChangeType.DELETED,
+            )]
+        fp = self.repo_path / cf.path
+        if not fp.exists():
+            return []
+        try:
+            pr = parse_file(fp)
+        except Exception:
+            return []
+        if pr.error:
+            return []
+        if cf.change_type == ChangeType.ADDED:
+            return [
+                ChangedSymbol(
+                    name=s.name, file=cf.path, change_type=ChangeType.ADDED,
+                    line_start=s.line_start, line_end=s.line_end,
+                    lines_changed=s.line_end - s.line_start + 1,
+                )
+                for s in pr.symbols
+            ]
+        # MODIFIED — find symbols overlapping changed lines
+        ranges = cf.added_lines + cf.deleted_lines
+        result: list[ChangedSymbol] = []
+        for s in pr.symbols:
+            for rs, re_ in ranges:
+                if s.line_start <= re_ and rs <= s.line_end:
+                    changed = sum(
+                        min(s.line_end, e) - max(s.line_start, st) + 1
+                        for st, e in ranges if s.line_start <= e and st <= s.line_end
+                    )
+                    result.append(ChangedSymbol(
+                        name=s.name, file=cf.path, change_type=ChangeType.MODIFIED,
+                        line_start=s.line_start, line_end=s.line_end,
+                        lines_changed=changed,
+                    ))
+                    break
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Risk assessor
+# ---------------------------------------------------------------------------
+
+CORE_MODULES = {
+    "auth", "authentication", "security", "payment", "billing",
+    "database", "db", "core", "config", "settings",
+}
+
+
+class RiskAssessor:
+    """Assess risk level from impact analysis results."""
+
+    def __init__(self, low: int = 3, high: int = 10) -> None:
+        self.low = low
+        self.high = high
+
+    def assess(self, result: ImpactResult) -> RiskAssessment:
+        total = len(result.direct_callers) + len(result.indirect_callers)
+        is_core = any(
+            any(c in s.file.lower() for c in CORE_MODULES)
+            for s in result.changed_symbols
+        )
+        many_modules = len(result.affected_modules) >= 5
+
+        if is_core or total >= self.high or many_modules:
+            reasons = []
+            if is_core:
+                reasons.append("core module change")
+            if total >= self.high:
+                reasons.append(f"{total} callers affected")
+            if many_modules:
+                reasons.append(f"{len(result.affected_modules)} modules impacted")
+            return RiskAssessment(
+                level="high", reason="High risk: " + ", ".join(reasons),
+                suggestions=["Code review before merging",
+                              "Run full integration tests",
+                              "Verify backward compatibility"],
+            )
+        if total >= self.low:
+            return RiskAssessment(
+                level="medium",
+                reason=f"Medium risk: {total} callers, {len(result.affected_modules)} modules",
+                suggestions=["Review direct callers", "Run tests for affected modules"],
+            )
+        return RiskAssessment(
+            level="low",
+            reason=f"Low risk: {total} caller(s), limited blast radius",
+            suggestions=["Run unit tests for changed code"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Impact analyzer — uses CodeGraph traversal (no LLM calls)
+# ---------------------------------------------------------------------------
+
+class ImpactAnalyzer:
+    """Analyze impact of code changes using the knowledge graph.
+
+    Key difference from loomgraph: finds callers via CodeGraph predecessor
+    traversal instead of LightRAG NL queries. Zero LLM calls, instant results.
+    """
+
+    def __init__(self, graph: CodeGraph, repo_path: Path, max_depth: int = 2) -> None:
+        self.graph = graph
+        self.repo_path = repo_path
+        self.max_depth = max_depth
+        self._diff = GitDiffParser(repo_path)
+        self._extractor = ChangedSymbolExtractor(repo_path)
+        self._risk = RiskAssessor()
+
+    def analyze_commit(self, commit: str = "HEAD") -> ImpactResult:
+        files = self._diff.for_commit(commit)
+        symbols = self._extractor.extract(files)
+        commit_hash = self._diff.current_commit() if commit == "HEAD" else commit[:7]
+        return self._build_result(commit_hash, symbols)
+
+    def analyze_staged(self) -> ImpactResult:
+        files = self._diff.staged()
+        symbols = self._extractor.extract(files)
+        return self._build_result("staged", symbols)
+
+    def analyze_branch(self, base: str, head: str = "HEAD") -> ImpactResult:
+        files = self._diff.branch_diff(base, head)
+        symbols = self._extractor.extract(files)
+        return self._build_result(f"{base}..{head}", symbols)
+
+    def _build_result(self, commit: str, symbols: list[ChangedSymbol]) -> ImpactResult:
+        direct, indirect = self._find_callers(symbols)
+        modules = self._affected_modules(symbols, direct, indirect)
+        tests = [c.file for c in direct + indirect if self._is_test(c.file)]
+        result = ImpactResult(
+            commit=commit, changed_symbols=symbols,
+            direct_callers=direct, indirect_callers=indirect,
+            affected_modules=sorted(set(modules)),
+            affected_tests=sorted(set(tests)),
+        )
+        result.risk = self._risk.assess(result)
+        return result
+
+    def _find_callers(
+        self, symbols: list[ChangedSymbol],
+    ) -> tuple[list[Caller], list[Caller]]:
+        """Find callers by traversing CodeGraph predecessors (CALLS edges).
+
+        This replaces loomgraph's approach of sending NL queries to LightRAG.
+        Direct graph traversal is precise and instant.
+        """
+        direct: list[Caller] = []
+        indirect: list[Caller] = []
+        seen: set[str] = set()
+
+        for sym in symbols:
+            # Find entity IDs matching this symbol name
+            for eid in self._find_entity_ids(sym.name):
+                # Direct callers: predecessors with "calls" edge
+                for neighbor_ent, rels in self.graph.neighbors(eid, depth=1):
+                    has_call = any(
+                        r.kind == "calls" and r.tgt_id == eid for r in rels
+                    )
+                    if not has_call:
+                        continue
+                    key = f"{neighbor_ent.file_path}:{neighbor_ent.name}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    direct.append(Caller(
+                        name=neighbor_ent.name, file=neighbor_ent.file_path,
+                        line=neighbor_ent.line_start, depth=1,
+                    ))
+
+                # Indirect callers (depth 2+)
+                if self.max_depth > 1:
+                    for d_caller in list(direct):
+                        for d_eid in self._find_entity_ids(d_caller.name):
+                            for n_ent, n_rels in self.graph.neighbors(d_eid, depth=1):
+                                has_call = any(
+                                    r.kind == "calls" and r.tgt_id == d_eid
+                                    for r in n_rels
+                                )
+                                if not has_call:
+                                    continue
+                                key = f"{n_ent.file_path}:{n_ent.name}"
+                                if key in seen:
+                                    continue
+                                seen.add(key)
+                                indirect.append(Caller(
+                                    name=n_ent.name, file=n_ent.file_path,
+                                    line=n_ent.line_start, depth=2,
+                                ))
+
+        return direct, indirect
+
+    def _find_entity_ids(self, symbol_name: str) -> list[str]:
+        """Find entity IDs in the graph that match a symbol name."""
+        results = []
+        for nid, data in self.graph._g.nodes(data=True):
+            if data.get("name") == symbol_name:
+                results.append(nid)
+        return results
+
+    def _affected_modules(
+        self, symbols: list[ChangedSymbol],
+        direct: list[Caller], indirect: list[Caller],
+    ) -> list[str]:
+        modules: set[str] = set()
+        for s in symbols:
+            m = self._file_to_module(s.file)
+            if m:
+                modules.add(m)
+        for c in direct + indirect:
+            m = self._file_to_module(c.file)
+            if m:
+                modules.add(m)
+        return sorted(modules)
+
+    @staticmethod
+    def _file_to_module(fp: str) -> str:
+        if not fp.endswith(".py"):
+            return ""
+        return fp[:-3].replace("/", ".").replace("\\", ".").lstrip(".")
+
+    @staticmethod
+    def _is_test(fp: str) -> bool:
+        if not fp:
+            return False
+        fp_lower = fp.replace("\\", "/")
+        return (
+            fp_lower.startswith("tests/") or fp_lower.startswith("test/")
+            or "/tests/" in fp_lower or "/test/" in fp_lower
+            or fp_lower.endswith("_test.py")
+            or "test_" in Path(fp_lower).name
+        )
