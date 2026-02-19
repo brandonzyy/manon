@@ -28,40 +28,38 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .mode-btn.active{background:var(--accent);color:#fff}
 .mode-btn:hover:not(.active){background:rgba(255,255,255,.05)}
 
-/* ── Top Status Bar (1/4 height) ── */
-.status-bar{height:25vh;min-height:180px;display:grid;grid-template-columns:auto 1fr auto;gap:14px;padding:14px 20px;flex-shrink:0;border-bottom:1px solid var(--border)}
+/* ── Top Status Bar ── */
+.status-bar{height:auto;display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:8px 20px;flex-shrink:0;border-bottom:1px solid var(--border)}
 /* ── Code Health (left) ── */
-.score-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:140px}
-.score-ring{position:relative;width:72px;height:72px;margin-bottom:4px}
+.score-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 12px;text-align:center;display:flex;align-items:center;gap:10px;min-width:auto}
+.score-ring{position:relative;width:48px;height:48px;flex-shrink:0}
 .score-ring svg{transform:rotate(-90deg)}
 .score-ring-bg{fill:none;stroke:var(--border);stroke-width:6}
 .score-ring-fg{fill:none;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .8s ease,stroke .3s}
-.score-num{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:22px;font-weight:800}
-.score-label{font-size:11px;color:var(--text2);margin-bottom:2px}
-.score-dims{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;width:100%;margin-top:6px}
-.score-dim{font-size:9px;color:var(--text2);display:flex;justify-content:space-between;padding:2px 5px;background:rgba(255,255,255,.03);border-radius:3px}
+.score-num{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:16px;font-weight:800}
+.score-label{font-size:10px;color:var(--text2);margin-bottom:0}
+.score-dims{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:2px}
+.score-dim{font-size:9px;color:var(--text2);display:flex;justify-content:space-between;padding:1px 4px;background:rgba(255,255,255,.03);border-radius:3px}
 .score-dim-val{font-weight:600}
 
-/* ── Metrics 2x2 (center) ── */
-.metrics-center{display:flex;flex-direction:column;justify-content:center}
-.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.stat-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
-.stat-val{font-size:22px;font-weight:700;margin-bottom:2px}
-.stat-label{font-size:11px;color:var(--text2)}
+/* ── Metrics 1x4 (center) ── */
+.metrics-center{display:flex;align-items:center}
+.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;width:100%}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;text-align:center}
+.stat-val{font-size:18px;font-weight:700;margin-bottom:0}
+.stat-label{font-size:10px;color:var(--text2)}
 .stat-val.green{color:var(--green)}.stat-val.blue{color:var(--blue)}.stat-val.purple{color:var(--purple)}.stat-val.yellow{color:var(--yellow)}.stat-val.cyan{color:var(--cyan)}
-.entity-types-bar{display:flex;gap:2px;margin-top:6px;height:5px;border-radius:3px;overflow:hidden}
-.et-seg{height:100%;border-radius:3px}
 .pipeline-indicator{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text2);margin-top:3px}
 .pipeline-dot{width:7px;height:7px;border-radius:50%}
 .pipeline-dot.idle{background:var(--green)}.pipeline-dot.busy{background:var(--yellow);animation:pulse 1.2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ── Info (right) ── */
-.info-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;justify-content:center;gap:12px;min-width:150px}
+.info-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:14px;min-width:auto}
 .info-row{text-align:center}
-.info-val{font-size:18px;font-weight:700;color:var(--yellow)}
-.info-label{font-size:11px;color:var(--text2);margin-top:2px}
-.pipeline-steps{display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.info-val{font-size:14px;font-weight:700;color:var(--yellow)}
+.info-label{font-size:10px;color:var(--text2);margin-top:1px}
+.pipeline-steps{display:grid;grid-template-columns:repeat(4,auto);gap:3px}
 .ps{display:inline-flex;align-items:center;gap:3px;font-size:9px;color:var(--text2);padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.03)}
 .ps.active{color:var(--accent);background:rgba(74,144,226,.1)}
 .ps.done{color:var(--green);background:rgba(52,199,89,.1)}
@@ -178,9 +176,11 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 <div class="status-bar">
   <!-- Left: Code Health -->
   <div class="score-card">
-    <div class="score-ring"><svg width="72" height="72" viewBox="0 0 72 72"><circle class="score-ring-bg" cx="36" cy="36" r="30"/><circle class="score-ring-fg" id="scoreArc" cx="36" cy="36" r="30" stroke="var(--text2)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/></svg><div class="score-num" id="scoreNum">—</div></div>
-    <div class="score-label">Code Health</div>
-    <div class="score-dims" id="scoreDims"></div>
+    <div class="score-ring"><svg width="48" height="48" viewBox="0 0 48 48"><circle class="score-ring-bg" cx="24" cy="24" r="20"/><circle class="score-ring-fg" id="scoreArc" cx="24" cy="24" r="20" stroke="var(--text2)" stroke-dasharray="125.7" stroke-dashoffset="125.7"/></svg><div class="score-num" id="scoreNum">—</div></div>
+    <div>
+      <div class="score-label">Code Health</div>
+      <div class="score-dims" id="scoreDims"></div>
+    </div>
   </div>
   <!-- Center: Entities / Relations / Files / Chunks 2x2 -->
   <div class="metrics-center">
@@ -188,7 +188,6 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <div class="stat-card">
         <div class="stat-val green" id="statEntities">—</div>
         <div class="stat-label">Entities</div>
-        <div class="entity-types-bar" id="entityTypesBar"></div>
       </div>
       <div class="stat-card">
         <div class="stat-val blue" id="statRelations">—</div>
@@ -299,9 +298,9 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
   </div>
 </div>
 <script>
-const CIRC=2*Math.PI*30;
+const CIRC=2*Math.PI*20;
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
-const STAGE_L={idle:'空闲',clarifying:'确认',['spec-ready']:'规格',['user-confirming']:'确认',designing:'设计',decomposing:'拆解',executing:'执行',done:'完成',failed:'失败'};
+const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',done:'开发完成',failed:'执行失败'};
 let ws=null,projectId='',currentStage='idle',chatMode='coach';
 let queries=[],timeline=[];
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
@@ -355,10 +354,6 @@ function updateGraphStats(s){
     const labels={cq:'CQ',ts:'TS',mt:'MT',dc:'DC',ir:'IR',mc:'MC',tc:'TC',cs:'CS'};const dims=$('scoreDims');dims.innerHTML='';
     for(const[k,label] of Object.entries(labels)){if(sc[k]!==undefined){const d=document.createElement('div');d.className='score-dim';d.innerHTML=`<span>${label}</span><span class="score-dim-val">${sc[k]}</span>`;dims.appendChild(d)}}
   }
-  const et=stats.entityTypes||{};const total=Object.values(et).reduce((a,b)=>a+b,0);
-  const bar=$('entityTypesBar');bar.innerHTML='';
-  const colors={function:'#4a90e2',class:'#af52de',method:'#34c759',module:'#f5a623',data:'#5eead4'};
-  if(total>0)for(const[type,count] of Object.entries(et).sort((a,b)=>b[1]-a[1])){const seg=document.createElement('div');seg.className='et-seg';seg.style.width=(count/total*100)+'%';seg.style.background=colors[type]||'#888';bar.appendChild(seg)}
 }
 
 // ── Monitor WS ──
