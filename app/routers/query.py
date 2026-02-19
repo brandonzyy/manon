@@ -14,7 +14,7 @@ router = APIRouter(tags=["query"], dependencies=[Depends(require_api_key)])
 @router.get("/projects/{project_id}/search")
 async def search(project_id: str, q: str = Query(...), mode: str = Query("local")):
     proj = await _get_project(project_id)
-    result = await loomgraph.search(q, mode=mode, workspace=proj["workspace"])
+    result = await loomgraph.search(q, mode=mode, repo_path=proj["local_path"])
     return {"result": result}
 
 
@@ -26,14 +26,14 @@ async def graph(
     depth: int = Query(2),
 ):
     proj = await _get_project(project_id)
-    result = await loomgraph.graph(symbol, direction=direction, depth=depth, workspace=proj["workspace"])
+    result = await loomgraph.graph(symbol, depth=depth, repo_path=proj["local_path"])
     return {"result": result}
 
 
 @router.get("/projects/{project_id}/impact")
 async def impact(project_id: str, file: str | None = Query(None), staged: bool = Query(False)):
     proj = await _get_project(project_id)
-    result = await loomgraph.impact(file=file, staged=staged, workspace=proj["workspace"])
+    result = await loomgraph.impact(file=file, staged=staged, repo_path=proj["local_path"])
     return {"result": result}
 @router.get("/projects/{project_id}/stats")
 async def stats(project_id: str):
@@ -48,18 +48,19 @@ async def stats(project_id: str):
 
 @router.get("/projects/{project_id}/status")
 async def loomgraph_status(project_id: str):
-    """Check LoomGraph system status (LightRAG, embedding, codeindex)."""
-    return await loomgraph.status()
+    """Check MatrixoneGraph index status for the project."""
+    proj = await _get_project(project_id)
+    return await loomgraph.status(repo_path=proj["local_path"])
 
 
 @router.post("/projects/{project_id}/init")
 async def init_project(project_id: str):
-    """Initialize LoomGraph for the project — verify connectivity + return DB stats."""
+    """Initialize MatrixoneGraph for the project — verify index + return DB stats."""
     proj = await _get_project(project_id)
     results = {}
-    # 1. Check system status
+    # 1. Check index status
     try:
-        results["status_check"] = await loomgraph.status()
+        results["status_check"] = await loomgraph.status(repo_path=proj["local_path"])
     except Exception as exc:
         results["status_check"] = {"error": str(exc)}
     # 2. Return stats from DB
@@ -80,22 +81,13 @@ async def init_project(project_id: str):
 
 @router.post("/projects/{project_id}/index")
 async def index_project(project_id: str, clear: bool = Query(False)):
-    """Run full LoomGraph indexing for the project."""
+    """Run MatrixoneGraph indexing for the project."""
     proj = await _get_project(project_id)
     local_path = proj["local_path"]
-    workspace = proj["workspace"]
     if not local_path:
         raise HTTPException(400, "Project has no local_path")
-    results = []
-    # Index each standard directory
-    dirs = ["agent", "electron", "renderer", "skills"]
-    for i, d in enumerate(dirs):
-        try:
-            r = await loomgraph.index_dir(d, clear=(clear and i == 0), workspace=workspace, cwd=local_path)
-            results.append({"dir": d, "status": "ok", "result": r})
-        except Exception as exc:
-            results.append({"dir": d, "status": "error", "error": str(exc)})
-    return {"results": results}
+    result = await loomgraph.index_repo(local_path, incremental=not clear)
+    return {"result": result}
 
 
 async def _get_project(project_id: str) -> dict:

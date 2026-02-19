@@ -216,7 +216,7 @@ async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
 
 
 async def _handle_cli_init(dev_id: str, msg: dict) -> None:
-    """Check CLI availability + LoomGraph status when user switches to CLI mode."""
+    """Check CLI availability + MatrixoneGraph status when user switches to CLI mode."""
     import json as _json
     import shutil
     from ..services import loomgraph
@@ -228,27 +228,29 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
     bin_name = "claude" if cli == "claude" else "codebuddy"
     cli_available = shutil.which(bin_name) is not None
 
-    # Check project LoomGraph status
+    # Check project graph status
     graph_status = "no_project"
     graph_stats = {}
     workspace = None
+    local_path = None
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
             row = await db.execute_fetchone(
-                "SELECT workspace, index_stats FROM projects WHERE id = ?",
+                "SELECT workspace, local_path, index_stats FROM projects WHERE id = ?",
                 (project_id,),
             )
             if row:
                 workspace = row["workspace"]
+                local_path = row["local_path"]
                 if row["index_stats"]:
                     try:
                         graph_stats = _json.loads(row["index_stats"])
                     except Exception:
                         pass
-                if workspace:
+                if local_path:
                     try:
-                        s = await loomgraph.status()
+                        s = await loomgraph.status(repo_path=local_path)
                         graph_status = "connected" if s.get("success") else "disconnected"
                     except Exception:
                         graph_status = "disconnected"
@@ -294,15 +296,15 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
                 cwd = row["local_path"]
                 workspace = row["workspace"]
 
-    # ── Mandatory LoomGraph query ──
+    # ── Mandatory MatrixoneGraph query ──
     graph_context = ""
-    if workspace:
+    if cwd:
         try:
             await _send_thinking(dev_id, True, "查询知识图谱...")
-            result = await loomgraph.search(prompt, mode="hybrid", workspace=workspace)
+            result = await loomgraph.search(prompt, mode="hybrid", repo_path=cwd)
             if result.get("success") and result.get("data", {}).get("response"):
                 data = result["data"]
-                graph_context = f"\n\n## 项目知识图谱上下文 (LoomGraph)\n\n{data['response']}\n"
+                graph_context = f"\n\n## 项目知识图谱上下文 (MatrixoneGraph)\n\n{data['response']}\n"
                 refs = data.get("references") or []
                 if refs:
                     graph_context += "\n### 相关引用\n" + "\n".join(
@@ -311,14 +313,14 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
                 await _send_dev(dev_id, {
                     "type": "llm-query",
                     "caller": f"{cli}-chat",
-                    "command": "loomgraph.search(hybrid)",
+                    "command": "matrixone_graph.query(hybrid)",
                     "query": prompt[:120],
                     "ts": datetime.now().isoformat(),
                 })
             await _send_thinking(dev_id, False)
         except Exception as exc:
             await _send_thinking(dev_id, False)
-            log.warning("LoomGraph query failed for %s chat: %s", cli, exc)
+            log.warning("MatrixoneGraph query failed for %s chat: %s", cli, exc)
 
     # ── Orchestrated pipeline ──
     state = _ensure_session(dev_id)

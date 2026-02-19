@@ -20,12 +20,9 @@ class ManonSettings(BaseSettings):
     db_path: str = "./manon.db"
     repos_dir: str = "./repos"
 
-    # LoomGraph / CodeIndex — local venv binaries
-    loomgraph_bin: str = str(_VENV_BIN / "loomgraph")
+    # MatrixoneGraph / CodeIndex
     codeindex_bin: str = str(_VENV_BIN / "codeindex")
-    lightrag_url: str = "http://117.131.45.179:3010"
     embedding_url: str = "http://117.131.45.179:3002"
-    loomgraph_workspace: str = "manon_default"
 
     # API Server (auto-fix hub)
     api_server_ws: str = "ws://localhost:3501/ws/coach"

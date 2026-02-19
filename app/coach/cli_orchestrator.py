@@ -1,7 +1,7 @@
-"""CLI Orchestrator — LoomGraph → task decomposition → auto-fix agent → review.
+"""CLI Orchestrator — MatrixoneGraph → task decomposition → auto-fix agent → review.
 
 Replaces the simple CLI subprocess approach with an intelligent pipeline:
-1. LoomGraph hybrid query (already done by caller)
+1. MatrixoneGraph hybrid query (already done by caller)
 2. LLM decomposes user request into sub-tasks
 3. For each task: query graph → build context → assign to agent → review
 4. Report results back to user
@@ -99,7 +99,7 @@ async def orchestrate_cli_request(
                 "title": task.get("title", ""),
             })
 
-            success = await _assign_and_review(state, task, workspace, cwd)
+            success = await _assign_and_review(state, task, cwd, cwd)
 
             if success:
                 task["status"] = "completed"
@@ -165,17 +165,17 @@ async def _decompose_with_graph(
 
 async def _query_graph_for_task(
     task: dict,
-    workspace: str | None,
+    repo_path: str | None,
 ) -> str:
-    """Query LoomGraph for task-specific context using graph_queries."""
+    """Query MatrixoneGraph for task-specific context using graph_queries."""
     queries = task.get("graph_queries", [])
-    if not queries or not workspace:
+    if not queries or not repo_path:
         return ""
 
     parts: list[str] = []
     for q in queries[:5]:  # limit to 5 queries per task
         try:
-            result = await loomgraph.search(q, mode="hybrid", workspace=workspace)
+            result = await loomgraph.search(q, mode="hybrid", repo_path=repo_path)
             if result.get("success") and result.get("data", {}).get("response"):
                 parts.append(f"### {q}\n{result['data']['response']}")
         except Exception as exc:
@@ -188,7 +188,7 @@ async def _build_task_context(
     task: dict,
     graph_context: str,
     state: FeatureState,
-    workspace: str | None,
+    repo_path: str | None,
 ) -> str:
     """Assemble full context for a single task, capped at MAX_CONTEXT_CHARS."""
     parts: list[str] = []
@@ -209,7 +209,7 @@ async def _build_task_context(
         parts.append(f"## 前序任务产出\n{summaries}")
 
     # Task-specific graph context
-    task_graph = await _query_graph_for_task(task, workspace)
+    task_graph = await _query_graph_for_task(task, repo_path)
     if task_graph:
         parts.append(f"## 任务相关图谱上下文\n{task_graph}")
 
@@ -226,7 +226,7 @@ async def _build_task_context(
 async def _assign_and_review(
     state: FeatureState,
     task: dict,
-    workspace: str | None,
+    repo_path: str | None,
     cwd: str | None,
 ) -> bool:
     """Assign task to agent, wait for result, review. Retry up to MAX_RETRIES."""
@@ -236,7 +236,7 @@ async def _assign_and_review(
     graph_context = ""
     # Reconstruct from state if available
     completed = [t for t in state.tasks if t.get("status") == "completed"]
-    context = await _build_task_context(task, graph_context, state, workspace)
+    context = await _build_task_context(task, graph_context, state, repo_path)
 
     # Resolve repo info
     repo_path = ""
@@ -260,7 +260,7 @@ async def _assign_and_review(
         "scopedFiles": task.get("files", []),
         "context": context,
         "repoPath": repo_path or cwd or "",
-        "workspace": workspace or "",
+        "workspace": "",
         "testCommand": test_command,
         "skipGraph": True,
     }

@@ -30,15 +30,10 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     await init_db(settings.db_path)
     log.info("DB initialized at %s", settings.db_path)
-    # Set env var so loomgraph internal get_settings() finds LightRAG
-    os.environ.setdefault("LOOMGRAPH_LIGHTRAG__API_URL", settings.lightrag_url)
-    # Configure LoomGraph (direct Python API)
-    from .services.loomgraph import configure as configure_loomgraph
-    configure_loomgraph(
-        lightrag_url=settings.lightrag_url,
-        workspace=settings.loomgraph_workspace,
-    )
-    log.info("LoomGraph: %s  Workspace: %s", settings.lightrag_url, settings.loomgraph_workspace)
+    # Configure MatrixoneGraph-backed service
+    from .services.loomgraph import configure as configure_loomgraph, shutdown as shutdown_loomgraph
+    configure_loomgraph(embedding_url=settings.embedding_url)
+    log.info("MatrixoneGraph: embedding_url=%s", settings.embedding_url)
     # Start monitor broadcast loop
     monitor_task = asyncio.create_task(_monitor_broadcast_loop())
     log.info("Manon Gateway ready (no upstream — direct agent management)")
@@ -46,6 +41,7 @@ async def lifespan(app: FastAPI):
     webbrowser.open(f"http://localhost:{settings.port}")
     yield
     monitor_task.cancel()
+    await shutdown_loomgraph()
     await hub.shutdown()
     log.info("Manon Gateway shut down")
 

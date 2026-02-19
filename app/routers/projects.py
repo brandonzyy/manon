@@ -69,7 +69,7 @@ async def setup_project(body: ProjectSetup):
         raise HTTPException(400, f"Invalid source: {body.source}")
 
     name = body.name or Path(local_path).name
-    workspace = name  # Use project name as workspace for LightRAG
+    workspace = name  # Use project name as workspace identifier
 
     async with db_pool() as db:
         await db.execute(
@@ -87,7 +87,7 @@ async def setup_project(body: ProjectSetup):
                                  (json.dumps({"status": "indexing"}), pid))
                 await db.commit()
             _index_tasks[pid]["status"] = "indexing"
-            result = await loomgraph.index_repo(local_path, workspace=workspace)
+            result = await loomgraph.index_repo(local_path)
             _index_tasks[pid]["status"] = "done"
             _index_tasks[pid]["result"] = result
             # Save stats to DB
@@ -248,7 +248,7 @@ async def push_update(project_id: str, body: PushUpdate | None = None):
             _index_tasks[project_id] = {"status": "updating", "result": {}}
 
             result = await loomgraph.update_index(
-                local_path, changed_files=changed_files, workspace=workspace,
+                local_path, changed_files=changed_files,
             )
 
             # Merge result into existing stats

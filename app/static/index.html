@@ -416,7 +416,7 @@ function showCliReady(msg){
   lines.push(cliOk?'CLI: 已就绪':'CLI: 未找到，请先安装 '+name);
   if(gs==='connected') lines.push(`知识图谱: 已连接 (${msg.entities||0} entities, ${msg.relations||0} relations)`);
   else if(gs==='not_indexed') lines.push('知识图谱: 项目未索引，建议先初始化');
-  else if(gs==='disconnected') lines.push('知识图谱: LightRAG 未连接');
+  else if(gs==='disconnected') lines.push('知识图谱: 未连接');
   else lines.push('知识图谱: 请先选择项目');
   if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 LoomGraph 上下文。');
   addMessage(lines.join('\n'),'system');
