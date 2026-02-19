@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from ..auth import require_api_key
 from ..db import db_pool
 from ..services.git import clone_or_pull
-from ..services import loomgraph
+from matrixone_graph import MatrixoneGraph
 
 log = logging.getLogger("manon.projects")
 
@@ -87,7 +87,7 @@ async def setup_project(body: ProjectSetup):
                                  (json.dumps({"status": "indexing"}), pid))
                 await db.commit()
             _index_tasks[pid]["status"] = "indexing"
-            result = await loomgraph.index_repo(local_path)
+            result = await MatrixoneGraph.get(local_path).index_report()
             _index_tasks[pid]["status"] = "done"
             _index_tasks[pid]["result"] = result
             # Save stats to DB
@@ -247,9 +247,7 @@ async def push_update(project_id: str, body: PushUpdate | None = None):
                 await db.commit()
             _index_tasks[project_id] = {"status": "updating", "result": {}}
 
-            result = await loomgraph.update_index(
-                local_path, changed_files=changed_files,
-            )
+            result = await MatrixoneGraph.get(local_path).index_report(incremental=True)
 
             # Merge result into existing stats
             async with db_pool() as db:

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ..auth import require_api_key
 from ..db import db_pool
-from ..services import loomgraph
+from matrixone_graph import MatrixoneGraph
 from ..services.git import clone_or_pull
 
 router = APIRouter(tags=["indexing"], dependencies=[Depends(require_api_key)])
@@ -19,7 +19,7 @@ async def index_project(project_id: str):
         row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id=?", (project_id,))
     if not row:
         raise HTTPException(404, "Project not found")
-    result = await loomgraph.index_repo(row["local_path"])
+    result = await MatrixoneGraph.get(row["local_path"]).index_report()
     return {"status": "indexed", "output": result}
 
 
@@ -29,7 +29,7 @@ async def update_project_index(project_id: str):
         row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id=?", (project_id,))
     if not row:
         raise HTTPException(404, "Project not found")
-    result = await loomgraph.update_index(row["local_path"])
+    result = await MatrixoneGraph.get(row["local_path"]).index_report(incremental=True)
     return {"status": "updated", "output": result}
 
 
@@ -43,5 +43,5 @@ async def webhook(project_id: str, request: Request):
     if not row:
         raise HTTPException(404, "Project not found")
     local_path = await clone_or_pull(project_id, row["git_url"], row["branch"])
-    result = await loomgraph.update_index(local_path)
+    result = await MatrixoneGraph.get(local_path).index_report(incremental=True)
     return {"status": "webhook processed", "output": result}

@@ -219,7 +219,7 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
     """Check CLI availability + MatrixoneGraph status when user switches to CLI mode."""
     import json as _json
     import shutil
-    from ..services import loomgraph
+    from matrixone_graph import MatrixoneGraph
 
     cli = msg.get("cli", "claude")
     project_id = msg.get("projectId", "")
@@ -250,8 +250,9 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
                         pass
                 if local_path:
                     try:
-                        s = await loomgraph.status(repo_path=local_path)
-                        graph_status = "connected" if s.get("success") else "disconnected"
+                        mg = MatrixoneGraph.get(local_path)
+                        s = mg.status()
+                        graph_status = "connected" if s.get("indexed") else "disconnected"
                     except Exception:
                         graph_status = "disconnected"
                 else:
@@ -274,7 +275,7 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
     Flow: LoomGraph query → task decomposition → agent execution → review.
     """
     from datetime import datetime
-    from ..services import loomgraph
+    from matrixone_graph import MatrixoneGraph
     from .cli_orchestrator import orchestrate_cli_request
 
     cli = "claude" if msg.get("type") == "claude-chat" else "codebuddy"
@@ -301,15 +302,10 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
     if cwd:
         try:
             await _send_thinking(dev_id, True, "查询知识图谱...")
-            result = await loomgraph.search(prompt, mode="hybrid", repo_path=cwd)
-            if result.get("success") and result.get("data", {}).get("response"):
-                data = result["data"]
-                graph_context = f"\n\n## 项目知识图谱上下文 (MatrixoneGraph)\n\n{data['response']}\n"
-                refs = data.get("references") or []
-                if refs:
-                    graph_context += "\n### 相关引用\n" + "\n".join(
-                        f"- {r}" for r in refs[:10]
-                    ) + "\n"
+            mg = MatrixoneGraph.get(cwd)
+            result = await mg.query(prompt, top_k=10, depth=1)
+            if result.context:
+                graph_context = f"\n\n## 项目知识图谱上下文 (MatrixoneGraph)\n\n{result.context}\n"
                 await _send_dev(dev_id, {
                     "type": "llm-query",
                     "caller": f"{cli}-chat",

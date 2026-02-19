@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 
 from ..services.llm import call_glm5, parse_json_from_llm
-from ..services import loomgraph
+from matrixone_graph import MatrixoneGraph
 from ..ws_hub import hub
 from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking
 
@@ -175,9 +175,10 @@ async def _query_graph_for_task(
     parts: list[str] = []
     for q in queries[:5]:  # limit to 5 queries per task
         try:
-            result = await loomgraph.search(q, mode="hybrid", repo_path=repo_path)
-            if result.get("success") and result.get("data", {}).get("response"):
-                parts.append(f"### {q}\n{result['data']['response']}")
+            mg = MatrixoneGraph.get(repo_path)
+            result = await mg.query(q, top_k=10, depth=1)
+            if result.context:
+                parts.append(f"### {q}\n{result.context}")
         except Exception as exc:
             log.debug("Graph query '%s' failed: %s", q, exc)
 

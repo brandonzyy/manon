@@ -30,9 +30,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     await init_db(settings.db_path)
     log.info("DB initialized at %s", settings.db_path)
-    # Configure MatrixoneGraph-backed service
-    from .services.loomgraph import configure as configure_loomgraph, shutdown as shutdown_loomgraph
-    configure_loomgraph(embedding_url=settings.embedding_url)
+    # Configure MatrixoneGraph pool
+    from matrixone_graph import MatrixoneGraph
+    MatrixoneGraph.configure(embedding_url=settings.embedding_url)
     log.info("MatrixoneGraph: embedding_url=%s", settings.embedding_url)
     # Start monitor broadcast loop
     monitor_task = asyncio.create_task(_monitor_broadcast_loop())
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     webbrowser.open(f"http://localhost:{settings.port}")
     yield
     monitor_task.cancel()
-    await shutdown_loomgraph()
+    await MatrixoneGraph.shutdown_all()
     await hub.shutdown()
     log.info("Manon Gateway shut down")
 

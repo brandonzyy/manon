@@ -1,15 +1,21 @@
-"""MatrixoneGraph — built-in graph + vector engine.
+"""MatrixoneGraph — built-in graph + vector engine for LLM agents.
 
 Usage::
 
     from matrixone_graph import MatrixoneGraph
 
-    kg = MatrixoneGraph("/path/to/repo", embedding_url="http://localhost:8080")
-    result = await kg.index()
-    answer = await kg.query("authentication flow")
-    impact = kg.impact_commit()          # git diff → callers → risk
-    health = await kg.health()           # 8-dimension code health
-    await kg.close()
+    # Configure once at startup
+    MatrixoneGraph.configure(embedding_url="http://localhost:8080")
+
+    # Get pooled instance (auto-created per repo)
+    mg = MatrixoneGraph.get("/path/to/repo")
+    result = await mg.index()
+    answer = await mg.query("authentication flow")
+    impact = mg.impact_commit()
+    health = await mg.health()
+
+    # Shutdown all instances
+    await MatrixoneGraph.shutdown_all()
 """
 
 from __future__ import annotations
@@ -36,6 +42,33 @@ __all__ = ["MatrixoneGraph", "IndexResult", "QueryResult"]
 class MatrixoneGraph:
     """Facade — single entry point for indexing, querying, impact, and health."""
 
+    # Class-level instance pool
+    _pool: dict[str, "MatrixoneGraph"] = {}
+    _embedding_url: str = "http://localhost:8080"
+
+    @classmethod
+    def configure(cls, *, embedding_url: str = "") -> None:
+        if embedding_url:
+            cls._embedding_url = embedding_url
+
+    @classmethod
+    def get(cls, repo_path: str | Path) -> "MatrixoneGraph":
+        """Get or create a pooled instance for a repo path."""
+        key = str(Path(repo_path).resolve())
+        if key not in cls._pool:
+            cls._pool[key] = cls(key, embedding_url=cls._embedding_url)
+        return cls._pool[key]
+
+    @classmethod
+    async def shutdown_all(cls) -> None:
+        """Close all pooled instances (call from app lifespan shutdown)."""
+        for mg in cls._pool.values():
+            try:
+                await mg.close()
+            except Exception:
+                pass
+        cls._pool.clear()
+
     def __init__(
         self,
         repo_path: str | Path,
@@ -48,11 +81,30 @@ class MatrixoneGraph:
             base_url=embedding_url, batch_size=batch_size
         )
 
+    # -- Indexing --
+
     async def index(self, *, incremental=True, on_progress=None) -> IndexResult:
         return await index_repo(
             self.repo_path, self._embedder,
             incremental=incremental, on_progress=on_progress,
         )
+
+    async def index_report(self, *, incremental=True, on_progress=None) -> dict:
+        """Index + health scan, return combined dict for API consumers."""
+        result = await self.index(incremental=incremental, on_progress=on_progress)
+        health = await self.health()
+        return {
+            "files": result.files_scanned,
+            "entities": result.entities_added,
+            "relations": result.relations_added,
+            "chunks": result.chunks_added,
+            "skipped": result.files_skipped,
+            "errors": [],
+            "entityTypes": {},
+            "health": health,
+        }
+
+    # -- Query --
 
     async def query(self, text: str, *, top_k=10, depth=1) -> QueryResult:
         return await query(
@@ -85,7 +137,6 @@ class MatrixoneGraph:
     # -- Health scoring --
 
     async def health(self) -> dict:
-        """Compute 8-dimension code health score for the repo."""
         from .health import scan_file, compute_score
         from codeindex.scanner import scan_directory
         from codeindex.config import Config
