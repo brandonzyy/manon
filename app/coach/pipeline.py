@@ -9,7 +9,9 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from ..ws_hub import hub
@@ -103,7 +105,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     import time
     from datetime import datetime
     from matrixone_graph import MatrixoneGraph
-    from ..services.llm import call_glm5
+    from ..services.llm import llm_chat_stream
 
     prompt = msg.get("content", "").strip()
     if not prompt:
@@ -135,7 +137,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 if result.context:
                     graph_context = result.context
                     context_tokens = len(graph_context) // 2  # rough CJK estimate
-                    await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens} tokens ({graph_ms}ms)")
+                    await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens/1000:.1f}k tokens ({graph_ms}ms)")
                     await _send_dev(dev_id, {
                         "type": "llm-query", "caller": "manon",
                         "command": "matrixone_graph.query(hybrid)",
@@ -180,18 +182,147 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
 
     messages = [{"role": "system", "content": system}] + history
 
-    await _send_thinking(dev_id, True, f"调用 LLM (~{context_tokens} tokens 上下文)...")
+    await _send_thinking(dev_id, True, f"调用 LLM (~{context_tokens/1000:.1f}k tokens 上下文)...")
     try:
         t0 = time.monotonic()
-        reply = await call_glm5(None, None, messages=messages, max_tokens=4096)
+        await _send_dev(dev_id, {"type": "coach-stream-start"})
+        full_reasoning = ""
+        full_content = ""
+        async for chunk in llm_chat_stream(messages, max_tokens=4096):
+            if chunk["type"] == "reasoning":
+                full_reasoning += chunk["delta"]
+                await _send_dev(dev_id, {"type": "coach-reasoning-delta", "delta": chunk["delta"]})
+            else:
+                full_content += chunk["delta"]
+                await _send_dev(dev_id, {"type": "coach-content-delta", "delta": chunk["delta"]})
+            await asyncio.sleep(0)  # flush WS between chunks
         llm_ms = int((time.monotonic() - t0) * 1000)
-        history.append({"role": "assistant", "content": reply})
-        await _send_thinking(dev_id, True, f"LLM 完成 ({llm_ms}ms)")
+        history.append({"role": "assistant", "content": full_content})
+        await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
         await _send_thinking(dev_id, False)
-        await _send_chat(dev_id, reply)
+        await _send_dev(dev_id, {"type": "coach-stream-end"})
     except Exception as exc:
         await _send_thinking(dev_id, False)
+        await _send_dev(dev_id, {"type": "coach-stream-end"})
         await _send_chat(dev_id, f"LLM 调用失败：{exc}", role="system")
+
+
+# ---- Report generation ----
+
+REPORTS_DIR = Path(__file__).resolve().parent.parent / "static" / "reports"
+
+_REPORT_CSS = """
+body{font-family:'Segoe UI','Noto Sans SC',sans-serif;max-width:860px;margin:40px auto;padding:0 24px;color:#1a1a1a;line-height:1.7}
+h1{font-size:22px;border-bottom:2px solid #4a90e2;padding-bottom:8px;margin-bottom:20px}
+h2{font-size:16px;color:#4a90e2;margin:24px 0 10px;border-left:4px solid #4a90e2;padding-left:10px}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
+th,td{padding:6px 10px;border:1px solid #ddd;text-align:left}
+th{background:#f5f7fa;font-weight:600}
+ul{padding-left:20px}
+li{margin:3px 0}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff}
+.badge-ok{background:#34c759}.badge-fail{background:#ff3b30}.badge-skip{background:#f5a623}
+pre{background:#f5f7fa;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px}
+.meta{color:#888;font-size:12px;margin-bottom:20px}
+"""
+
+
+def _esc(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+async def generate_report(state: FeatureState) -> None:
+    """Build an HTML report from pipeline state and notify the frontend."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    date_str = now.strftime("%Y%m%d_%H%M")
+    title = (state.spec or {}).get("title", state.description[:40]) or state.feature_id
+    safe_name = f"{state.feature_id}_{date_str}"
+
+    # ── Build HTML sections ──
+    parts: list[str] = []
+    parts.append(f"<h1>{_esc(title)}</h1>")
+    parts.append(f'<div class="meta">Feature #{_esc(state.feature_id)} · {now.strftime("%Y-%m-%d %H:%M")}</div>')
+
+    # Description
+    parts.append("<h2>需求描述</h2>")
+    parts.append(f"<p>{_esc(state.description)}</p>")
+
+    # Clarification Q&A
+    if state.conversation_history:
+        parts.append("<h2>需求对齐</h2>")
+        parts.append("<table><tr><th>问题</th><th>回答</th></tr>")
+        for qa in state.conversation_history:
+            parts.append(f"<tr><td>{_esc(qa.get('question',''))}</td><td>{_esc(qa.get('answer',''))}</td></tr>")
+        parts.append("</table>")
+
+    # Spec
+    spec = state.spec or {}
+    if spec:
+        parts.append("<h2>功能规格</h2>")
+        parts.append(f"<p><strong>范围:</strong> {_esc(spec.get('scope',''))}</p>")
+        reqs = spec.get("requirements", [])
+        if reqs:
+            parts.append("<ul>")
+            for r in reqs:
+                parts.append(f"<li>[{_esc(r.get('priority','MUST'))}] {_esc(r.get('title',''))}</li>")
+            parts.append("</ul>")
+
+    # Design
+    design = state.design or {}
+    if design:
+        parts.append("<h2>架构设计</h2>")
+        parts.append(f"<p><strong>方案:</strong> {_esc(design.get('approach',''))}</p>")
+        fc = design.get("fileChanges", [])
+        if fc:
+            parts.append("<table><tr><th>文件</th><th>操作</th><th>说明</th></tr>")
+            for f in fc:
+                parts.append(f"<tr><td>{_esc(f.get('file',''))}</td><td>{_esc(f.get('action',''))}</td><td>{_esc(f.get('description',''))}</td></tr>")
+            parts.append("</table>")
+
+    # Tasks
+    if state.tasks:
+        done = sum(1 for t in state.tasks if t.get("status") == "completed")
+        failed = sum(1 for t in state.tasks if t.get("status") == "failed")
+        skipped = sum(1 for t in state.tasks if t.get("status") == "skipped")
+        total = len(state.tasks)
+
+        parts.append("<h2>任务执行</h2>")
+        parts.append(f"<p>完成: {done} / 总计: {total} · 失败: {failed} · 跳过: {skipped}</p>")
+        parts.append("<table><tr><th>#</th><th>任务</th><th>状态</th><th>涉及文件</th></tr>")
+        for t in state.tasks:
+            st = t.get("status", "pending")
+            badge_cls = "badge-ok" if st == "completed" else "badge-fail" if st == "failed" else "badge-skip"
+            files_str = ", ".join(t.get("files", []))
+            parts.append(
+                f'<tr><td>{t.get("id","")}</td><td>{_esc(t.get("title",""))}</td>'
+                f'<td><span class="badge {badge_cls}">{_esc(st)}</span></td>'
+                f'<td>{_esc(files_str)}</td></tr>'
+            )
+        parts.append("</table>")
+
+    # Result summary
+    parts.append("<h2>执行结果</h2>")
+    parts.append(f"<p><strong>状态:</strong> {state.status.value}</p>")
+
+    body = "\n".join(parts)
+    html = f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{_esc(title)}</title><style>{_REPORT_CSS}</style></head><body>{body}</body></html>"
+
+    # Write file
+    report_path = REPORTS_DIR / f"{safe_name}.html"
+    report_path.write_text(html, encoding="utf-8")
+    report_url = f"/static/reports/{safe_name}.html"
+    log.info("Report generated: %s", report_path)
+
+    # Notify frontend
+    await _send_dev(state.dev_id, {
+        "type": "feature-report",
+        "featureId": state.feature_id,
+        "title": title,
+        "url": report_url,
+        "status": state.status.value,
+        "ts": now.isoformat(),
+    })
 
 
 # ---- Entry points called from main.py ----
@@ -326,6 +457,7 @@ async def _cancel_feature(state: FeatureState) -> None:
     state.status = Status.FAILED
     await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": "User cancelled"})
     await _send_chat(state.dev_id, "功能开发已取消。", role="system")
+    await generate_report(state)
     state.status = Status.IDLE
 
 

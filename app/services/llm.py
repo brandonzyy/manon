@@ -39,8 +39,8 @@ async def llm_chat(
     model: str | None = None,
     max_tokens: int = 4096,
     timeout: float = 120.0,
-) -> str:
-    """Low-level chat completion call."""
+) -> dict:
+    """Low-level chat completion call. Returns {"content": str, "reasoning": str}."""
     s = get_settings()
     model = model or _active_model()
     client = _get_client()
@@ -52,7 +52,45 @@ async def llm_chat(
     )
     resp.raise_for_status()
     data = resp.json()
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    msg = data.get("choices", [{}])[0].get("message", {})
+    return {"content": msg.get("content", ""), "reasoning": msg.get("reasoning_content", "")}
+
+
+async def llm_chat_stream(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    max_tokens: int = 4096,
+    timeout: float = 120.0,
+):
+    """Streaming chat completion via openai SDK (proven SSE parser).
+
+    Yields {"type": "reasoning"|"content", "delta": str}.
+    """
+    from openai import AsyncOpenAI
+
+    s = get_settings()
+    model = model or _active_model()
+    # ZhipuAI is OpenAI-compatible; derive base_url from chat/completions URL
+    base_url = s.llm_api_url.rsplit("/chat/completions", 1)[0]
+    client = AsyncOpenAI(api_key=s.llm_api_key, base_url=base_url, timeout=timeout)
+    try:
+        stream = await client.chat.completions.create(
+            model=model, messages=messages, max_tokens=max_tokens, stream=True,
+        )
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            # reasoning_content is ZhipuAI-specific → lives in model_extra
+            rc = (delta.model_extra or {}).get("reasoning_content", "")
+            cc = delta.content or ""
+            if rc:
+                yield {"type": "reasoning", "delta": rc}
+            if cc:
+                yield {"type": "content", "delta": cc}
+    finally:
+        await client.close()
 
 
 async def call_glm5(
@@ -65,6 +103,33 @@ async def call_glm5(
     timeout: float = 120.0,
 ) -> str:
     """High-level wrapper with fallback, mirroring coach-llm.js callGLM5."""
+    model = model or _active_model()
+    msgs = messages or [
+        {"role": "system", "content": system_prompt or ""},
+        {"role": "user", "content": user_prompt or ""},
+    ]
+    try:
+        result = await llm_chat(msgs, model=model, max_tokens=max_tokens, timeout=timeout)
+        return result["content"]
+    except Exception as exc:
+        fallback = _active_fallback()
+        if fallback and fallback != model:
+            log.warning("%s failed (%s), falling back to %s", model, exc, fallback)
+            result = await llm_chat(msgs, model=fallback, max_tokens=max_tokens, timeout=timeout)
+            return result["content"]
+        raise
+
+
+async def call_glm5_full(
+    system_prompt: str | None,
+    user_prompt: str | None,
+    *,
+    messages: list[dict] | None = None,
+    model: str | None = None,
+    max_tokens: int = 4096,
+    timeout: float = 120.0,
+) -> dict:
+    """Like call_glm5 but returns {"content": str, "reasoning": str}."""
     model = model or _active_model()
     msgs = messages or [
         {"role": "system", "content": system_prompt or ""},

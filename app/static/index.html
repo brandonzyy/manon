@@ -97,6 +97,10 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .msg.user::before{content:'❯ ';color:var(--accent);font-weight:700}
 .msg.manon{background:transparent;color:var(--text);border-left:2px solid var(--accent);margin:4px 0;padding:8px 22px;margin-left:24px}
 .msg.system{background:transparent;color:var(--text2);font-size:12px;font-style:italic;padding:4px 24px}
+.msg.thinking-line{background:transparent;color:var(--text2);font-size:11px;padding:1px 24px;opacity:.5;font-family:'SF Mono',Monaco,Consolas,monospace}
+.msg .reasoning-block{font-size:11px;color:var(--text2);margin-bottom:8px;font-family:'SF Mono',Monaco,Consolas,monospace}
+.msg .reasoning-block summary{cursor:pointer;opacity:.6;font-size:10px;letter-spacing:.5px;text-transform:uppercase}
+.msg .reasoning-block pre{white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;padding:6px 10px;margin:4px 0 0;background:rgba(255,255,255,.02);border-radius:4px;border-left:2px solid var(--border);font-size:11px;line-height:1.5;color:var(--text2)}
 .msg .role{display:none}
 .msg.claude{background:transparent;border-left:2px solid var(--purple);margin:4px 0;padding:8px 22px;margin-left:24px}
 .msg.codebuddy{background:transparent;border-left:2px solid var(--yellow);margin:4px 0;padding:8px 22px;margin-left:24px}
@@ -136,13 +140,14 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 #input:focus{outline:none}
 #sendBtn{display:none}
 
-/* ── Timeline Panel (right) ── */
-.tl-item{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;font-size:11px;border-left:3px solid var(--border)}
-.tl-item.ok{border-left-color:var(--green)}.tl-item.err{border-left-color:var(--red)}.tl-item.run{border-left-color:var(--accent)}
-.tl-item .tl-head{display:flex;justify-content:space-between;margin-bottom:2px}
-.tl-item .tl-event{font-weight:600}
-.tl-item .tl-ts{color:var(--text2);font-size:10px}
-.tl-item .tl-detail{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ── Reports Panel (right) ── */
+.report-item{padding:10px 12px;margin-bottom:6px;background:rgba(255,255,255,.03);border-radius:8px;font-size:12px;border-left:3px solid var(--accent);cursor:pointer;transition:background .15s,border-color .15s;display:flex;align-items:center;gap:10px}
+.report-item:hover{background:rgba(255,255,255,.06);border-left-color:var(--cyan)}
+.report-item .rpt-info{flex:1;min-width:0}
+.report-item .rpt-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-item .rpt-ts{color:var(--text2);font-size:10px;margin-top:2px}
+.report-item .rpt-badge{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600;color:#fff;flex-shrink:0}
+.rpt-badge.done{background:var(--green)}.rpt-badge.failed{background:var(--red)}
 .empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px}
 
 /* ── Settings Modal ── */
@@ -272,10 +277,10 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <button id="sendBtn" onclick="sendMessage()">发送</button>
     </div>
   </div>
-  <!-- Right: Timeline -->
+  <!-- Right: Reports -->
   <div class="side-panel right">
-    <div class="side-panel-title">Timeline <span class="count" id="tlCount">0</span></div>
-    <div class="side-scroll" id="timelineList"><div class="empty-hint">暂无事件</div></div>
+    <div class="side-panel-title">Reports <span class="count" id="reportCount">0</span></div>
+    <div class="side-scroll" id="reportList"><div class="empty-hint">暂无报告</div></div>
   </div>
 </div>
 <!-- Welcome Overlay -->
@@ -333,11 +338,14 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
   </div>
 </div>
 <script>
+// Register marked.js extension: "A. Title" → <h2>
+if(typeof marked!=='undefined'){marked.use({extensions:[{name:'letteredHeading',level:'block',start(src){const m=src.match(/^[A-Z]\.\s/m);return m?m.index:undefined},tokenizer(src){const m=src.match(/^([A-Z])\.\s+(.+?)(?:\n|$)/);if(m)return{type:'letteredHeading',raw:m[0],letter:m[1],text:this.lexer.inlineTokens(m[2])}},renderer(token){return`<h2>${token.letter}. ${this.parser.parseInline(token.text)}</h2>\n`}}]})}
 const CIRC=2*Math.PI*20;
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
 const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',done:'开发完成',failed:'执行失败'};
 let ws=null,projectId='',currentStage='idle',chatMode='manon';
-let queries=[],timeline=[];
+let queries=[],reports=[];
+let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
 
 function $(id){return document.getElementById(id)}
@@ -356,20 +364,23 @@ function connectWS(){
 
 function handleMsg(msg){
   const t=msg.type;
-  addTimeline(t,msg);
-  if(t==='coach-chat')addMessage(msg.content,msg.role||'manon');
+  if(t==='coach-chat')addMessage(msg.content,msg.role||'manon',msg.reasoning);
   else if(t==='coach-thinking'){$('thinking').style.display=msg.active?'flex':'none';$('thinkingLabel').textContent=msg.label||'思考中...'}
   else if(t==='feature-spec-ready'){updateStage('user-confirming');$('specConfirm').style.display='flex'}
   else if(t==='feature-tasks-ready'){updateStage('executing')}
-  else if(t==='feature-task-status')addTimeline('task-'+msg.status,msg);
   else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
   else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
+  else if(t==='feature-report'){addReport(msg)}
   else if(t==='cli-stream'){appendCliStream(msg.content,msg.cli)}
   else if(t==='cli-task-progress'){showCliTaskProgress(msg)}
   else if(t==='cli-review-result'){showCliReviewResult(msg)}
   else if(t==='monitor-state'){handleMonitorState(msg)}
   else if(t==='cli-ready'){showCliReady(msg)}
   else if(t==='llm-query')addQuery(msg);
+  else if(t==='coach-stream-start')startStream();
+  else if(t==='coach-reasoning-delta')appendStreamReasoning(msg.delta);
+  else if(t==='coach-content-delta')appendStreamContent(msg.delta);
+  else if(t==='coach-stream-end')endStream();
   else if(t==='error')addMessage(msg.message,'system');
 }
 
@@ -431,18 +442,76 @@ function updateStage(stage){
 }
 
 // ── Chat ──
-function addMessage(content,role){
+function addMessage(content,role,reasoning){
   // Hide welcome on first message
   const w=$('cliWelcome');if(w)w.style.display='none';
   const el=document.createElement('div');el.className=`msg ${role}`;
+  // Reasoning block (collapsible, like Claude Code thinking)
+  if(reasoning&&role!=='user'&&role!=='system'){
+    const details=document.createElement('details');details.className='reasoning-block';
+    const summary=document.createElement('summary');summary.textContent='thinking';
+    const pre=document.createElement('pre');pre.textContent=reasoning;
+    details.appendChild(summary);details.appendChild(pre);
+    el.appendChild(details);
+  }
   if(role!=='user'&&role!=='system'&&typeof marked!=='undefined'){
     const md=document.createElement('div');md.className='md-body';
-    md.innerHTML=marked.parse(content);
+    md.innerHTML=marked.parse(preprocessMd(content));
     el.appendChild(md);
   } else {
     el.textContent=content;
   }
   const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
+}
+function addThinkingLine(label){
+  const w=$('cliWelcome');if(w)w.style.display='none';
+  const el=document.createElement('div');el.className='msg thinking-line';
+  el.textContent='\u22EF '+label;
+  const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
+}
+function preprocessMd(text){
+  return text.replace(/\r\n/g,'\n');
+}
+function startStream(){
+  const w=$('cliWelcome');if(w)w.style.display='none';
+  _streamReasoning='';_streamContent='';
+  _streamEl=document.createElement('div');_streamEl.className='msg manon';
+  const details=document.createElement('details');details.className='reasoning-block';
+  const summary=document.createElement('summary');summary.textContent='thinking';
+  _streamReasoningPre=document.createElement('pre');
+  details.appendChild(summary);details.appendChild(_streamReasoningPre);
+  details.style.display='none';_streamEl.appendChild(details);
+  _streamMdBody=document.createElement('div');_streamMdBody.className='md-body';
+  _streamEl.appendChild(_streamMdBody);
+  const box=$('messages');box.appendChild(_streamEl);box.scrollTop=box.scrollHeight;
+}
+function appendStreamReasoning(delta){
+  if(!_streamEl)return;
+  _streamReasoning+=delta;
+  if(!_streamReasonT){_streamReasonT=setTimeout(()=>{
+    _streamReasonT=null;
+    if(_streamReasoningPre)_streamReasoningPre.textContent=_streamReasoning;
+    const d=_streamEl&&_streamEl.querySelector('.reasoning-block');if(d)d.style.display='';
+    requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
+  },80)}
+}
+function appendStreamContent(delta){
+  if(!_streamEl)return;
+  _streamContent+=delta;
+  if(!_streamRenderT){_streamRenderT=setTimeout(()=>{
+    _streamRenderT=null;
+    if(_streamMdBody&&typeof marked!=='undefined')_streamMdBody.innerHTML=marked.parse(preprocessMd(_streamContent));
+    requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
+  },80)}
+}
+function endStream(){
+  if(_streamRenderT){clearTimeout(_streamRenderT);_streamRenderT=null}
+  if(_streamReasonT){clearTimeout(_streamReasonT);_streamReasonT=null}
+  if(_streamMdBody&&typeof marked!=='undefined')_streamMdBody.innerHTML=marked.parse(preprocessMd(_streamContent));
+  if(_streamReasoningPre&&_streamReasoning)_streamReasoningPre.textContent=_streamReasoning;
+  $('thinking').style.display='none';
+  requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
+  _streamEl=null;_streamReasoningPre=null;_streamMdBody=null;
 }
 function updateWelcome(){
   const p=$('welcomeProj'),s=$('welcomeStats');
@@ -500,10 +569,10 @@ function appendCliStream(content,cli){
 }
 // Clear live stream block when a full message arrives
 const _origAddMsg=addMessage;
-addMessage=function(content,role){
+addMessage=function(content,role,reasoning){
   const live=document.querySelector('.cli-stream-live');
   if(live)live.classList.remove('cli-stream-live');
-  _origAddMsg(content,role);
+  _origAddMsg(content,role,reasoning);
 }
 function showCliTaskProgress(msg){
   const p=msg.phase;
@@ -511,7 +580,7 @@ function showCliTaskProgress(msg){
     const list=msg.tasks.map(t=>`  ${t.id}. ${t.title}`).join('\n');
     addMessage(`任务拆解完成（${msg.tasks.length} 个子任务）：\n${list}`,'system');
   }else if(p==='executing'){
-    addTimeline('task-executing',{label:`[${msg.taskIndex}/${msg.taskTotal}] ${msg.title}`});
+    addMessage(`[${msg.taskIndex}/${msg.taskTotal}] 执行: ${msg.title}`,'system');
   }else if(p==='done'){
     addMessage(msg.message||'全部完成','system');
   }
@@ -520,7 +589,6 @@ function showCliReviewResult(msg){
   const icon=msg.passed?'✓':'✗';
   let text=`Review ${icon} 任务#${msg.taskId}: ${msg.summary||''}`;
   if(msg.issues&&msg.issues.length) text+='\n  问题：'+msg.issues.join('; ');
-  addTimeline(msg.passed?'review-passed':'review-failed',{label:text});
   if(!msg.passed) addMessage(text,'system');
 }
 function approveSpec(){
@@ -541,22 +609,24 @@ function addQuery(q){
   if(queries.length===1)list.innerHTML='';
   const el=document.createElement('div');el.className='query-item';
   const durStr=q.duration_ms?`${q.duration_ms}ms`:'';
-  const tokStr=q.context_tokens?`~${q.context_tokens} tok`:'';
+  const tokStr=q.context_tokens?`~${(q.context_tokens/1000).toFixed(1)}k tok`:'';
   const metaStr=[durStr,tokStr].filter(Boolean).join(' · ');
   el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
   list.insertBefore(el,list.firstChild);
 }
 
-// ── Timeline ──
-function addTimeline(event,msg){
-  const entry={event,ts:new Date().toISOString(),detail:msg.content||msg.reason||msg.label||''};
-  timeline.unshift(entry);if(timeline.length>200)timeline.length=200;
-  $('tlCount').textContent=timeline.length;
-  const list=$('timelineList');
-  if(timeline.length===1)list.innerHTML='';
-  const cls=event.includes('done')||event.includes('completed')?'ok':event.includes('fail')||event.includes('error')?'err':event.includes('progress')||event.includes('executing')?'run':'';
-  const el=document.createElement('div');el.className=`tl-item ${cls}`;
-  el.innerHTML=`<div class="tl-head"><span class="tl-event">${esc(event)}</span><span class="tl-ts">${fmtTime(entry.ts)}</span></div><div class="tl-detail">${esc(entry.detail).slice(0,120)}</div>`;
+// ── Reports ──
+function addReport(msg){
+  const entry={title:msg.title||'Report',url:msg.url,status:msg.status||'done',ts:msg.ts||new Date().toISOString(),featureId:msg.featureId};
+  reports.unshift(entry);if(reports.length>50)reports.length=50;
+  $('reportCount').textContent=reports.length;
+  const list=$('reportList');
+  if(reports.length===1)list.innerHTML='';
+  const el=document.createElement('div');el.className='report-item';
+  const badgeCls=entry.status==='done'?'done':'failed';
+  const label=entry.status==='done'?'完成':'失败';
+  el.innerHTML=`<div class="rpt-info"><div class="rpt-title">${esc(entry.title)}</div><div class="rpt-ts">${fmtTime(entry.ts)}</div></div><span class="rpt-badge ${badgeCls}">${label}</span>`;
+  el.onclick=()=>window.open(entry.url,'_blank');
   list.insertBefore(el,list.firstChild);
 }
 

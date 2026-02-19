@@ -10,7 +10,7 @@ import logging
 
 from ..services.llm import call_glm5, parse_json_from_llm
 from ..ws_hub import hub
-from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking
+from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking, generate_report
 
 log = logging.getLogger("manon.coach.decompose")
 
@@ -56,7 +56,9 @@ async def decompose_to_tasks(state: FeatureState) -> None:
     except Exception as exc:
         await _send_thinking(state.dev_id, False)
         log.error("Task decomposition failed: %s", exc)
+        state.status = Status.FAILED
         await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": str(exc)})
+        await generate_report(state)
         state.status = Status.IDLE
 
 
@@ -105,6 +107,7 @@ async def execute_task_loop(state: FeatureState) -> None:
     state.status = Status.DONE
     await _send_dev(state.dev_id, {"type": "feature-done", "featureId": state.feature_id})
     await _send_chat(state.dev_id, "所有任务已完成！", role="system")
+    await generate_report(state)
 
 
 async def assign_task(state: FeatureState, task: dict) -> bool:
@@ -168,10 +171,12 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
             continue
 
         if result.get("type") == "feature-task-done":
+            task["output"] = result.get("output", "")
             return True
 
         # Failed — retry with feedback if attempts remain
         reason = result.get("reason", "unknown")
+        task["reason"] = reason
         log.warning("Task %s failed: %s (attempt %d)", task["id"], reason, attempt + 1)
         if attempt < MAX_RETRIES:
             assign_msg["instruction"] += f"\n\n## Previous attempt failed\nReason: {reason}\nPlease try a different approach."
