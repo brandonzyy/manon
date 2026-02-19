@@ -93,14 +93,21 @@ class MatrixoneGraph:
         """Index + health scan, return combined dict for API consumers."""
         result = await self.index(incremental=incremental, on_progress=on_progress)
         health = await self.health()
+        # Compute entity type counts from graph
+        g = self._load_graph()
+        type_counts: dict[str, int] = {}
+        for _, data in g._g.nodes(data=True):
+            kind = data.get("kind", "")
+            if kind:
+                type_counts[kind] = type_counts.get(kind, 0) + 1
         return {
             "files": result.files_scanned,
-            "entities": result.entities_added,
-            "relations": result.relations_added,
+            "entities": g.entity_count,
+            "relations": g.relation_count,
             "chunks": result.chunks_added,
             "skipped": result.files_skipped,
             "errors": [],
-            "entityTypes": {},
+            "entityTypes": type_counts,
             "health": health,
         }
 
