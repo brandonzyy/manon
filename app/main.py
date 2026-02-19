@@ -53,11 +53,6 @@ async def root():
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/monitor", include_in_schema=False)
-async def monitor_page():
-    return FileResponse(STATIC_DIR / "monitor.html")
-
-
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

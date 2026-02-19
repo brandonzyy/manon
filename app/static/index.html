@@ -172,7 +172,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
   <button class="add-proj-btn" onclick="openSetupModal()" title="新建项目">+</button>
   <button class="settings-btn" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型</button>
   <div class="ws-status"><div class="ws-dot" id="wsDot"></div><span id="wsLabel">未连接</span></div>
-  <a href="/monitor" class="hbadge">Monitor</a>
+
 </header>
 <!-- Status Bar (top 1/4) -->
 <div class="status-bar">
@@ -204,15 +204,15 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       </div>
     </div>
   </div>
-  <!-- Right: Last Update + Pipeline -->
+  <!-- Right: Gateway + Agents + Devs + Pipeline -->
   <div class="info-card">
     <div class="info-row">
-      <div class="info-val" id="statUpdate">—</div>
-      <div class="info-label">Last Update</div>
+      <div class="info-val" id="statGateway" style="color:var(--red)">OFF</div>
+      <div class="info-label">Gateway</div>
     </div>
-    <div class="info-row">
-      <div class="info-val" id="statUser" style="font-size:14px;color:var(--text)">—</div>
-      <div class="info-label">Developer</div>
+    <div class="info-row" style="display:flex;gap:16px;justify-content:center">
+      <div style="text-align:center"><div class="info-val" id="statAgents" style="font-size:16px;color:var(--accent)">0</div><div class="info-label">Agents</div></div>
+      <div style="text-align:center"><div class="info-val" id="statDevs" style="font-size:16px;color:var(--text)">0</div><div class="info-label">Devs</div></div>
     </div>
     <div class="pipeline-steps" id="pipelineSteps"></div>
   </div>
@@ -333,25 +333,20 @@ function handleMsg(msg){
   else if(t==='cli-stream'){appendCliStream(msg.content,msg.cli)}
   else if(t==='cli-task-progress'){showCliTaskProgress(msg)}
   else if(t==='cli-review-result'){showCliReviewResult(msg)}
-  else if(t==='monitor-state'&&msg.sessions){
-    const s=msg.sessions.find(x=>x.devId);
-    if(s){$('statUser').textContent=s.devId;updateStage(s.status)}
-  }
+  else if(t==='monitor-state'){handleMonitorState(msg)}
   else if(t==='cli-ready'){showCliReady(msg)}
-  else if(t==='loomgraph-stats')updateLoomgraphStats(msg);
   else if(t==='llm-query')addQuery(msg);
   else if(t==='error')addMessage(msg.message,'system');
 }
 
 // ── Stats ──
-function resetStats(){stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};updateLoomgraphStats(stats)}
-function updateLoomgraphStats(s){
+function resetStats(){stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};updateGraphStats(stats)}
+function updateGraphStats(s){
   stats={entities:0,relations:0,files:0,chunks:0,...s};
   $('statEntities').textContent=stats.entities??'—';
   $('statRelations').textContent=stats.relations??'—';
   $('statFiles').textContent=stats.files??'—';
   $('statChunks').textContent=stats.chunks??'—';
-  $('statUpdate').textContent=fmtTime(stats.lastUpdate);
   const sc=stats.score;
   if(sc&&sc.score!==undefined){
     const v=Math.round(sc.score),pct=Math.min(v/100,1);
@@ -364,6 +359,34 @@ function updateLoomgraphStats(s){
   const bar=$('entityTypesBar');bar.innerHTML='';
   const colors={function:'#4a90e2',class:'#af52de',method:'#34c759',module:'#f5a623',data:'#5eead4'};
   if(total>0)for(const[type,count] of Object.entries(et).sort((a,b)=>b[1]-a[1])){const seg=document.createElement('div');seg.className='et-seg';seg.style.width=(count/total*100)+'%';seg.style.background=colors[type]||'#888';bar.appendChild(seg)}
+}
+
+// ── Monitor WS ──
+let monitorWs=null;
+function connectMonitorWS(){
+  const p=location.protocol==='https:'?'wss':'ws';
+  monitorWs=new WebSocket(`${p}://${location.host}/ws/monitor`);
+  monitorWs.onopen=()=>{$('statGateway').textContent='ON';$('statGateway').style.color='var(--green)'};
+  monitorWs.onclose=()=>{$('statGateway').textContent='OFF';$('statGateway').style.color='var(--red)';setTimeout(connectMonitorWS,3000)};
+  monitorWs.onmessage=e=>{try{const msg=JSON.parse(e.data);if(msg.type==='monitor-state')handleMonitorState(msg)}catch{}};
+}
+function handleMonitorState(msg){
+  $('statAgents').textContent=msg.agentCount||0;
+  $('statDevs').textContent=msg.devCount||0;
+  const sessions=msg.sessions||[];
+  let done=0,failed=0;
+  sessions.forEach(s=>{
+    const tasks=s.tasks||[];
+    done+=tasks.filter(t=>t.status==='completed').length;
+    failed+=tasks.filter(t=>t.status==='failed').length;
+    if(s.devId&&s.status)updateStage(s.status);
+  });
+  // Indexing badge on metrics
+  const idx=msg.indexing||{};
+  const idxCount=Object.keys(idx).length;
+  const chunksEl=$('statChunks');
+  if(idxCount>0)chunksEl.parentElement.style.borderColor='var(--yellow)';
+  else chunksEl.parentElement.style.borderColor='';
 }
 
 // ── Pipeline ──
@@ -418,7 +441,7 @@ function showCliReady(msg){
   else if(gs==='not_indexed') lines.push('知识图谱: 项目未索引，建议先初始化');
   else if(gs==='disconnected') lines.push('知识图谱: 未连接');
   else lines.push('知识图谱: 请先选择项目');
-  if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 LoomGraph 上下文。');
+  if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 MatrixoneGraph 上下文。');
   addMessage(lines.join('\n'),'system');
 }
 
@@ -552,7 +575,7 @@ async function submitSetup(){
         if(st.status==='done'){
           clearInterval(poll);
           $('setupProgressFill').style.width='100%';$('setupProgressText').textContent='索引完成！';
-          if(st.stats)updateLoomgraphStats(st.stats);
+          if(st.stats)updateGraphStats(st.stats);
           const res=st.result||{};
           addMessage(`索引完成：${res.files||0} 个文件，${res.entities||0} 个实体。`,'system');
           setTimeout(async()=>{projectId=pid;await loadProjects();closeSetupModal()},800);
@@ -577,10 +600,10 @@ async function loadStats(){
   if(!projectId)return;
   try{
     const r=await fetch(`/api/v1/projects/${projectId}/stats`,{headers:{Authorization:'Bearer dev'}});
-    if(r.ok){const data=await r.json();updateLoomgraphStats(data)}
+    if(r.ok){const data=await r.json();updateGraphStats(data)}
   }catch{}
 }
-updateStage('idle');loadProjects();connectWS();
+updateStage('idle');loadProjects();connectWS();connectMonitorWS();
 
 // ── Settings ──
 let availableModels=[];
