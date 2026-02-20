@@ -80,17 +80,18 @@ _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可
 - 回答关于项目代码的问题（基于知识图谱上下文）
 - 分析代码结构、依赖关系、技术债务
 - 讨论架构设计和最佳实践
+- 提供重构建议、简化方案、替代设计
 - 帮助理解代码逻辑和调用链
 
-## 核心原则：禁止假设，只用事实
+## 回答原则
 
-你的回答必须严格基于下方提供的「项目知识图谱上下文」。遵守以下规则：
+你的回答应结合「项目知识图谱上下文」和你的专业知识。遵守以下规则：
 
-1. **只说你知道的**：回答必须基于知识图谱返回的实体、关系和代码片段。如果上下文中有明确信息，直接引用。
-2. **禁止假设**：如果知识图谱上下文中没有覆盖某个信息（如某个函数的实现细节、某个模块的依赖关系、某个配置的具体值），你必须明确告诉用户「这部分信息不在当前上下文中」，而不是猜测或编造。
-3. **给出完整答案**：系统已经为你做了多轮检索确保上下文完整。你应该充分利用所有提供的上下文，给出全面、详尽的回答。不要遗漏上下文中已有的关键信息。
-4. **区分确定与不确定**：如果你对某个结论有把握（基于上下文），直接陈述；如果不确定，用「根据当前上下文无法确认」明确标注，绝不含糊带过。
-5. **不要用通用知识替代项目事实**：即使你对某个框架或库很熟悉，也不要假设项目中的用法与通用做法一致。项目可能有自定义封装、特殊配置或非常规用法。
+1. **代码事实用上下文**：涉及项目中具体的函数实现、调用链、配置值、文件结构等事实性问题，必须基于知识图谱上下文回答。如果上下文中有明确信息，直接引用。
+2. **架构建议用专业知识**：当用户询问设计方案、重构建议、简化思路、最佳实践、替代方案时，你应该结合上下文中的项目现状，运用你的软件工程专业知识给出建议。这类问题不需要拘泥于上下文。
+3. **明确区分事实与建议**：回答中涉及项目代码的部分标注为事实（"根据代码..."），涉及你的建议的部分标注为建议（"建议..."或"可以考虑..."）。
+4. **给出完整答案**：系统已经为你做了多轮检索确保上下文完整。你应该充分利用所有提供的上下文，给出全面、详尽的回答。不要遗漏上下文中已有的关键信息。
+5. **不要编造代码事实**：不要假设项目中存在某个函数、配置或文件。如果上下文中没有，说明"当前上下文未覆盖"即可，但仍然可以基于已有信息给出架构层面的分析和建议。
 
 回答简洁、专业，用中文。"""
 
@@ -196,15 +197,18 @@ async def _iterative_graph_query(
         ]
         try:
             await _send_thinking(dev_id, True, f"完整性检查：第 {round_idx + 1} 轮自检...")
-            result = await llm_chat(plan_messages, max_tokens=512, timeout=30.0)
+            result = await llm_chat(plan_messages, max_tokens=2048, timeout=30.0)
             text = result.get("content", "").strip()
+            log.info("Deep query LLM response (round %d): %s", round_idx + 1, text[:1000])
             # Parse JSON from response
             start = text.find("{")
             end = text.rfind("}") + 1
             if start >= 0 and end > start:
                 parsed = _json.loads(text[start:end])
             else:
+                log.warning("Deep query: no JSON found in response")
                 break
+            log.info("Deep query parsed: missing=%s, queries=%s", parsed.get("missing", []), parsed.get("queries", []))
             follow_ups = parsed.get("queries", [])
             missing = parsed.get("missing", [])
             # Fallback: if LLM reports missing but no queries, use missing items as queries

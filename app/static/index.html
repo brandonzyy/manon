@@ -602,7 +602,7 @@ function endStream(){
 function updateWelcome(){
   const p=$('welcomeProj'),s=$('welcomeStats');
   if(p)p.textContent=projectId?($('projectSelect').selectedOptions[0]?.text||projectId):'未选择';
-  if(s)s.textContent=stats.entities?`${stats.entities} entities · ${stats.relations} relations · ${stats.files} files`:'未索引';
+  if(s)s.textContent=stats.entities?`${stats.entities} entities · ${stats.relations} relations · ${stats.files} files · ${stats.chunks||0} chunks`:'未索引';
 }
 function sendMessage(){
   const text=$('input').value.trim();if(!text||!ws||ws.readyState!==1)return;
