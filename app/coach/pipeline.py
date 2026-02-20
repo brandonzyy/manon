@@ -88,26 +88,47 @@ _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可
 
 1. **只说你知道的**：回答必须基于知识图谱返回的实体、关系和代码片段。如果上下文中有明确信息，直接引用。
 2. **禁止假设**：如果知识图谱上下文中没有覆盖某个信息（如某个函数的实现细节、某个模块的依赖关系、某个配置的具体值），你必须明确告诉用户「这部分信息不在当前上下文中」，而不是猜测或编造。
-3. **主动索引引导**：当你发现回答需要的信息不在上下文中时，告诉用户可以用更精确的关键词重新提问，以便系统查询知识图谱获取准确信息。例如：「关于 XXX 的具体实现，建议你追问一下这个函数/模块的细节，我会从知识图谱中获取准确信息。」
+3. **给出完整答案**：系统已经为你做了多轮检索确保上下文完整。你应该充分利用所有提供的上下文，给出全面、详尽的回答。不要遗漏上下文中已有的关键信息。
 4. **区分确定与不确定**：如果你对某个结论有把握（基于上下文），直接陈述；如果不确定，用「根据当前上下文无法确认」明确标注，绝不含糊带过。
 5. **不要用通用知识替代项目事实**：即使你对某个框架或库很熟悉，也不要假设项目中的用法与通用做法一致。项目可能有自定义封装、特殊配置或非常规用法。
 
 回答简洁、专业，用中文。"""
 
-_DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索助手。你的任务是分析用户问题和已有的知识图谱上下文，判断是否需要补充查询。
+_DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的任务是确保收集到的上下文能够完整回答用户的问题。
 
-规则：
-1. 分析用户问题需要哪些信息才能准确回答
-2. 检查已有上下文是否覆盖了这些信息
-3. 如果有缺失，提取 2-3 个最关键的查询词（函数名、类名、模块名、文件名等具体标识符）
-4. 如果已有上下文足够回答，返回空列表
+## 分析步骤
 
-只返回 JSON，格式：{"queries": ["关键词1", "关键词2"], "reason": "简要说明为什么需要这些信息"}
-如果不需要补充查询：{"queries": [], "reason": "已有上下文足够"}"""
+1. **拆解问题**：把用户的问题拆成具体的子问题/信息需求。例如用户问"审计报告是怎么生成的"，子问题可能包括：
+   - 审计流程的入口函数是什么？
+   - 报告生成用了哪些数据源？
+   - 具体的 Prompt 是怎么构造的？
+   - 输出格式是什么？
+
+2. **逐项检查**：对每个子问题，检查已有上下文是否包含足够的代码细节（函数实现、调用链、参数、配置）。仅仅出现函数名不算覆盖，必须有实际的代码逻辑或实现细节。
+
+3. **生成补充查询**：对未覆盖的子问题，提取最精确的查询词（函数名、类名、文件名、模块名）。优先使用已有上下文中出现但未展开的标识符。
+
+## 输出格式
+
+只返回 JSON：
+```json
+{
+  "sub_questions": ["子问题1", "子问题2", ...],
+  "covered": ["已覆盖的子问题"],
+  "missing": ["未覆盖的子问题"],
+  "queries": ["查询词1", "查询词2"],
+  "reason": "简要说明"
+}
+```
+
+如果所有子问题都已覆盖：
+```json
+{"sub_questions": [...], "covered": [...], "missing": [], "queries": [], "reason": "上下文已完整覆盖所有子问题"}
+```"""
 
 
 async def _iterative_graph_query(
-    dev_id: str, prompt: str, mg, initial_context: str, max_rounds: int = 2,
+    dev_id: str, prompt: str, mg, initial_context: str, max_rounds: int = 3,
 ) -> str:
     """Perform iterative graph queries — LLM analyzes gaps and triggers follow-up searches."""
     import json as _json
@@ -121,8 +142,8 @@ async def _iterative_graph_query(
             {"role": "user", "content": f"## 用户问题\n{prompt}\n\n## 已有知识图谱上下文\n{accumulated}"},
         ]
         try:
-            await _send_thinking(dev_id, True, f"深度检索：分析第 {round_idx + 2} 轮查询需求...")
-            result = await llm_chat(plan_messages, max_tokens=256, timeout=30.0)
+            await _send_thinking(dev_id, True, f"完整性检查：第 {round_idx + 1} 轮自检...")
+            result = await llm_chat(plan_messages, max_tokens=512, timeout=30.0)
             text = result.get("content", "").strip()
             # Parse JSON from response
             start = text.find("{")
@@ -133,10 +154,12 @@ async def _iterative_graph_query(
                 break
             follow_ups = parsed.get("queries", [])
             if not follow_ups:
-                await _send_thinking(dev_id, True, "深度检索：上下文已充分")
+                await _send_thinking(dev_id, True, "完整性检查：上下文已完整覆盖所有子问题")
                 break
             reason = parsed.get("reason", "")
-            await _send_thinking(dev_id, True, f"深度检索：补充查询 {follow_ups}（{reason}）")
+            missing = parsed.get("missing", [])
+            missing_str = "、".join(missing[:3]) if missing else reason
+            await _send_thinking(dev_id, True, f"完整性检查：缺失 [{missing_str}]，补充查询 {follow_ups}")
         except Exception as exc:
             log.warning("Deep query planning failed: %s", exc)
             break
