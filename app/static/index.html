@@ -245,14 +245,35 @@ body.pipeline-active .chat-area{background:rgba(74,144,226,.02)}
 body.pipeline-active .input-area{background:rgba(74,144,226,.04);border-top:2px solid var(--accent)}
 body.pipeline-active .input-prompt{color:var(--green)}
 
-/* Pipeline 顶部状态横幅 */
-.pipeline-banner{display:none;align-items:center;gap:10px;padding:6px 20px;background:linear-gradient(90deg,rgba(74,144,226,.08),rgba(175,82,222,.08));border-bottom:1px solid rgba(74,144,226,.2);font-size:12px;color:var(--accent);flex-shrink:0}
-body.pipeline-active .pipeline-banner{display:flex}
-.pb-icon{font-size:14px;animation:pulse 1.2s infinite}
-.pb-stage{font-weight:600}
-.pb-desc{color:var(--text2);font-size:11px;flex:1}
-.pb-cancel{background:none;border:1px solid var(--border);border-radius:4px;padding:2px 10px;color:var(--text2);font-size:10px;cursor:pointer;font-family:inherit;transition:all .15s}
-.pb-cancel:hover{border-color:var(--red);color:var(--red)}
+/* Pipeline 紧凑状态条（info-card 内） */
+.pipeline-mini-banner{display:none;align-items:center;gap:6px;padding:3px 8px;background:linear-gradient(90deg,rgba(74,144,226,.1),rgba(175,82,222,.1));border-radius:5px;font-size:10px;color:var(--accent);margin-bottom:4px;white-space:nowrap}
+body.pipeline-active .pipeline-mini-banner{display:flex}
+.pmb-icon{font-size:11px;animation:pulse 1.2s infinite}
+.pmb-stage{font-weight:600}
+.pmb-desc{color:var(--text2);font-size:9px;flex:1;overflow:hidden;text-overflow:ellipsis}
+.pmb-cancel{background:none;border:none;color:var(--text2);font-size:11px;cursor:pointer;padding:0 2px;line-height:1;transition:color .15s}
+.pmb-cancel:hover{color:var(--red)}
+
+/* ── Task Decomposition Display ── */
+.task-board{padding:8px 24px;font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace}
+.task-board-title{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.task-board-title .tb-count{background:var(--accent);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px}
+.task-group{margin-bottom:6px;padding:4px 0}
+.task-group-header{font-size:10px;color:var(--text2);margin-bottom:3px;display:flex;align-items:center;gap:4px}
+.task-group-header .tg-badge{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600}
+.tg-badge.parallel{background:rgba(175,82,222,.15);color:var(--purple)}
+.tg-badge.serial{background:rgba(74,144,226,.15);color:var(--accent)}
+.task-item{display:flex;align-items:center;gap:6px;padding:3px 8px;margin:2px 0;border-radius:4px;background:rgba(255,255,255,.02);border-left:2px solid var(--border);font-size:11px;transition:all .2s}
+.task-item.in_progress{border-left-color:var(--yellow);background:rgba(245,166,35,.06)}
+.task-item.completed{border-left-color:var(--green);background:rgba(52,199,89,.06)}
+.task-item.failed{border-left-color:var(--red);background:rgba(255,59,48,.06)}
+.task-item .ti-id{color:var(--text2);font-size:10px;min-width:18px}
+.task-item .ti-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-item .ti-status{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;color:#fff}
+.ti-status.pending{background:var(--border);color:var(--text2)}
+.ti-status.in_progress{background:var(--yellow)}
+.ti-status.completed{background:var(--green)}
+.ti-status.failed{background:var(--red)}
 </style>
 </head>
 <body>
@@ -305,17 +326,18 @@ body.pipeline-active .pipeline-banner{display:flex}
     <div class="info-row" style="display:flex;gap:16px;justify-content:center">
       <div style="text-align:center"><div class="info-val" id="statAgents" style="font-size:16px;color:var(--accent)">0</div><div class="info-label">Agents</div></div>
       <div style="text-align:center"><div class="info-val" id="statDevs" style="font-size:16px;color:var(--text)">0</div><div class="info-label">Devs</div></div>
+      <div style="text-align:center"><div class="info-val" id="statWorkers" style="font-size:16px;color:var(--purple)">0</div><div class="info-label">Workers</div></div>
     </div>
-    <div class="pipeline-steps" id="pipelineSteps"></div>
+    <div>
+      <div class="pipeline-mini-banner" id="pipelineBanner">
+        <span class="pmb-icon">⚡</span>
+        <span class="pmb-stage" id="pbStage">—</span>
+        <span class="pmb-desc" id="pbDesc"></span>
+        <button class="pmb-cancel" onclick="cancelPipeline()">✕</button>
+      </div>
+      <div class="pipeline-steps" id="pipelineSteps"></div>
+    </div>
   </div>
-</div>
-
-<!-- Pipeline Banner -->
-<div class="pipeline-banner" id="pipelineBanner">
-  <span class="pb-icon">⚡</span>
-  <span class="pb-stage" id="pbStage">需求对齐</span>
-  <span class="pb-desc" id="pbDesc">正在确认需求细节...</span>
-  <button class="pb-cancel" onclick="cancelPipeline()">取消 Pipeline</button>
 </div>
 
 <!-- Interaction Area (bottom 3/4) -->
@@ -487,7 +509,8 @@ function handleMsg(msg){
   if(t==='coach-chat')addMessage(msg.content,msg.role||'manon',msg.reasoning);
   else if(t==='coach-thinking'){$('thinking').style.display=msg.active?'flex':'none';$('thinkingLabel').textContent=msg.label||'思考中...'}
   else if(t==='feature-spec-ready'){updateStage('user-confirming');$('specConfirm').style.display='flex'}
-  else if(t==='feature-tasks-ready'){updateStage('executing')}
+  else if(t==='feature-tasks-ready'){updateStage('executing');renderTaskBoard(msg.tasks||[])}
+  else if(t==='feature-task-status'){updateTaskStatus(msg.taskId,msg.status)}
   else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
   else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
   else if(t==='feature-report'){addReport(msg)}
@@ -531,6 +554,7 @@ function connectMonitorWS(){
 function handleMonitorState(msg){
   $('statAgents').textContent=msg.agentCount||0;
   $('statDevs').textContent=msg.devCount||0;
+  $('statWorkers').textContent=msg.workerCount||0;
   const sessions=msg.sessions||[];
   let done=0,failed=0;
   sessions.forEach(s=>{
@@ -562,7 +586,7 @@ function updateStage(stage){
   $('input').placeholder=active?'输入回复或修改意见...':'输入问题或命令...';
 
   // Hide confirm bar when pipeline resets
-  if(!active)$('specConfirm').style.display='none';
+  if(!active){$('specConfirm').style.display='none';_rejectMode=false;_taskBoardEl=null}
 
   // Re-render pipeline steps
   const el=$('pipelineSteps');
@@ -577,6 +601,48 @@ function cancelPipeline(){
   if(ws&&ws.readyState===1){
     ws.send(JSON.stringify({type:'manon-chat',content:'/cancel',projectId}));
   }
+}
+
+// ── Task Board ──
+let _taskBoardEl=null;
+function renderTaskBoard(tasks){
+  const w=$('cliWelcome');if(w)w.style.display='none';
+  // Group by order
+  const groups={};
+  tasks.forEach(t=>{const o=t.order||1;if(!groups[o])groups[o]=[];groups[o].push(t)});
+  const orders=Object.keys(groups).map(Number).sort((a,b)=>a-b);
+  const totalTasks=tasks.length;
+  const parallelGroups=orders.filter(o=>groups[o].length>1).length;
+
+  let html=`<div class="task-board-title">任务拆解 <span class="tb-count">${totalTasks} 个任务</span></div>`;
+  orders.forEach(o=>{
+    const grp=groups[o];
+    const isParallel=grp.length>1;
+    const badge=isParallel
+      ?`<span class="tg-badge parallel">并行 ×${grp.length}</span>`
+      :`<span class="tg-badge serial">串行</span>`;
+    html+=`<div class="task-group"><div class="task-group-header">阶段 ${o} ${badge}</div>`;
+    grp.forEach(t=>{
+      const st=t.status||'pending';
+      const stLabel={pending:'待执行',in_progress:'执行中',completed:'完成',failed:'失败',skipped:'跳过'}[st]||st;
+      html+=`<div class="task-item ${st}" data-task-id="${t.id}"><span class="ti-id">#${t.id}</span><span class="ti-title" title="${esc(t.instruction||t.title||'')}">${esc(t.title||'')}</span><span class="ti-status ${st}">${stLabel}</span></div>`;
+    });
+    html+=`</div>`;
+  });
+
+  const el=document.createElement('div');el.className='task-board';el.id='taskBoard';
+  el.innerHTML=html;
+  _taskBoardEl=el;
+  const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
+}
+function updateTaskStatus(taskId,status){
+  if(!_taskBoardEl)return;
+  const item=_taskBoardEl.querySelector(`[data-task-id="${taskId}"]`);
+  if(!item)return;
+  item.className=`task-item ${status}`;
+  const stLabel={pending:'待执行',in_progress:'执行中',completed:'完成',failed:'失败',skipped:'跳过'}[status]||status;
+  const badge=item.querySelector('.ti-status');
+  if(badge){badge.className=`ti-status ${status}`;badge.textContent=stLabel}
 }
 
 // ── Chat ──
@@ -663,6 +729,16 @@ function updateWelcome(){
 function sendMessage(){
   const text=$('input').value.trim();if(!text||!ws||ws.readyState!==1)return;
   _lastUserMsg=text;
+  // Handle reject mode (修改意见 via chat input)
+  if(_rejectMode){
+    _rejectMode=false;
+    ws.send(JSON.stringify({type:'feature-plan-rejected',reason:text}));
+    addMessage('修改意见：'+text,'user');
+    $('input').value='';
+    $('input').placeholder='输入回复或修改意见...';
+    updateStage('clarifying');
+    return;
+  }
   const inPipeline=currentStage!=='idle'&&currentStage!=='done'&&currentStage!=='failed';
   if(inPipeline){
     ws.send(JSON.stringify({type:'user-response',content:text}));
@@ -677,10 +753,13 @@ function approveSpec(){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-approved'}));
   $('specConfirm').style.display='none';addMessage('已确认，开始开发','user');updateStage('designing');
 }
+let _rejectMode=false;
 function rejectSpec(){
-  const r=prompt('请输入修改意见：');if(!r)return;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-rejected',reason:r}));
-  $('specConfirm').style.display='none';addMessage('修改意见：'+r,'user');updateStage('clarifying');
+  _rejectMode=true;
+  $('specConfirm').style.display='none';
+  const inp=$('input');
+  inp.placeholder='请输入修改意见，回车提交...';
+  inp.focus();
 }
 
 // ── Queries (grouped by user question) ──
