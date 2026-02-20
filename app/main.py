@@ -41,6 +41,9 @@ async def lifespan(app: FastAPI):
     webbrowser.open(f"http://localhost:{settings.port}")
     yield
     monitor_task.cancel()
+    # Shutdown Manus worker pool
+    from .worker import worker_pool
+    await worker_pool.shutdown()
     await MatrixoneGraph.shutdown_all()
     await hub.shutdown()
     log.info("Manon Gateway shut down")
@@ -158,9 +161,12 @@ async def _monitor_broadcast_loop():
         from .routers.projects import _index_tasks
         indexing = {pid: {"status": info["status"]} for pid, info in _index_tasks.items()
                     if info["status"] == "indexing"}
+        # Worker pool active count
+        from .worker import worker_pool
         await hub.broadcast_to_monitors({
             "type": "monitor-state",
             "agentCount": len(hub._agents),
+            "workerCount": worker_pool.active_count,
             "devCount": len(hub._devs),
             "sessions": sessions,
             "indexing": indexing,

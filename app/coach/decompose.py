@@ -1,22 +1,26 @@
-"""Task decomposition + execution loop — split spec into tasks, assign to auto-fix.
+"""Task decomposition + execution loop — split spec into tasks, assign to Manus worker pool.
 
-Mirrors coach-feature.js decomposeToTasks() + executeTaskLoop() + assignTask().
+Replaces the old WebSocket-based auto-fix dispatch with direct worker_pool.submit() calls.
+Supports order-based parallel scheduling: same-order tasks run concurrently via asyncio.gather().
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 
 from ..services.llm import call_glm5, parse_json_from_llm
-from ..ws_hub import hub
 from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking, generate_report
 
 log = logging.getLogger("manon.coach.decompose")
 
 SYSTEM_PROMPT = """你是 Manon 的技术架构师。将功能需求拆分为可独立开发和验证的子任务。
 
-每个 task 应该：对应一个可独立验证的功能点，涉及 3-5 个文件，有明确验收标准，按依赖顺序排列。
+每个 task 应该：对应一个可独立验证的功能点，涉及 3-5 个文件，有明确验收标准。
+
+每个 task 应有 order 字段表示执行顺序。相同 order 的任务可以并行执行，不同 order 按顺序执行。
+例如：order=1 的任务都是独立的基础工作，order=2 的任务依赖 order=1 的结果。
 
 输出严格 JSON 数组（不要 markdown 代码块包裹）：
 [{"id":1,"title":"任务标题","instruction":"详细开发指令","files":["path/..."],"criteria":"验收标准","order":1}]"""
@@ -62,45 +66,96 @@ async def decompose_to_tasks(state: FeatureState) -> None:
         state.status = Status.IDLE
 
 
+def _group_tasks_by_order(tasks: list[dict]) -> dict[int, list[dict]]:
+    """Group tasks by their 'order' field. Tasks without order default to their index."""
+    groups: dict[int, list[dict]] = defaultdict(list)
+    for i, task in enumerate(tasks):
+        order = task.get("order", i + 1)
+        groups[order].append(task)
+    return dict(groups)
+
+
 async def execute_task_loop(state: FeatureState) -> None:
-    """Execute tasks sequentially, forwarding to auto-fix via API Server."""
+    """Execute tasks by order groups — same-order tasks run in parallel."""
     log.info("Starting task loop for feature #%s", state.feature_id)
     state.status = Status.EXECUTING
 
-    start_idx = state.current_task_idx + 1
-    for i in range(start_idx, len(state.tasks)):
-        task = state.tasks[i]
-        if task.get("status") == "skipped":
-            continue
-        state.current_task_idx = i
-        task["status"] = "in_progress"
-        await _send_dev(state.dev_id, {
-            "type": "feature-task-status", "featureId": state.feature_id,
-            "taskId": task["id"], "status": "in_progress",
-        })
-        log.info("Executing task %d/%d: %s", i + 1, len(state.tasks), task.get("title", ""))
+    # Group tasks by order
+    groups = _group_tasks_by_order(state.tasks)
 
-        success = await assign_task(state, task)
-        if not success:
-            task["status"] = "failed"
+    for order in sorted(groups.keys()):
+        group = [t for t in groups[order] if t.get("status") != "skipped"]
+        if not group:
+            continue
+
+        # Mark all tasks in this group as in_progress
+        for task in group:
+            task["status"] = "in_progress"
+            state.current_task_idx = state.tasks.index(task)
             await _send_dev(state.dev_id, {
                 "type": "feature-task-status", "featureId": state.feature_id,
-                "taskId": task["id"], "status": "failed",
+                "taskId": task["id"], "status": "in_progress",
             })
-            await _send_chat(
-                state.dev_id,
-                f"任务「{task.get('title','')}」开发失败，需要人工介入。\n"
-                "回复\"跳过\"跳过此任务 / \"取消\"取消整个功能 / 或提供额外指导",
-                role="system",
-            )
-            return  # wait for user decision via handle_dev_message
 
-        task["status"] = "completed"
-        await _send_dev(state.dev_id, {
-            "type": "feature-task-status", "featureId": state.feature_id,
-            "taskId": task["id"], "status": "completed",
-        })
-        state.failed_attempts = 0
+        log.info("Executing order=%d group: %d task(s): %s",
+                 order, len(group), ", ".join(t.get("title", "") for t in group))
+
+        if len(group) == 1:
+            # Single task — run directly
+            task = group[0]
+            success = await assign_task(state, task)
+            if not success:
+                task["status"] = "failed"
+                await _send_dev(state.dev_id, {
+                    "type": "feature-task-status", "featureId": state.feature_id,
+                    "taskId": task["id"], "status": "failed",
+                })
+                await _send_chat(
+                    state.dev_id,
+                    f"任务「{task.get('title','')}」开发失败，需要人工介入。\n"
+                    "回复\"跳过\"跳过此任务 / \"取消\"取消整个功能 / 或提供额外指导",
+                    role="system",
+                )
+                return
+            task["status"] = "completed"
+            await _send_dev(state.dev_id, {
+                "type": "feature-task-status", "featureId": state.feature_id,
+                "taskId": task["id"], "status": "completed",
+            })
+            state.failed_attempts = 0
+        else:
+            # Multiple tasks — run in parallel
+            results = await asyncio.gather(
+                *[assign_task(state, t) for t in group],
+                return_exceptions=True,
+            )
+            any_failed = False
+            for task, result in zip(group, results):
+                if isinstance(result, Exception) or not result:
+                    task["status"] = "failed"
+                    await _send_dev(state.dev_id, {
+                        "type": "feature-task-status", "featureId": state.feature_id,
+                        "taskId": task["id"], "status": "failed",
+                    })
+                    any_failed = True
+                else:
+                    task["status"] = "completed"
+                    await _send_dev(state.dev_id, {
+                        "type": "feature-task-status", "featureId": state.feature_id,
+                        "taskId": task["id"], "status": "completed",
+                    })
+
+            if any_failed:
+                failed_names = ", ".join(t.get("title", "") for t in group if t.get("status") == "failed")
+                await _send_chat(
+                    state.dev_id,
+                    f"并行任务组中有失败：「{failed_names}」，需要人工介入。\n"
+                    "回复\"跳过\"跳过失败任务继续 / \"取消\"取消整个功能 / 或提供额外指导",
+                    role="system",
+                )
+                return
+
+            state.failed_attempts = 0
 
     # All tasks done
     log.info("All %d tasks completed for feature #%s", len(state.tasks), state.feature_id)
@@ -111,8 +166,8 @@ async def execute_task_loop(state: FeatureState) -> None:
 
 
 async def assign_task(state: FeatureState, task: dict) -> bool:
-    """Send task to auto-fix via API Server, wait for result. Retry up to MAX_RETRIES."""
-    log.info("Assigning task %s to auto-fix: %s", task.get("id"), task.get("title", ""))
+    """Submit task to Manus worker pool, wait for result. Retry up to MAX_RETRIES."""
+    log.info("Assigning task %s to Manus worker: %s", task.get("id"), task.get("title", ""))
 
     # Build context from spec + design + completed tasks
     parts: list[str] = []
@@ -138,8 +193,7 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
                 workspace = row["workspace"] or ""
                 test_command = row["test_command"] or ""
 
-    assign_msg = {
-        "type": "feature-task-assign",
+    task_config = {
         "featureId": state.feature_id,
         "taskId": task["id"],
         "instruction": task.get("instruction") or task.get("title", ""),
@@ -150,34 +204,10 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
         "testCommand": test_command,
     }
 
-    # Attach LLM config so agent uses the same models as Manon settings
-    from ..routers.settings import get_runtime_config, get_custom_model
-    cfg = get_runtime_config()
-    for key in ("agent_model", "agent_model_fallback", "agent_compress_model"):
-        model_id = cfg.get(key, "")
-        custom = get_custom_model(model_id) if model_id else None
-        if custom:
-            assign_msg[f"llm_{key}"] = {
-                "model_id": custom["model_id"],
-                "api_url": custom["api_url"],
-                "api_key": custom["api_key"],
-                "api_format": custom.get("api_format", "openai"),
-            }
+    from ..worker import worker_pool
 
     for attempt in range(MAX_RETRIES + 1):
-        if not hub.has_agents:
-            log.warning("No agents connected — waiting for auto-fix to connect")
-            await _send_chat(state.dev_id, "等待 auto-fix agent 连接...", role="system")
-            # Wait up to 60s for an agent to connect
-            for _ in range(60):
-                if hub.has_agents:
-                    break
-                await asyncio.sleep(1)
-            if not hub.has_agents:
-                log.error("No agents connected after 60s")
-                return False
-
-        # Wait between retries so agent can return to idle
+        # Wait between retries
         if attempt > 0:
             wait_secs = 5 * attempt
             log.info("Waiting %ds before retry attempt %d", wait_secs, attempt + 1)
@@ -185,12 +215,7 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
             await asyncio.sleep(wait_secs)
             await _send_thinking(state.dev_id, False)
 
-        await hub.broadcast_to_agents(assign_msg)
-        result = await _wait_for_result(state, task["id"])
-
-        if result is None:
-            log.warning("Task %s timed out (attempt %d)", task["id"], attempt + 1)
-            continue
+        result = await worker_pool.submit(task_config)
 
         if result.get("type") == "feature-task-done":
             task["output"] = result.get("output", "")
@@ -201,18 +226,6 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
         task["reason"] = reason
         log.warning("Task %s failed: %s (attempt %d)", task["id"], reason, attempt + 1)
         if attempt < MAX_RETRIES:
-            assign_msg["instruction"] += f"\n\n## Previous attempt failed\nReason: {reason}\nPlease try a different approach."
+            task_config["instruction"] += f"\n\n## Previous attempt failed\nReason: {reason}\nPlease try a different approach."
 
     return False
-
-
-async def _wait_for_result(state: FeatureState, task_id: int) -> dict | None:
-    """Wait for task result from upstream with timeout."""
-    loop = asyncio.get_event_loop()
-    state._task_result_future = loop.create_future()
-    try:
-        return await asyncio.wait_for(state._task_result_future, timeout=TASK_TIMEOUT)
-    except asyncio.TimeoutError:
-        return None
-    finally:
-        state._task_result_future = None

@@ -1,0 +1,269 @@
+"""Manus task execution pipeline — ported from donnie/agent/auto-fix.js executeTask().
+
+Flow: baseline diff → graph context → build prompt → load scoped files → agent loop →
+      git diff → run tests → retry on failure → revert on final failure → return result.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+
+log = logging.getLogger("manon.worker.runner")
+
+_TEST_TIMEOUT = 120  # seconds
+_MAX_SCOPED_CHARS = 60_000
+
+
+def _resolve_agent_model() -> tuple[str, str, str, str]:
+    """Return (model_name, api_url, api_key, api_format) for the agent primary model."""
+    from ..routers.settings import get_runtime_config, get_custom_model
+    from ..services.llm import _resolve_model
+    cfg = get_runtime_config()
+    model_id = cfg.get("agent_model", "")
+    if model_id:
+        return _resolve_model(model_id)
+    return _resolve_model("glm-4.7-fp8")
+
+
+def _resolve_agent_fallback() -> tuple[str, str, str, str] | None:
+    """Return fallback model config, or None if same as primary."""
+    from ..routers.settings import get_runtime_config
+    from ..services.llm import _resolve_model
+    cfg = get_runtime_config()
+    fb = cfg.get("agent_model_fallback", "")
+    primary = cfg.get("agent_model", "")
+    if fb and fb != primary:
+        return _resolve_model(fb)
+    return None
+
+
+async def _run_cmd(cmd: str, cwd: str, timeout: int = 60) -> str:
+    """Run a shell command, return stdout. Raises on non-zero exit."""
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    out = stdout.decode(errors="replace")
+    err = stderr.decode(errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(f"Exit {proc.returncode}: {(err or out)[:500]}")
+    return out
+
+
+async def _revert_files(repo_root: str, files: list[str]) -> None:
+    """Revert changed files: git checkout tracked files, delete untracked."""
+    if not files:
+        return
+    tracked = []
+    for f in files:
+        try:
+            await _run_cmd(f'git ls-files --error-unmatch "{f}"', cwd=repo_root, timeout=10)
+            tracked.append(f)
+        except Exception:
+            # Untracked — delete
+            abs_path = Path(repo_root) / f
+            try:
+                abs_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    if tracked:
+        quoted = " ".join(f'"{f}"' for f in tracked)
+        try:
+            await _run_cmd(f"git checkout -- {quoted}", cwd=repo_root, timeout=15)
+        except Exception as exc:
+            log.warning("git checkout revert failed: %s", exc)
+
+
+def _read_file_truncated(abs_path: str, max_lines: int = 600) -> str | None:
+    """Read a file, truncate if too long."""
+    p = Path(abs_path)
+    if not p.is_file():
+        return None
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    lines = content.split("\n")
+    if len(lines) > max_lines:
+        return "\n".join(lines[:max_lines]) + f"\n// ... truncated ({len(lines)} lines total)"
+    return content
+
+
+async def execute_task(config: dict) -> dict:
+    """Complete task execution pipeline. Returns result dict.
+
+    config keys: featureId, taskId, instruction, scopedFiles, context,
+                 repoPath, workspace, testCommand
+    """
+    feature_id = config.get("featureId", "")
+    task_id = config.get("taskId", "")
+    instruction = config.get("instruction") or "(no instruction)"
+    scoped_files: list[str] = config.get("scopedFiles") or []
+    context = config.get("context", "")
+    repo_root = config.get("repoPath", "")
+    workspace = config.get("workspace") or ""
+    test_command = config.get("testCommand", "")
+
+    if not repo_root:
+        return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                "reason": "No repoPath provided"}
+
+    new_changes: list[str] = []
+    succeeded = False
+
+    try:
+        # 1. Record baseline diff
+        try:
+            baseline_raw = await _run_cmd("git diff --name-only", cwd=repo_root)
+            baseline = set(baseline_raw.strip().split("\n")) - {""}
+        except Exception:
+            baseline = set()
+
+        # 2. Query knowledge graph for context
+        graph_context = ""
+        try:
+            from matrixone_graph import MatrixoneGraph
+            mg = MatrixoneGraph.get(repo_root)
+            result = await mg.query(instruction, top_k=5, depth=1)
+            if result.context:
+                graph_context = result.context
+                log.info("Graph context: %d chars", len(graph_context))
+        except Exception as exc:
+            log.warning("Graph query failed: %s", exc)
+
+        # 3. Build prompt
+        from .prompts import build_system_prompt
+
+        # Look up project name from DB
+        project_name = Path(repo_root).name
+        system_prompt = build_system_prompt(
+            project_name=project_name,
+            project_path=repo_root,
+            workspace=workspace or None,
+            test_command=test_command or None,
+            graph_context=graph_context or None,
+        )
+
+        sections = [f"# Feature Task #{task_id}", ""]
+        sections.extend(["## Instruction", instruction, ""])
+        if context:
+            sections.extend(["## Feature Context", context, ""])
+        if graph_context:
+            sections.extend(["## Code Intelligence", graph_context, ""])
+
+        # 4. Load scoped files into prompt
+        if scoped_files:
+            sections.append("## Source Files (pre-loaded — do NOT waste turns reading these)")
+            total_chars = 0
+            for rel_path in scoped_files:
+                if total_chars >= _MAX_SCOPED_CHARS:
+                    break
+                abs_path = str(Path(repo_root) / rel_path)
+                content = _read_file_truncated(abs_path)
+                if not content:
+                    continue
+                sections.extend([f"\n### {rel_path}", "```", content, "```"])
+                total_chars += len(content)
+            sections.append("")
+
+        sections.extend(["## Instructions", "Implement the feature task. Keep changes focused on the task scope."])
+        task_prompt = "\n".join(sections)
+        log.info("Running agent for task %s (%d chars prompt)", task_id, len(task_prompt))
+
+        # 5. Resolve models
+        model_name, api_url, api_key, api_format = _resolve_agent_model()
+        fb = _resolve_agent_fallback()
+        fb_model = fb[0] if fb else None
+        fb_url = fb[1] if fb else None
+        fb_key = fb[2] if fb else None
+        fb_fmt = fb[3] if fb else None
+
+        # 6. Run agent loop
+        from .agent import call_agent
+        try:
+            agent_result = await call_agent(
+                task_prompt, system_prompt, repo_root,
+                model_name, api_url, api_key, api_format,
+                fb_model, fb_url, fb_key, fb_fmt,
+            )
+            log.info("Agent completed in %d turns", agent_result.get("turns", 0))
+        except Exception as exc:
+            log.error("Agent failed: %s", exc)
+
+        # 7. Detect changes
+        try:
+            all_diff_raw = await _run_cmd("git diff --name-only", cwd=repo_root)
+            all_diff = all_diff_raw.strip().split("\n")
+        except Exception:
+            all_diff = []
+        try:
+            untracked_raw = await _run_cmd("git ls-files --others --exclude-standard", cwd=repo_root)
+            untracked = untracked_raw.strip().split("\n")
+        except Exception:
+            untracked = []
+        all_changes = list(set(f for f in all_diff + untracked if f))
+        new_changes = [f for f in all_changes if f not in baseline]
+
+        if not new_changes:
+            log.info("No changes produced by agent for task %s", task_id)
+            return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                    "reason": "No changes produced"}
+
+        log.info("Task %s changed: %s", task_id, ", ".join(new_changes[:10]))
+
+        # 8. Run tests (if test_command provided)
+        if test_command:
+            test_cwd = workspace or repo_root
+            log.info("Running tests: %s (cwd=%s)", test_command, test_cwd)
+            try:
+                test_output = await _run_cmd(test_command, cwd=test_cwd, timeout=_TEST_TIMEOUT)
+                log.info("Tests passed")
+            except Exception as test_err:
+                test_error = str(test_err)[:3000]
+                log.warning("Tests failed, giving agent a second chance...")
+                # Retry: ask agent to fix test failures
+                try:
+                    await call_agent(
+                        f"Tests failed after your changes. Fix these errors. Do NOT change test expectations.\n\n{test_error}",
+                        system_prompt, repo_root,
+                        model_name, api_url, api_key, api_format,
+                        fb_model, fb_url, fb_key, fb_fmt,
+                    )
+                except Exception:
+                    log.error("Agent retry failed")
+                    await _revert_files(repo_root, new_changes)
+                    return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                            "reason": "Tests failed after retry"}
+
+                try:
+                    await _run_cmd(test_command, cwd=test_cwd, timeout=_TEST_TIMEOUT)
+                    log.info("Tests passed on second attempt")
+                except Exception:
+                    log.error("Tests still failing after retry")
+                    await _revert_files(repo_root, new_changes)
+                    return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                            "reason": "Tests failed after retry"}
+
+        # 9. Success
+        succeeded = True
+        changes_preview = "\n".join(new_changes[:10])
+        return {
+            "type": "feature-task-done",
+            "featureId": feature_id,
+            "taskId": task_id,
+            "changes": changes_preview,
+            "output": agent_result.get("output", "") if 'agent_result' in dir() else "",
+        }
+
+    except Exception as exc:
+        log.error("Task pipeline error: %s", exc)
+        return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                "reason": str(exc)}
+    finally:
+        if not succeeded and new_changes:
+            await _revert_files(repo_root, new_changes)
