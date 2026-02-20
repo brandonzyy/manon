@@ -150,6 +150,20 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
         "testCommand": test_command,
     }
 
+    # Attach LLM config so agent uses the same models as Manon settings
+    from ..routers.settings import get_runtime_config, get_custom_model
+    cfg = get_runtime_config()
+    for key in ("agent_model", "agent_model_fallback", "agent_compress_model"):
+        model_id = cfg.get(key, "")
+        custom = get_custom_model(model_id) if model_id else None
+        if custom:
+            assign_msg[f"llm_{key}"] = {
+                "model_id": custom["model_id"],
+                "api_url": custom["api_url"],
+                "api_key": custom["api_key"],
+                "api_format": custom.get("api_format", "openai"),
+            }
+
     for attempt in range(MAX_RETRIES + 1):
         if not hub.has_agents:
             log.warning("No agents connected — waiting for auto-fix to connect")
