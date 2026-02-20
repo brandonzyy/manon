@@ -252,9 +252,9 @@ def _is_feature_request(prompt: str) -> bool:
     """Heuristic: detect if the prompt is an explicit code-change / feature request."""
     p = prompt.strip()
     # Explicit pipeline trigger
-    if p.startswith("/feature") or p.startswith("/pipeline"):
+    if p.startswith("/feature") or p.startswith("/pipeline") or p.startswith("/do"):
         return True
-    # Chinese keywords that signal code modification intent
+    # Chinese keywords that signal code modification intent (startswith)
     action_starts = (
         "实现", "添加", "新增", "开发", "创建", "搭建", "构建",
         "修改", "改一下", "改成", "改为", "重构", "优化",
@@ -263,10 +263,24 @@ def _is_feature_request(prompt: str) -> bool:
         "写一个", "写个", "帮我写", "帮我实现", "帮我添加", "帮我开发",
         "帮我修改", "帮我修复", "帮我重构", "帮我优化", "帮我创建",
         "请实现", "请添加", "请修改", "请开发", "请创建",
-        "把这个", "把它",
+        "把这个", "把它", "开始实现", "开始开发", "开始做",
     )
     for kw in action_starts:
         if p.startswith(kw):
+            return True
+    # Chinese keywords that can appear anywhere (contains) — confirmation & action
+    action_contains = (
+        "帮我实现", "帮我做", "帮我开发", "帮我写", "帮我修改",
+        "帮我添加", "帮我创建", "帮我修复", "帮我重构", "帮我优化",
+        "按方案", "按这个方案", "按你说的", "就这样做", "就这么做",
+        "那就做", "那就实现", "那就开发", "那就写",
+        "来实现", "去实现", "去做", "来做",
+        "开始吧", "做吧", "实现吧", "开发吧", "写吧",
+        "动手吧", "搞吧", "干吧", "整吧",
+        "进入开发", "进入pipeline", "启动pipeline",
+    )
+    for kw in action_contains:
+        if kw in p:
             return True
     # English keywords for code changes
     p_lower = p.lower()
@@ -278,6 +292,11 @@ def _is_feature_request(prompt: str) -> bool:
     )
     for kw in en_starts:
         if p_lower.startswith(kw):
+            return True
+    # English confirmation keywords (contains)
+    en_contains = ("let's do it", "go ahead", "start coding", "do it", "let's implement")
+    for kw in en_contains:
+        if kw in p_lower:
             return True
     return False
 
@@ -301,8 +320,34 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
             state.status = Status.IDLE
             await _send_chat(dev_id, "Pipeline 已重置，回到正常对话模式。", role="system")
             await _send_dev(dev_id, {"type": "coach-thinking", "active": False})
+            await _send_dev(dev_id, {"type": "coach-stage", "stage": "idle"})
             return
         await _send_chat(dev_id, "当前没有进行中的 pipeline。", role="system")
+        return
+
+    # /do — manual pipeline trigger from chat context
+    if prompt.lower().startswith("/do"):
+        extra = prompt[3:].strip()
+        history = _chat_history.get(dev_id, [])
+        context_desc = extra if extra else ""
+        if history:
+            recent = history[-6:]
+            lines = []
+            for h in recent:
+                role = "用户" if h["role"] == "user" else "Manon"
+                lines.append(f"{role}: {h['content'][:300]}")
+            history_block = "\n".join(lines)
+            if context_desc:
+                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n{context_desc}"
+            else:
+                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n请根据以上对话内容，自动识别需要实现的功能，进入开发流程。"
+        elif not context_desc:
+            await _send_chat(dev_id, "没有对话上下文，请先描述你的需求，或使用 `/do <需求描述>`。", role="system")
+            return
+        await _start_feature(dev_id, {
+            "description": context_desc,
+            "projectId": project_id,
+        })
         return
 
     # If pipeline is active, route as user-response
@@ -604,6 +649,7 @@ async def _start_feature(dev_id: str, msg: dict) -> None:
     state.current_task_idx = -1
     state.failed_attempts = 0
 
+    await _send_dev(dev_id, {"type": "coach-stage", "stage": "clarifying"})
     await _send_chat(dev_id, f"收到您的功能需求：「{state.description}」\n\n让我确认几个细节，以便更好地实现...")
     await clarify_intent(state)
 
