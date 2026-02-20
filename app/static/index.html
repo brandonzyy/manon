@@ -55,7 +55,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .info-row{text-align:center}
 .info-val{font-size:14px;font-weight:700;color:var(--yellow)}
 .info-label{font-size:10px;color:var(--text2);margin-top:1px}
-.pipeline-steps{display:grid;grid-template-columns:repeat(4,auto);gap:3px}
+.pipeline-steps{display:grid;grid-template-columns:repeat(5,auto);gap:3px}
 .ps{display:inline-flex;align-items:center;gap:3px;font-size:9px;color:var(--text2);padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.03)}
 .ps.active{color:var(--accent);background:rgba(74,144,226,.1)}
 .ps.done{color:var(--green);background:rgba(52,199,89,.1)}
@@ -190,14 +190,22 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .clear-btn:hover{border-color:var(--red);color:var(--red)}
 
 /* ── Reports Panel (right) ── */
-.report-item{padding:10px 12px;margin-bottom:6px;background:rgba(255,255,255,.03);border-radius:8px;font-size:12px;border-left:3px solid var(--accent);cursor:pointer;transition:background .15s,border-color .15s;display:flex;align-items:center;gap:10px}
-.report-item:hover{background:rgba(255,255,255,.06);border-left-color:var(--cyan)}
+.report-item{padding:12px 14px;margin-bottom:8px;background:rgba(255,255,255,.03);border-radius:10px;font-size:12px;border:1px solid var(--border);cursor:pointer;transition:all .15s;font-family:'Inter','Noto Sans SC',sans-serif}
+.report-item:hover{background:rgba(255,255,255,.05);border-color:rgba(74,144,226,.3)}
+.report-item .rpt-header{display:flex;align-items:center;gap:10px}
+.report-item .rpt-icon{font-size:18px;flex-shrink:0}
 .report-item .rpt-info{flex:1;min-width:0}
-.report-item .rpt-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-item .rpt-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--text)}
 .report-item .rpt-ts{color:var(--text2);font-size:10px;margin-top:2px}
-.report-item .rpt-badge{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600;color:#fff;flex-shrink:0}
-.rpt-badge.done{background:var(--green)}.rpt-badge.failed{background:var(--red)}
-.empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px}
+.report-item .rpt-badge{font-size:10px;padding:3px 10px;border-radius:6px;font-weight:600;flex-shrink:0;display:flex;align-items:center;gap:4px}
+.rpt-badge.done{background:rgba(52,199,89,.15);color:var(--green)}.rpt-badge.failed{background:rgba(255,59,48,.15);color:var(--red)}.rpt-badge.reviewing{background:rgba(175,82,222,.15);color:var(--purple)}
+.rpt-actions{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.rpt-actions .rpt-btn{flex:1;padding:7px 0;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px}
+.rpt-btn.approve{background:rgba(52,199,89,.12);color:var(--green);border:1px solid rgba(52,199,89,.25)}
+.rpt-btn.approve:hover{background:rgba(52,199,89,.2);border-color:var(--green)}
+.rpt-btn.reject{background:rgba(255,59,48,.08);color:var(--red);border:1px solid rgba(255,59,48,.2)}
+.rpt-btn.reject:hover{background:rgba(255,59,48,.15);border-color:var(--red)}
+.empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px;font-family:'Inter','Noto Sans SC',sans-serif}
 
 /* ── Settings Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
@@ -255,25 +263,56 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
 .pmb-cancel:hover{color:var(--red)}
 
 /* ── Task Decomposition Display ── */
-.task-board{padding:8px 24px;font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace}
-.task-board-title{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
-.task-board-title .tb-count{background:var(--accent);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px}
-.task-group{margin-bottom:6px;padding:4px 0}
-.task-group-header{font-size:10px;color:var(--text2);margin-bottom:3px;display:flex;align-items:center;gap:4px}
-.task-group-header .tg-badge{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600}
+.task-board{padding:12px 24px;font-family:'Inter','Noto Sans SC',sans-serif}
+.task-board-title{font-size:14px;color:var(--text);font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.task-board-title .tb-icon{font-size:16px}
+.task-board-title .tb-count{background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600}
+.task-group{margin-bottom:10px;padding:0;background:rgba(255,255,255,.02);border-radius:10px;border:1px solid var(--border);overflow:hidden}
+.task-group-header{font-size:11px;color:var(--text2);padding:8px 12px;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.02);border-bottom:1px solid var(--border)}
+.task-group-header .tg-icon{font-size:12px}
+.task-group-header .tg-badge{font-size:10px;padding:2px 8px;border-radius:6px;font-weight:600}
 .tg-badge.parallel{background:rgba(175,82,222,.15);color:var(--purple)}
 .tg-badge.serial{background:rgba(74,144,226,.15);color:var(--accent)}
-.task-item{display:flex;align-items:center;gap:6px;padding:3px 8px;margin:2px 0;border-radius:4px;background:rgba(255,255,255,.02);border-left:2px solid var(--border);font-size:11px;transition:all .2s}
-.task-item.in_progress{border-left-color:var(--yellow);background:rgba(245,166,35,.06)}
-.task-item.completed{border-left-color:var(--green);background:rgba(52,199,89,.06)}
-.task-item.failed{border-left-color:var(--red);background:rgba(255,59,48,.06)}
-.task-item .ti-id{color:var(--text2);font-size:10px;min-width:18px}
-.task-item .ti-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.task-item .ti-status{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;color:#fff}
-.ti-status.pending{background:var(--border);color:var(--text2)}
-.ti-status.in_progress{background:var(--yellow)}
-.ti-status.completed{background:var(--green)}
-.ti-status.failed{background:var(--red)}
+.task-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px;transition:all .2s}
+.task-item:last-child{border-bottom:none}
+.task-item:hover{background:rgba(255,255,255,.03)}
+.task-item.in_progress{background:rgba(245,166,35,.04)}
+.task-item.completed{background:rgba(52,199,89,.04)}
+.task-item.failed{background:rgba(255,59,48,.04)}
+.task-item .ti-icon{font-size:14px;flex-shrink:0;width:20px;text-align:center}
+.task-item .ti-id{color:var(--text2);font-size:10px;min-width:22px;font-family:'SF Mono',Monaco,Consolas,monospace}
+.task-item .ti-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:500}
+.task-item .ti-status{font-size:10px;padding:2px 10px;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:4px}
+.ti-status.pending{background:rgba(255,255,255,.06);color:var(--text2)}
+.ti-status.in_progress{background:rgba(245,166,35,.15);color:var(--yellow)}
+.ti-status.completed{background:rgba(52,199,89,.15);color:var(--green)}
+.ti-status.failed{background:rgba(255,59,48,.15);color:var(--red)}
+.ti-status.skipped{background:rgba(255,255,255,.06);color:var(--text2)}
+
+/* ── Pipeline System Messages ── */
+.msg.system{background:transparent;color:var(--text2);font-size:12px;padding:6px 24px;font-style:normal;font-family:'Inter','Noto Sans SC',sans-serif}
+.pipeline-msg{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;font-style:normal;font-size:12px;line-height:1.5}
+.pipeline-msg.pm-success{background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.2);color:var(--green)}
+.pipeline-msg.pm-fail{background:rgba(255,59,48,.08);border:1px solid rgba(255,59,48,.2);color:var(--red)}
+.pipeline-msg.pm-info{background:rgba(74,144,226,.08);border:1px solid rgba(74,144,226,.2);color:var(--accent)}
+.pipeline-msg.pm-review{background:rgba(175,82,222,.08);border:1px solid rgba(175,82,222,.2);color:var(--purple)}
+.pipeline-msg .pm-icon{font-size:14px}
+
+/* ── Pipeline Completion Banner ── */
+.pipeline-done-banner{margin:12px 24px;padding:16px 20px;border-radius:12px;font-family:'Inter','Noto Sans SC',sans-serif;display:flex;align-items:center;gap:14px}
+.pipeline-done-banner.success{background:linear-gradient(135deg,rgba(52,199,89,.08),rgba(94,234,212,.06));border:1px solid rgba(52,199,89,.2)}
+.pipeline-done-banner.failed{background:linear-gradient(135deg,rgba(255,59,48,.08),rgba(245,166,35,.06));border:1px solid rgba(255,59,48,.2)}
+.pipeline-done-banner.reviewing{background:linear-gradient(135deg,rgba(175,82,222,.08),rgba(74,144,226,.06));border:1px solid rgba(175,82,222,.2)}
+.pdb-icon{font-size:28px;flex-shrink:0}
+.pdb-content{flex:1}
+.pdb-title{font-size:15px;font-weight:700;margin-bottom:2px}
+.pipeline-done-banner.success .pdb-title{color:var(--green)}
+.pipeline-done-banner.failed .pdb-title{color:var(--red)}
+.pipeline-done-banner.reviewing .pdb-title{color:var(--purple)}
+.pdb-desc{font-size:12px;color:var(--text2);line-height:1.5}
+.pdb-score{font-size:24px;font-weight:800;flex-shrink:0;padding:4px 14px;border-radius:10px}
+.pdb-score.high{background:rgba(52,199,89,.15);color:var(--green)}
+.pdb-score.low{background:rgba(255,59,48,.15);color:var(--red)}
 </style>
 </head>
 <body>
@@ -454,6 +493,7 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
 // Register marked.js extension: "A. Title" → <h2>
 if(typeof marked!=='undefined'){marked.use({extensions:[{name:'letteredHeading',level:'block',start(src){const m=src.match(/^[A-Z]\.\s/m);return m?m.index:undefined},tokenizer(src){const m=src.match(/^([A-Z])\.\s+(.+?)(?:\n|$)/);if(m)return{type:'letteredHeading',raw:m[0],letter:m[1],text:this.lexer.inlineTokens(m[2])}},renderer(token){return`<h2>${token.letter}. ${this.parser.parseInline(token.text)}</h2>\n`}}]})}
 const CIRC=2*Math.PI*20;
+const STAGE_ICONS={idle:'💤',clarifying:'💬',['spec-ready']:'📝',['user-confirming']:'👤',designing:'📐',decomposing:'🔧',executing:'⚡',reviewing:'🔍',done:'✅',failed:'❌'};
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','reviewing','done'];
 const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',reviewing:'报告审核',done:'开发完成',failed:'执行失败'};
 const STAGE_DESC={clarifying:'正在确认需求细节...',['spec-ready']:'功能规格已生成，等待 LLM 处理...',['user-confirming']:'请确认开发方案',designing:'正在进行技术架构设计...',decomposing:'正在拆解开发任务...',executing:'正在执行开发任务...',reviewing:'请审核报告后通过或驳回',done:'开发流程已完成',failed:'执行出错'};
@@ -510,8 +550,8 @@ function handleMsg(msg){
   else if(t==='feature-spec-ready'){updateStage('user-confirming');$('specConfirm').style.display='flex'}
   else if(t==='feature-tasks-ready'){updateStage('executing');renderTaskBoard(msg.tasks||[])}
   else if(t==='feature-task-status'){updateTaskStatus(msg.taskId,msg.status)}
-  else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
-  else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
+  else if(t==='feature-done'){updateStage('done');showPipelineBanner('success','🎉','功能开发完成','所有任务已成功执行，报告生成中...');$('specConfirm').style.display='none'}
+  else if(t==='feature-failed'){updateStage('failed');showPipelineBanner('failed','⚠️','执行失败',msg.reason||'请查看报告了解详情')}
   else if(t==='feature-report'){addReport(msg)}
   else if(t==='monitor-state'){handleMonitorState(msg)}
   else if(t==='llm-query')addQuery(msg);
@@ -577,7 +617,7 @@ function updateStage(stage){
   document.body.classList.toggle('pipeline-active',active);
 
   // Update banner
-  $('pbStage').textContent=STAGE_L[stage]||stage;
+  $('pbStage').textContent=(STAGE_ICONS[stage]||'') + ' ' + (STAGE_L[stage]||stage);
   $('pbDesc').textContent=STAGE_DESC[stage]||'';
 
   // Update input placeholder
@@ -591,7 +631,7 @@ function updateStage(stage){
   el.innerHTML=STAGES.map(s=>{
     const idx=STAGES.indexOf(s),cur=STAGES.indexOf(currentStage);
     const cls=s===currentStage?'active':idx<cur?'done':'';
-    return `<span class="ps ${cls}"><span class="ps-dot"></span>${STAGE_L[s]||s}</span>`;
+    return `<span class="ps ${cls}"><span class="ps-dot"></span>${STAGE_ICONS[s]||''} ${STAGE_L[s]||s}</span>`;
   }).join('');
 }
 
@@ -603,6 +643,8 @@ function cancelPipeline(){
 
 // ── Task Board ──
 let _taskBoardEl=null;
+const _statusIcons={pending:'⏳',in_progress:'🔄',completed:'✅',failed:'❌',skipped:'⏭'};
+const _statusLabels={pending:'待执行',in_progress:'执行中',completed:'已完成',failed:'失败',skipped:'已跳过'};
 function renderTaskBoard(tasks){
   const w=$('cliWelcome');if(w)w.style.display='none';
   // Group by order
@@ -610,20 +652,21 @@ function renderTaskBoard(tasks){
   tasks.forEach(t=>{const o=t.order||1;if(!groups[o])groups[o]=[];groups[o].push(t)});
   const orders=Object.keys(groups).map(Number).sort((a,b)=>a-b);
   const totalTasks=tasks.length;
-  const parallelGroups=orders.filter(o=>groups[o].length>1).length;
 
-  let html=`<div class="task-board-title">任务拆解 <span class="tb-count">${totalTasks} 个任务</span></div>`;
+  let html=`<div class="task-board-title"><span class="tb-icon">📋</span>任务拆解 <span class="tb-count">${totalTasks} 个任务</span></div>`;
   orders.forEach(o=>{
     const grp=groups[o];
     const isParallel=grp.length>1;
+    const icon=isParallel?'⚡':'▶';
     const badge=isParallel
       ?`<span class="tg-badge parallel">并行 ×${grp.length}</span>`
-      :`<span class="tg-badge serial">串行</span>`;
-    html+=`<div class="task-group"><div class="task-group-header">阶段 ${o} ${badge}</div>`;
+      :`<span class="tg-badge serial">顺序</span>`;
+    html+=`<div class="task-group"><div class="task-group-header"><span class="tg-icon">${icon}</span>阶段 ${o} ${badge}</div>`;
     grp.forEach(t=>{
       const st=t.status||'pending';
-      const stLabel={pending:'待执行',in_progress:'执行中',completed:'完成',failed:'失败',skipped:'跳过'}[st]||st;
-      html+=`<div class="task-item ${st}" data-task-id="${t.id}"><span class="ti-id">#${t.id}</span><span class="ti-title" title="${esc(t.instruction||t.title||'')}">${esc(t.title||'')}</span><span class="ti-status ${st}">${stLabel}</span></div>`;
+      const stIcon=_statusIcons[st]||'⏳';
+      const stLabel=_statusLabels[st]||st;
+      html+=`<div class="task-item ${st}" data-task-id="${t.id}"><span class="ti-icon">${stIcon}</span><span class="ti-id">#${t.id}</span><span class="ti-title" title="${esc(t.instruction||t.title||'')}">${esc(t.title||'')}</span><span class="ti-status ${st}">${stLabel}</span></div>`;
     });
     html+=`</div>`;
   });
@@ -638,7 +681,10 @@ function updateTaskStatus(taskId,status){
   const item=_taskBoardEl.querySelector(`[data-task-id="${taskId}"]`);
   if(!item)return;
   item.className=`task-item ${status}`;
-  const stLabel={pending:'待执行',in_progress:'执行中',completed:'完成',failed:'失败',skipped:'跳过'}[status]||status;
+  const stIcon=_statusIcons[status]||'⏳';
+  const stLabel=_statusLabels[status]||status;
+  const icon=item.querySelector('.ti-icon');
+  if(icon)icon.textContent=stIcon;
   const badge=item.querySelector('.ti-status');
   if(badge){badge.className=`ti-status ${status}`;badge.textContent=stLabel}
 }
@@ -868,6 +914,20 @@ function showQueryDetail(idx){
   panel.appendChild(detail);
 }
 
+// ── Pipeline Banners ──
+function showPipelineBanner(type,icon,title,desc,score){
+  const w=$('cliWelcome');if(w)w.style.display='none';
+  const el=document.createElement('div');
+  el.className=`pipeline-done-banner ${type}`;
+  let scoreHtml='';
+  if(score!==undefined){
+    const cls=score>=5?'high':'low';
+    scoreHtml=`<div class="pdb-score ${cls}">${score}/10</div>`;
+  }
+  el.innerHTML=`<div class="pdb-icon">${icon}</div><div class="pdb-content"><div class="pdb-title">${esc(title)}</div><div class="pdb-desc">${esc(desc)}</div></div>${scoreHtml}`;
+  const box=$('messages');box.appendChild(el);box.scrollTop=box.scrollHeight;
+}
+
 // ── Reports ──
 function addReport(msg){
   const entry={title:msg.title||'Report',url:msg.url,status:msg.status||'done',ts:msg.ts||new Date().toISOString(),featureId:msg.featureId};
@@ -875,22 +935,23 @@ function addReport(msg){
   $('reportCount').textContent=reports.length;
   const list=$('reportList');
   if(reports.length===1)list.innerHTML='';
-  const el=document.createElement('div');el.className='report-item';el.style.flexWrap='wrap';
+  const el=document.createElement('div');el.className='report-item';
+  const statusIcon=entry.status==='done'?'📄':'⚠️';
   const badgeCls=entry.status==='done'?'done':'failed';
-  const label=entry.status==='done'?'完成':'失败';
-  el.innerHTML=`<div class="rpt-info"><div class="rpt-title">${esc(entry.title)}</div><div class="rpt-ts">${fmtTime(entry.ts)}</div></div><span class="rpt-badge ${badgeCls}">${label}</span><div class="rpt-actions" style="width:100%;display:flex;gap:6px;margin-top:6px"><button class="btn btn-ok" style="font-size:11px;padding:4px 12px" onclick="event.stopPropagation();approveFeature()">✓ 审核通过</button><button class="btn btn-no" style="font-size:11px;padding:4px 12px" onclick="event.stopPropagation();rejectFeature()">✗ 驳回</button></div>`;
+  const label=entry.status==='done'?'✓ 完成':'✗ 失败';
+  el.innerHTML=`<div class="rpt-header"><span class="rpt-icon">${statusIcon}</span><div class="rpt-info"><div class="rpt-title">${esc(entry.title)}</div><div class="rpt-ts">${fmtTime(entry.ts)}</div></div><span class="rpt-badge ${badgeCls}">${label}</span></div><div class="rpt-actions"><button class="rpt-btn approve" onclick="event.stopPropagation();approveFeature()">✓ 审核通过</button><button class="rpt-btn reject" onclick="event.stopPropagation();rejectFeature()">✗ 驳回</button></div>`;
   el.onclick=(e)=>{if(e.target.tagName==='BUTTON')return;window.open(entry.url,'_blank')};
   list.insertBefore(el,list.firstChild);
 }
 function approveFeature(){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-approved'}));
-  addMessage('已审核通过，正在提交代码...','system');
+  showPipelineBanner('success','🚀','代码提交中','正在执行 git commit & push...');
 }
 function rejectFeature(){
   const reason=prompt('请输入驳回原因：');
   if(reason===null)return;
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-rejected',reason:reason}));
-  addMessage('已驳回：'+reason,'system');
+  showPipelineBanner('reviewing','🔄','已驳回，重新调整','原因：'+reason);
 }
 
 // ── Init ──
