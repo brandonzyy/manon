@@ -130,6 +130,17 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         return
     project_id = msg.get("projectId", "")
 
+    # /reset or /cancel — force-reset pipeline state
+    if prompt.lower() in ("/reset", "/cancel", "取消", "重置"):
+        state = get_session(dev_id)
+        if state and state.status not in (Status.IDLE, Status.DONE, Status.FAILED):
+            state.status = Status.IDLE
+            await _send_chat(dev_id, "Pipeline 已重置，回到正常对话模式。", role="system")
+            await _send_dev(dev_id, {"type": "coach-thinking", "active": False})
+            return
+        await _send_chat(dev_id, "当前没有进行中的 pipeline。", role="system")
+        return
+
     # If pipeline is active, route as user-response
     state = get_session(dev_id)
     if state and state.status not in (Status.IDLE, Status.DONE, Status.FAILED):
@@ -139,17 +150,22 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     # Query graph for context
     graph_context = ""
     context_tokens = 0
+    project_name = ""
+    project_path = ""
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
             row = await db.execute_fetchone(
-                "SELECT local_path FROM projects WHERE id = ?", (project_id,),
+                "SELECT name, local_path FROM projects WHERE id = ?", (project_id,),
             )
-        if row and row["local_path"]:
+        if row:
+            project_name = row["name"] or ""
+            project_path = row["local_path"] or ""
+        if project_path:
             try:
                 await _send_thinking(dev_id, True, "查询知识图谱...")
                 t0 = time.monotonic()
-                mg = MatrixoneGraph.get(row["local_path"])
+                mg = MatrixoneGraph.get(project_path)
                 result = await mg.query(prompt, top_k=10, depth=1)
                 graph_ms = int((time.monotonic() - t0) * 1000)
                 if result.context:
@@ -169,6 +185,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
             except Exception as exc:
                 await _send_thinking(dev_id, False)
                 log.warning("MatrixoneGraph query failed: %s", exc)
+                await _send_chat(dev_id, f"⚠ 知识图谱查询失败: {exc}", role="system")
 
     # Classify intent: explicit feature request → pipeline, otherwise → chat
     if _is_feature_request(prompt):
@@ -195,8 +212,12 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         history[:] = history[-40:]
 
     system = _MANON_SYSTEM
+    if project_name or project_path:
+        system += f"\n\n## 当前项目\n项目名称: {project_name}\n项目路径: {project_path}"
     if graph_context:
         system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
+    elif project_path:
+        system += "\n\n（知识图谱未返回相关上下文，请基于你的通用知识回答）"
 
     messages = [{"role": "system", "content": system}] + history
 
@@ -580,15 +601,17 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
 
     # Resolve project cwd
     cwd = None
+    project_name = ""
     project_id = msg.get("projectId", "")
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
             row = await db.execute_fetchone(
-                "SELECT local_path FROM projects WHERE id = ?", (project_id,),
+                "SELECT name, local_path FROM projects WHERE id = ?", (project_id,),
             )
             if row:
                 cwd = row["local_path"]
+                project_name = row["name"] or ""
 
     # Graph context query
     graph_context = ""
@@ -624,6 +647,8 @@ async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
             history[:] = history[-40:]
 
         system = _CLI_SYSTEM.get(cli, _MANON_SYSTEM)
+        if project_name or cwd:
+            system += f"\n\n## 当前项目\n项目名称: {project_name}\n项目路径: {cwd}"
         if graph_context:
             system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
 

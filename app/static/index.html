@@ -74,19 +74,40 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .interaction{flex:1;display:grid;grid-template-columns:1fr 2fr 1fr;overflow:hidden;min-height:0}
 
 /* ── Queries Panel (left) ── */
-.side-panel{background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.side-panel{background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;position:relative}
 .side-panel.right{border-right:none;border-left:1px solid var(--border)}
 .side-panel-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:6px}
 .side-panel-title .count{background:var(--accent);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px}
 .side-scroll{flex:1;overflow-y:auto;padding:8px}
-.query-item{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;font-size:11px;border-left:3px solid var(--border);transition:border-color .2s}
-.query-item:hover{border-left-color:var(--accent)}
+.query-item{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;font-size:11px;border-left:3px solid var(--border);transition:border-color .2s;cursor:pointer}
+.query-item:hover{border-left-color:var(--accent);background:rgba(255,255,255,.04)}
+.query-item.has-chat{border-left-color:var(--cyan)}
+.query-item.has-chat:hover{border-left-color:var(--accent)}
 .query-item .q-head{display:flex;justify-content:space-between;margin-bottom:3px}
 .query-item .q-caller{font-weight:600;color:var(--accent)}
 .query-item .q-ts{color:var(--text2);font-size:10px}
 .query-item .q-cmd{color:var(--purple);font-size:10px;margin-right:6px}
 .query-item .q-text{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .query-item .q-dur{font-size:10px;color:var(--text2);margin-top:2px}
+.query-item .q-chat-badge{font-size:9px;color:var(--cyan);margin-top:3px}
+
+/* ── Query Detail Overlay ── */
+.query-detail{position:absolute;inset:0;background:var(--card);z-index:10;display:flex;flex-direction:column;overflow:hidden}
+.query-detail-header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.query-detail-header .back-btn{background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--text2);cursor:pointer;font-size:11px;font-family:inherit}
+.query-detail-header .back-btn:hover{border-color:var(--accent);color:var(--accent)}
+.query-detail-header .detail-title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px}
+.query-detail-body{flex:1;overflow-y:auto;padding:12px}
+.detail-section{margin-bottom:14px}
+.detail-section-title{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;font-weight:600}
+.detail-meta{font-size:11px;color:var(--text2);line-height:1.6}
+.detail-meta span{color:var(--text)}
+.detail-chat{margin-top:6px}
+.detail-chat .dc-msg{padding:8px 10px;margin-bottom:6px;border-radius:6px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.detail-chat .dc-msg.dc-user{background:rgba(74,144,226,.08);border-left:2px solid var(--accent);color:var(--text)}
+.detail-chat .dc-msg.dc-assistant{background:rgba(255,255,255,.03);border-left:2px solid var(--cyan);color:var(--text)}
+.detail-chat .dc-msg .dc-role{font-size:10px;color:var(--text2);margin-bottom:4px;font-weight:600}
+.detail-chat .dc-msg .md-body{font-size:12px}
 
 /* ── Chat Area (center) — CLI style ── */
 .chat-area{display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border);border-right:1px solid var(--border);background:var(--bg)}
@@ -278,7 +299,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <div class="cli-welcome" id="cliWelcome">
         <div class="cli-logo">╭─ Manon 马浓 · AI 架构师 ─╮</div>
         <div>项目: <span id="welcomeProj">—</span> · <span id="welcomeStats">—</span></div>
-        <div class="cli-hint">直接提问进行交互 · 描述代码修改需求自动进入开发流程 · <kbd>Shift+Enter</kbd> 换行</div>
+        <div class="cli-hint">直接提问进行交互 · 描述代码修改需求自动进入开发流程 · <kbd>/reset</kbd> 重置 · <kbd>Shift+Enter</kbd> 换行</div>
       </div>
     </div>
     <div class="thinking-bar" id="thinking" style="display:none"><div class="spinner"></div><span id="thinkingLabel">思考中...</span></div>
@@ -361,6 +382,7 @@ const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方
 let ws=null,projectId='',currentStage='idle',chatMode='manon';
 let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
+let _lastUserMsg='',_pendingQueryIdx=-1;
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
 let _xterm=null,_xtermFit=null;
 
@@ -453,6 +475,8 @@ function handleMonitorState(msg){
 // ── Pipeline ──
 function updateStage(stage){
   currentStage=stage;
+  // Hide confirm bar when pipeline resets
+  if(stage==='idle'||stage==='done'||stage==='failed')$('specConfirm').style.display='none';
   const el=$('pipelineSteps');
   el.innerHTML=STAGES.map(s=>{
     const idx=STAGES.indexOf(s),cur=STAGES.indexOf(currentStage);
@@ -529,6 +553,7 @@ function endStream(){
   if(_streamReasonT){clearTimeout(_streamReasonT);_streamReasonT=null}
   if(_streamMdBody&&typeof marked!=='undefined')_streamMdBody.innerHTML=marked.parse(preprocessMd(_streamContent));
   if(_streamReasoningPre&&_streamReasoning)_streamReasoningPre.textContent=_streamReasoning;
+  _associateResponse(_streamContent);
   $('thinking').style.display='none';
   requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
   _streamEl=null;_streamReasoningPre=null;_streamMdBody=null;
@@ -540,6 +565,7 @@ function updateWelcome(){
 }
 function sendMessage(){
   const text=$('input').value.trim();if(!text||!ws||ws.readyState!==1)return;
+  _lastUserMsg=text;
   if(chatMode==='claude'||chatMode==='codebuddy'){
     ws.send(JSON.stringify({type:chatMode+'-chat',content:text,projectId}));
     addMessage(text,'user');
@@ -658,7 +684,10 @@ function rejectSpec(){
 
 // ── Queries ──
 function addQuery(q){
+  q._userMsg=_lastUserMsg||'';
+  q._response='';
   queries.unshift(q);if(queries.length>200)queries.length=200;
+  _pendingQueryIdx=0;
   $('queryCount').textContent=queries.length;
   const list=$('queryList');
   if(queries.length===1)list.innerHTML='';
@@ -667,7 +696,51 @@ function addQuery(q){
   const tokStr=q.context_tokens?`~${(q.context_tokens/1000).toFixed(1)}k tok`:'';
   const metaStr=[durStr,tokStr].filter(Boolean).join(' · ');
   el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
+  el._queryRef=q;
+  el.onclick=()=>showQueryDetail(queries.indexOf(q));
   list.insertBefore(el,list.firstChild);
+}
+function _associateResponse(content){
+  if(_pendingQueryIdx>=0&&_pendingQueryIdx<queries.length){
+    queries[_pendingQueryIdx]._response=content;
+    const list=$('queryList');
+    const items=list.querySelectorAll('.query-item');
+    for(const item of items){
+      if(item._queryRef===queries[_pendingQueryIdx]){
+        item.classList.add('has-chat');
+        const badge=document.createElement('div');badge.className='q-chat-badge';badge.textContent='has conversation';
+        item.appendChild(badge);break;
+      }
+    }
+  }
+  _pendingQueryIdx=-1;
+}
+function showQueryDetail(idx){
+  const q=queries[idx];if(!q)return;
+  const panel=document.querySelector('.side-panel:not(.right)');
+  const old=panel.querySelector('.query-detail');if(old)old.remove();
+  const detail=document.createElement('div');detail.className='query-detail';
+  let html=`<div class="query-detail-header"><button class="back-btn" onclick="this.closest('.query-detail').remove()">← 返回</button><span class="detail-title">查询详情</span></div><div class="query-detail-body">`;
+  html+=`<div class="detail-section"><div class="detail-section-title">查询信息</div><div class="detail-meta">`;
+  html+=`调用方: <span>${esc(q.caller||'—')}</span><br>`;
+  html+=`命令: <span>${esc(q.command||'')}</span><br>`;
+  html+=`时间: <span>${fmtTime(q.ts)}</span><br>`;
+  if(q.duration_ms)html+=`耗时: <span>${q.duration_ms}ms</span><br>`;
+  if(q.context_tokens)html+=`上下文: <span>~${(q.context_tokens/1000).toFixed(1)}k tokens</span><br>`;
+  html+=`</div></div>`;
+  html+=`<div class="detail-section"><div class="detail-section-title">查询内容</div><div class="detail-meta" style="white-space:pre-wrap;word-break:break-word">${esc(q.query||q.text||'')}</div></div>`;
+  if(q._userMsg||q._response){
+    html+=`<div class="detail-section"><div class="detail-section-title">对话记录</div><div class="detail-chat">`;
+    if(q._userMsg)html+=`<div class="dc-msg dc-user"><div class="dc-role">用户</div>${esc(q._userMsg)}</div>`;
+    if(q._response){
+      const rendered=typeof marked!=='undefined'?marked.parse(preprocessMd(q._response)):esc(q._response);
+      html+=`<div class="dc-msg dc-assistant"><div class="dc-role">助手</div><div class="md-body">${rendered}</div></div>`;
+    }
+    html+=`</div></div>`;
+  }
+  html+=`</div>`;
+  detail.innerHTML=html;
+  panel.appendChild(detail);
 }
 
 // ── Reports ──
