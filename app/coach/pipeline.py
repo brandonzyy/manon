@@ -214,9 +214,20 @@ async def _iterative_graph_query(
         # Execute follow-up queries
         for q in follow_ups[:3]:
             try:
+                import time as _time
+                t0 = _time.monotonic()
                 r = await mg.query(q, top_k=5, depth=1)
+                q_ms = int((_time.monotonic() - t0) * 1000)
                 if r.context:
                     accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
+                    ctx_tok = len(r.context) // 2
+                    await _send_dev(dev_id, {
+                        "type": "llm-query", "caller": "manon.deep",
+                        "command": f"补充检索 (round {round_idx + 1})",
+                        "query": q, "ts": datetime.now().isoformat(),
+                        "duration_ms": q_ms,
+                        "context_tokens": ctx_tok,
+                    })
             except Exception as exc:
                 log.warning("Follow-up query '%s' failed: %s", q, exc)
 
@@ -389,6 +400,10 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
             await asyncio.sleep(0)  # flush WS between chunks
         llm_ms = int((time.monotonic() - t0) * 1000)
         log.info("Stream done: reasoning=%d chars, content=%d chars, %.1fs", len(full_reasoning), len(full_content), llm_ms/1000)
+        # Append timing info to the end of the response
+        time_suffix = f"\n\n---\n*⏱ {llm_ms/1000:.1f}s*"
+        await _send_dev(dev_id, {"type": "coach-content-delta", "delta": time_suffix})
+        full_content += time_suffix
         history.append({"role": "assistant", "content": full_content})
         await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
         await _send_thinking(dev_id, False)

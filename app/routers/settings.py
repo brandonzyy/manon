@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -13,25 +15,57 @@ log = logging.getLogger("manon.settings")
 
 router = APIRouter(tags=["settings"])
 
+# ── Config file path ──
+_CONFIG_FILE = Path(__file__).resolve().parent.parent / "settings.json"
+
 # ── Built-in models ──
 BUILTIN_MODELS = [
     {"id": "glm-4.7-fp8", "name": "GLM-4.7-FP8", "provider": "zhipu", "desc": "智谱免费编程模型（默认）"},
 ]
 
-# ── Pre-configured models (need separate API endpoints) ──
-import os as _os
-_ZHIPU_KEY = _os.environ.get("MANON_LLM_API_KEY") or _os.environ.get("ZHIPU_API_KEY") or ""
+# ── Custom models (user-added via UI, persisted to settings.json) ──
+_BUILTIN_CUSTOM: list[dict] = []
 
-# ── Custom models (user-added, OpenAI-compatible) ──
-# Each: {"id": str, "name": str, "model_id": str, "api_url": str, "api_key": str, "desc": str, "provider": "custom"}
-_custom_models: list[dict] = [
-    {
-        "id": "GLM-5", "name": "GLM-5", "model_id": "GLM-5",
-        "api_url": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
-        "api_key": _ZHIPU_KEY, "api_format": "openai",
-        "desc": "智谱旗舰模型 @ open.bigmodel.cn", "provider": "custom", "_builtin": True,
-    },
-]
+_DEFAULT_RUNTIME: dict[str, Any] = {
+    "coach_model": "glm-4.7-fp8",
+    "coach_model_fallback": "glm-4.7-fp8",
+    "agent_model": "glm-4.7-fp8",
+    "agent_model_fallback": "glm-4.7-fp8",
+    "agent_compress_model": "glm-4.7-fp8",
+}
+
+
+def _load_config() -> dict:
+    """Load persisted settings from settings.json."""
+    if _CONFIG_FILE.exists():
+        try:
+            return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.warning("Failed to load settings.json: %s", exc)
+    return {}
+
+
+def _save_config() -> None:
+    """Persist current custom_models and runtime config to settings.json."""
+    # Only save non-builtin custom models
+    user_models = [m for m in _custom_models if not m.get("_builtin")]
+    data = {"custom_models": user_models, "runtime": dict(_runtime)}
+    try:
+        _CONFIG_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        log.warning("Failed to save settings.json: %s", exc)
+
+
+# ── Initialize from config file ──
+_saved = _load_config()
+_custom_models: list[dict] = list(_BUILTIN_CUSTOM)
+for m in _saved.get("custom_models", []):
+    # Avoid duplicates by id
+    if not any(existing["id"] == m["id"] for existing in _custom_models):
+        _custom_models.append(m)
+
+_runtime: dict[str, Any] = dict(_DEFAULT_RUNTIME)
+_runtime.update(_saved.get("runtime", {}))
 
 
 def get_all_models() -> list[dict]:
@@ -51,16 +85,6 @@ def get_custom_model(model_id: str) -> dict | None:
         if m["id"] == model_id:
             return m
     return None
-
-
-# ── Runtime config (in-memory, survives until restart) ──
-_runtime: dict[str, Any] = {
-    "coach_model": "glm-4.7-fp8",
-    "coach_model_fallback": "GLM-5",
-    "agent_model": "glm-4.7-fp8",
-    "agent_model_fallback": "GLM-5",
-    "agent_compress_model": "glm-4.7-fp8",
-}
 
 
 def get_runtime_config() -> dict[str, Any]:
@@ -105,6 +129,8 @@ async def update_settings(body: ModelConfigUpdate):
             _runtime[field] = val
             updated.append(field)
             log.info("Config updated: %s = %s", field, val)
+    if updated:
+        _save_config()
 
     # Push model config to connected agents
     if any(f.startswith("agent_") for f in updated):
@@ -135,6 +161,7 @@ async def add_custom_model(body: CustomModelAdd):
         "provider": "custom",
     }
     _custom_models.append(entry)
+    _save_config()
     log.info("Custom model added: %s (%s)", body.name, body.model_id)
     return {"status": "ok", "model": {"id": mid, "name": body.name, "provider": "custom", "desc": entry["desc"]}}
 
@@ -144,6 +171,7 @@ async def delete_custom_model(model_id: str):
     for i, m in enumerate(_custom_models):
         if m["id"] == model_id:
             _custom_models.pop(i)
+            _save_config()
             log.info("Custom model deleted: %s", model_id)
             return {"status": "ok"}
     return {"status": "not_found"}

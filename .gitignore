@@ -8,3 +8,4 @@ repos/
 *.egg-info/
 dist/
 build/
+app/settings.json
