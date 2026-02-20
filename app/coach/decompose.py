@@ -15,9 +15,9 @@ from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinkin
 
 log = logging.getLogger("manon.coach.decompose")
 
-SYSTEM_PROMPT = """你是 Manon 的技术架构师。将功能需求拆分为可独立开发和验证的子任务。
+SYSTEM_PROMPT = """你是 Manon 的技术架构师。将需求拆分为可独立执行和验证的子任务。
 
-每个 task 应该：对应一个可独立验证的功能点，涉及 3-5 个文件，有明确验收标准。
+每个 task 应该：对应一个可独立验证的工作项，涉及 3-5 个文件，有明确验收标准。
 
 每个 task 应有 order 字段表示执行顺序。相同 order 的任务可以并行执行，不同 order 按顺序执行。
 例如：order=1 的任务都是独立的基础工作，order=2 的任务依赖 order=1 的结果。
@@ -45,10 +45,10 @@ async def decompose_to_tasks(state: FeatureState) -> None:
         files = "; ".join(f"{f['file']} ({f['action']}): {f['description']}" for f in d.get("fileChanges", []))
         design_ctx = f"\n\n## 技术设计\n方案：{d.get('approach','')}\n文件变更：{files}"
 
-    user_prompt = f"## 功能规格\n标题：{spec.get('title','')}\n范围：{spec.get('scope','')}\n需求与场景：\n{req_text}{design_ctx}"
+    user_prompt = f"## 任务规格\n标题：{spec.get('title','')}\n范围：{spec.get('scope','')}\n需求与场景：\n{req_text}{design_ctx}"
 
     try:
-        await _send_thinking(state.dev_id, True, "正在拆解开发任务...")
+        await _send_thinking(state.dev_id, True, "正在拆解子任务...")
         raw = await call_glm5(SYSTEM_PROMPT, user_prompt, max_tokens=8192, timeout=90.0)
         await _send_thinking(state.dev_id, False)
         tasks = parse_json_from_llm(raw)
@@ -112,8 +112,8 @@ async def execute_task_loop(state: FeatureState) -> None:
                 })
                 await _send_chat(
                     state.dev_id,
-                    f"任务「{task.get('title','')}」开发失败，需要人工介入。\n"
-                    "回复\"跳过\"跳过此任务 / \"取消\"取消整个功能 / 或提供额外指导",
+                    f"任务「{task.get('title','')}」执行失败，需要人工介入。\n"
+                    "回复\"跳过\"跳过此任务 / \"取消\"取消整个任务 / 或提供额外指导",
                     role="system",
                 )
                 return
@@ -150,7 +150,7 @@ async def execute_task_loop(state: FeatureState) -> None:
                 await _send_chat(
                     state.dev_id,
                     f"并行任务组中有失败：「{failed_names}」，需要人工介入。\n"
-                    "回复\"跳过\"跳过失败任务继续 / \"取消\"取消整个功能 / 或提供额外指导",
+                    "回复\"跳过\"跳过失败任务继续 / \"取消\"取消整个任务 / 或提供额外指导",
                     role="system",
                 )
                 return
@@ -214,11 +214,11 @@ async def execute_task_loop(state: FeatureState) -> None:
             f"## 各任务执行结果\n" + "\n\n".join(task_summaries) + "\n\n"
             f"## 项目测试结果\n{test_result_text}\n\n"
             f"## 评估要求\n"
-            f"评估这次功能开发的完成度和质量。输出严格 JSON（不要 markdown 包裹）：\n"
+            f"评估这次任务执行的完成度和质量。输出严格 JSON（不要 markdown 包裹）：\n"
             f'{{\"score\": 1-10, \"summary\": \"总结\", \"issues\": [\"问题1\", ...], \"passed\": true/false}}'
         )
         eval_messages = [
-            {"role": "system", "content": "你是代码审查专家，评估功能开发的完成度和质量。"},
+            {"role": "system", "content": "你是代码审查专家，评估任务执行的完成度和质量。"},
             {"role": "user", "content": eval_prompt},
         ]
         eval_result = await llm_chat(eval_messages, max_tokens=2048, timeout=60.0)
@@ -271,7 +271,7 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
     # Build context from spec + design + completed tasks
     parts: list[str] = []
     if state.spec:
-        parts.append(f"Feature: {state.spec.get('title','')}\nScope: {state.spec.get('scope','')}")
+        parts.append(f"Task: {state.spec.get('title','')}\nScope: {state.spec.get('scope','')}")
     if state.design:
         parts.append(f"Design: {state.design.get('approach','')}")
     completed = [t for t in state.tasks if t.get("status") == "completed"]

@@ -398,14 +398,14 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
         <div class="welcome-cards">
           <div class="wc"><span class="wc-icon">🔍</span><div class="wc-title">代码问答</div><div class="wc-desc">基于知识图谱的精准代码分析</div></div>
           <div class="wc"><span class="wc-icon">📐</span><div class="wc-title">架构设计</div><div class="wc-desc">需求拆解、方案设计、任务分配</div></div>
-          <div class="wc"><span class="wc-icon">⚡</span><div class="wc-title">自动开发</div><div class="wc-desc">描述需求自动进入开发流程</div></div>
+          <div class="wc"><span class="wc-icon">⚡</span><div class="wc-title">自动执行</div><div class="wc-desc">描述需求自动进入工作流程</div></div>
         </div>
         <div class="cli-hint">直接输入问题开始对话 · <kbd>/reset</kbd> 重置 · <kbd>Shift+Enter</kbd> 换行</div>
       </div>
     </div>
     <div class="thinking-bar" id="thinking" style="display:none"><div class="spinner"></div><span id="thinkingLabel">思考中...</span></div>
     <div class="confirm-bar" id="specConfirm" style="display:none">
-      <button class="btn btn-ok" onclick="approveSpec()">确认开发</button>
+      <button class="btn btn-ok" onclick="approveSpec()">确认执行</button>
       <button class="btn btn-no" onclick="rejectSpec()">修改意见</button>
     </div>
     <div class="input-area">
@@ -424,7 +424,7 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
 <!-- Welcome Overlay -->
 <div class="welcome-overlay" id="welcomeOverlay" style="display:none">
   <h2>Manon 马浓</h2>
-  <p>AI 架构师，帮你理解代码、设计方案、拆解任务。<br>先初始化一个项目开始工作。</p>
+  <p>AI 架构师，帮你理解代码、设计方案、执行任务。<br>先初始化一个项目开始工作。</p>
   <button class="welcome-btn" onclick="openSetupModal()">初始化项目</button>
 </div>
 <!-- Setup Modal -->
@@ -495,8 +495,8 @@ if(typeof marked!=='undefined'){marked.use({extensions:[{name:'letteredHeading',
 const CIRC=2*Math.PI*20;
 const STAGE_ICONS={idle:'💤',clarifying:'💬',['spec-ready']:'📝',['user-confirming']:'👤',designing:'📐',decomposing:'🔧',executing:'⚡',reviewing:'🔍',done:'✅',failed:'❌'};
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','reviewing','done'];
-const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',reviewing:'报告审核',done:'开发完成',failed:'执行失败'};
-const STAGE_DESC={clarifying:'正在确认需求细节...',['spec-ready']:'功能规格已生成，等待 LLM 处理...',['user-confirming']:'请确认开发方案',designing:'正在进行技术架构设计...',decomposing:'正在拆解开发任务...',executing:'正在执行开发任务...',reviewing:'请审核报告后通过或驳回',done:'开发流程已完成',failed:'执行出错'};
+const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'任务执行',reviewing:'报告审核',done:'执行完成',failed:'执行失败'};
+const STAGE_DESC={clarifying:'正在确认需求细节...',['spec-ready']:'任务规格已生成，等待 LLM 处理...',['user-confirming']:'请确认执行方案',designing:'正在进行技术架构设计...',decomposing:'正在拆解子任务...',executing:'正在执行任务...',reviewing:'请审核报告后通过或驳回',done:'工作流程已完成',failed:'执行出错'};
 let ws=null,projectId='',currentStage='idle';
 let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
@@ -525,7 +525,7 @@ function clearChatLog(){
   const box=$('messages');
   box.innerHTML='';
   // Restore welcome block
-  box.innerHTML=`<div class="cli-welcome" id="cliWelcome"><div class="welcome-brand"><span class="welcome-icon"><svg width="52" height="52" viewBox="0 0 48 48" fill="none"><defs><linearGradient id="mGrad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#5b8def"/><stop offset="100%" stop-color="#7c5cfc"/></linearGradient><filter id="mGlow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M8 38V14l16 12 16-12v24" stroke="url(#mGrad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="14" r="3.5" fill="#5b8def" filter="url(#mGlow)"/><circle cx="24" cy="26" r="4" fill="#a78bfa" filter="url(#mGlow)"/><circle cx="40" cy="14" r="3.5" fill="#5b8def" filter="url(#mGlow)"/><circle cx="8" cy="38" r="3" fill="#7c5cfc" filter="url(#mGlow)"/><circle cx="40" cy="38" r="3" fill="#7c5cfc" filter="url(#mGlow)"/></svg></span><div class="cli-logo">Manon 马浓</div><div class="welcome-sub">AI 架构师 · 代码智能分析</div></div><div class="welcome-proj">📂 <span id="welcomeProj">—</span> · <span id="welcomeStats">—</span></div><div class="welcome-cards"><div class="wc"><span class="wc-icon">🔍</span><div class="wc-title">代码问答</div><div class="wc-desc">基于知识图谱的精准代码分析</div></div><div class="wc"><span class="wc-icon">📐</span><div class="wc-title">架构设计</div><div class="wc-desc">需求拆解、方案设计、任务分配</div></div><div class="wc"><span class="wc-icon">⚡</span><div class="wc-title">自动开发</div><div class="wc-desc">描述需求自动进入开发流程</div></div></div><div class="cli-hint">直接输入问题开始对话 · <kbd>/reset</kbd> 重置 · <kbd>Shift+Enter</kbd> 换行</div></div>`;
+  box.innerHTML=`<div class="cli-welcome" id="cliWelcome"><div class="welcome-brand"><span class="welcome-icon"><svg width="52" height="52" viewBox="0 0 48 48" fill="none"><defs><linearGradient id="mGrad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#5b8def"/><stop offset="100%" stop-color="#7c5cfc"/></linearGradient><filter id="mGlow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M8 38V14l16 12 16-12v24" stroke="url(#mGrad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="14" r="3.5" fill="#5b8def" filter="url(#mGlow)"/><circle cx="24" cy="26" r="4" fill="#a78bfa" filter="url(#mGlow)"/><circle cx="40" cy="14" r="3.5" fill="#5b8def" filter="url(#mGlow)"/><circle cx="8" cy="38" r="3" fill="#7c5cfc" filter="url(#mGlow)"/><circle cx="40" cy="38" r="3" fill="#7c5cfc" filter="url(#mGlow)"/></svg></span><div class="cli-logo">Manon 马浓</div><div class="welcome-sub">AI 架构师 · 代码智能分析</div></div><div class="welcome-proj">📂 <span id="welcomeProj">—</span> · <span id="welcomeStats">—</span></div><div class="welcome-cards"><div class="wc"><span class="wc-icon">🔍</span><div class="wc-title">代码问答</div><div class="wc-desc">基于知识图谱的精准代码分析</div></div><div class="wc"><span class="wc-icon">📐</span><div class="wc-title">架构设计</div><div class="wc-desc">需求拆解、方案设计、任务分配</div></div><div class="wc"><span class="wc-icon">⚡</span><div class="wc-title">自动执行</div><div class="wc-desc">描述需求自动进入工作流程</div></div></div><div class="cli-hint">直接输入问题开始对话 · <kbd>/reset</kbd> 重置 · <kbd>Shift+Enter</kbd> 换行</div></div>`;
   updateWelcome();
 }
 
@@ -550,7 +550,7 @@ function handleMsg(msg){
   else if(t==='feature-spec-ready'){updateStage('user-confirming');$('specConfirm').style.display='flex'}
   else if(t==='feature-tasks-ready'){updateStage('executing');renderTaskBoard(msg.tasks||[])}
   else if(t==='feature-task-status'){updateTaskStatus(msg.taskId,msg.status)}
-  else if(t==='feature-done'){updateStage('done');showPipelineBanner('success','🎉','功能开发完成','所有任务已成功执行，报告生成中...');$('specConfirm').style.display='none'}
+  else if(t==='feature-done'){updateStage('done');showPipelineBanner('success','🎉','全部任务完成','所有任务已成功执行，报告生成中...');$('specConfirm').style.display='none'}
   else if(t==='feature-failed'){updateStage('failed');showPipelineBanner('failed','⚠️','执行失败',msg.reason||'请查看报告了解详情')}
   else if(t==='feature-report'){addReport(msg)}
   else if(t==='monitor-state'){handleMonitorState(msg)}
@@ -803,7 +803,7 @@ function sendMessage(){
 
 function approveSpec(){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-approved'}));
-  $('specConfirm').style.display='none';addMessage('已确认，开始开发','user');updateStage('designing');
+  $('specConfirm').style.display='none';addMessage('已确认，开始执行','user');updateStage('designing');
 }
 let _rejectMode=false;
 function rejectSpec(){

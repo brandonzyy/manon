@@ -12,7 +12,7 @@ from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinkin
 
 log = logging.getLogger("manon.coach.design")
 
-SYSTEM_PROMPT = """你是 Manon 的技术架构师。根据功能规格设计技术方案。
+SYSTEM_PROMPT = """你是 Manon 的技术架构师。根据任务规格设计技术方案。
 输出严格 JSON 格式（不要 markdown 代码块包裹）：
 {"approach":"技术方案概述","decisions":[{"title":"决策标题","rationale":"理由"}],"fileChanges":[{"file":"路径","action":"new|modify","description":"说明"}]}
 
@@ -31,7 +31,7 @@ async def generate_design(state: FeatureState) -> None:
         "\n".join(f"  Given {s['given']} / When {s['when']} / Then {s['then']}" for s in r.get("scenarios", []))
         for r in spec.get("requirements", [])
     )
-    user_prompt = f"## 功能规格\n标题：{spec.get('title','')}\n范围：{spec.get('scope','')}\n\n## 需求\n{req_summary}"
+    user_prompt = f"## 任务规格\n标题：{spec.get('title','')}\n范围：{spec.get('scope','')}\n\n## 需求\n{req_summary}"
 
     try:
         await _send_thinking(state.dev_id, True, "正在生成技术设计...")
@@ -46,7 +46,7 @@ async def generate_design(state: FeatureState) -> None:
         await _send_chat(
             state.dev_id,
             f"## 技术设计\n\n**方案：** {design.get('approach','')}\n\n"
-            f"**关键决策：**\n{decision_lines}\n\n**文件变更：**\n{file_lines}\n\n正在拆解开发任务...",
+            f"**关键决策：**\n{decision_lines}\n\n**文件变更：**\n{file_lines}\n\n正在拆解子任务...",
         )
         await decompose_to_tasks(state)
     except Exception as exc:

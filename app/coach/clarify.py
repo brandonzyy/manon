@@ -14,7 +14,7 @@ log = logging.getLogger("manon.coach.clarify")
 
 MAX_ROUNDS = 3
 
-SYSTEM_PROMPT = """你是 Manon 的产品经理。用户提交了功能需求，你需要通过提问确认需求边界。
+SYSTEM_PROMPT = """你是 Manon 的产品经理。用户提交了需求，你需要通过提问确认需求边界。
 规则：
 1. 每轮最多问 2-3 个问题
 2. 问题要具体、可快速回答
@@ -32,7 +32,7 @@ async def clarify_intent(state: FeatureState) -> None:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.append({
         "role": "user",
-        "content": f"## 功能需求\n{state.description}\n\n请生成追问问题，或输出 READY 表示信息已足够。",
+        "content": f"## 需求描述\n{state.description}\n\n请生成追问问题，或输出 READY 表示信息已足够。",
     })
     for h in state.conversation_history:
         messages.append({"role": "assistant", "content": h["question"]})

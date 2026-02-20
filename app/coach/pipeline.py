@@ -265,7 +265,7 @@ def _is_feature_request(prompt: str) -> bool:
         "写一个", "写个", "帮我写", "帮我实现", "帮我添加", "帮我开发",
         "帮我修改", "帮我修复", "帮我重构", "帮我优化", "帮我创建",
         "请实现", "请添加", "请修改", "请开发", "请创建",
-        "把这个", "把它", "开始实现", "开始开发", "开始做",
+        "把这个", "把它", "开始实现", "开始开发", "开始执行", "开始做",
     )
     for kw in action_starts:
         if p.startswith(kw):
@@ -342,7 +342,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
             if context_desc:
                 context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n{context_desc}"
             else:
-                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n请根据以上对话内容，自动识别需要实现的功能，进入开发流程。"
+                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n请根据以上对话内容，自动识别需要执行的任务，进入工作流程。"
         elif not context_desc:
             await _send_chat(dev_id, "没有对话上下文，请先描述你的需求，或使用 `/do <需求描述>`。", role="system")
             return
@@ -408,7 +408,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 log.warning("MatrixoneGraph query failed: %s", exc)
                 await _send_chat(dev_id, f"⚠ 知识图谱查询失败: {exc}", role="system")
 
-    # Classify intent: explicit feature request → pipeline, otherwise → chat
+    # Classify intent: explicit task request → pipeline, otherwise → chat
     if _is_feature_request(prompt):
         # Include recent chat history so pipeline LLM understands context
         history = _chat_history.get(dev_id, [])
@@ -531,7 +531,7 @@ async def generate_report(state: FeatureState) -> None:
     # ── Build HTML sections ──
     parts: list[str] = []
     parts.append(f"<h1>{_esc(title)}</h1>")
-    parts.append(f'<div class="meta">Feature #{_esc(state.feature_id)} · {now.strftime("%Y-%m-%d %H:%M")}</div>')
+    parts.append(f'<div class="meta">Task #{_esc(state.feature_id)} · {now.strftime("%Y-%m-%d %H:%M")}</div>')
 
     # Description
     parts.append("<h2>需求描述</h2>")
@@ -548,7 +548,7 @@ async def generate_report(state: FeatureState) -> None:
     # Spec
     spec = state.spec or {}
     if spec:
-        parts.append("<h2>功能规格</h2>")
+        parts.append("<h2>任务规格</h2>")
         parts.append(f"<p><strong>范围:</strong> {_esc(spec.get('scope',''))}</p>")
         reqs = spec.get("requirements", [])
         if reqs:
@@ -812,9 +812,9 @@ async def _start_feature(dev_id: str, msg: dict) -> None:
     await _send_dev(dev_id, {"type": "coach-stage", "stage": "clarifying"})
     user_prompt = msg.get("prompt")
     if user_prompt:
-        await _send_chat(dev_id, f"收到需求：「{user_prompt}」，进入开发流程...")
+        await _send_chat(dev_id, f"收到需求：「{user_prompt}」，进入工作流程...")
     else:
-        await _send_chat(dev_id, "已根据对话上下文进入开发流程...")
+        await _send_chat(dev_id, "已根据对话上下文进入工作流程...")
     await clarify_intent(state)
 
 
@@ -891,7 +891,7 @@ async def _skip_current_task(state: FeatureState) -> None:
 async def _cancel_feature(state: FeatureState) -> None:
     state.status = Status.FAILED
     await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": "User cancelled"})
-    await _send_chat(state.dev_id, "功能开发已取消。", role="system")
+    await _send_chat(state.dev_id, "任务已取消。", role="system")
     await generate_report(state)
     state.status = Status.IDLE
 

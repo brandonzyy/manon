@@ -149,10 +149,10 @@ async def execute_task(config: dict) -> dict:
             graph_context=graph_context or None,
         )
 
-        sections = [f"# Feature Task #{task_id}", ""]
+        sections = [f"# Task #{task_id}", ""]
         sections.extend(["## Instruction", instruction, ""])
         if context:
-            sections.extend(["## Feature Context", context, ""])
+            sections.extend(["## Context", context, ""])
         if graph_context:
             sections.extend(["## Code Intelligence", graph_context, ""])
 
@@ -171,7 +171,7 @@ async def execute_task(config: dict) -> dict:
                 total_chars += len(content)
             sections.append("")
 
-        sections.extend(["## Instructions", "Implement the feature task. Keep changes focused on the task scope."])
+        sections.extend(["## Instructions", "Implement the task. Keep changes focused on the task scope."])
         task_prompt = "\n".join(sections)
         log.info("Running agent for task %s (%d chars prompt)", task_id, len(task_prompt))
 
