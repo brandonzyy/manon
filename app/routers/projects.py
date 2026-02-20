@@ -25,6 +25,74 @@ router = APIRouter(tags=["projects"], dependencies=[Depends(require_api_key)])
 _index_tasks: dict[str, dict] = {}  # project_id -> {task, status, result}
 
 
+async def reconcile_projects():
+    """Startup sync: verify index files exist for each project, auto-reindex if missing."""
+    async with db_pool() as db:
+        cursor = await db.execute("SELECT id, name, local_path, index_stats FROM projects")
+        rows = await cursor.fetchall()
+
+    for row in rows:
+        pid, name, local_path, stats_raw = row["id"], row["name"], row["local_path"], row["index_stats"]
+
+        # Remove projects whose local path no longer exists
+        if not local_path or not Path(local_path).is_dir():
+            async with db_pool() as db:
+                await db.execute("DELETE FROM projects WHERE id=?", (pid,))
+                await db.commit()
+            log.info("Removed project %s (%s): path no longer exists", pid, name)
+            continue
+
+        # Check if index files actually exist on disk
+        mg = MatrixoneGraph.get(local_path)
+        index_exists = (mg.kg_path / "meta.json").exists()
+
+        if not index_exists:
+            log.info("Project %s (%s): index missing, triggering background re-index", pid, name)
+            async with db_pool() as db:
+                await db.execute("UPDATE projects SET index_stats=? WHERE id=?",
+                                 (json.dumps({"status": "indexing"}), pid))
+                await db.commit()
+            _index_tasks[pid] = {"status": "indexing", "result": {}}
+            asyncio.create_task(_bg_reindex(pid, name, local_path))
+        else:
+            log.info("Project %s (%s): index OK", pid, name)
+
+
+async def _bg_reindex(pid: str, name: str, local_path: str):
+    """Background re-index triggered by startup reconciliation."""
+    import time as _time
+    try:
+        t0 = _time.monotonic()
+        result = await MatrixoneGraph.get(local_path).index_report()
+        elapsed = _time.monotonic() - t0
+        stats_json = json.dumps({
+            "status": "done",
+            "entities": result.get("entities", 0),
+            "relations": result.get("relations", 0),
+            "files": result.get("files", 0),
+            "chunks": result.get("chunks", 0),
+            "skipped": result.get("skipped", 0),
+            "errors_count": len(result.get("errors", [])),
+            "entityTypes": result.get("entityTypes", {}),
+            "score": result.get("health"),
+            "lastUpdate": datetime.now(timezone.utc).isoformat(),
+        })
+        async with db_pool() as db:
+            await db.execute("UPDATE projects SET index_stats=?, updated_at=datetime('now') WHERE id=?",
+                             (stats_json, pid))
+            await db.commit()
+        _index_tasks[pid] = {"status": "done", "result": result}
+        log.info("Re-index done for %s (%s): %s files, %s entities, %.1fs",
+                 pid, name, result.get("files"), result.get("entities"), elapsed)
+    except Exception as exc:
+        _index_tasks[pid] = {"status": "error", "result": {"error": str(exc)}}
+        async with db_pool() as db:
+            await db.execute("UPDATE projects SET index_stats=? WHERE id=?",
+                             (json.dumps({"status": "error", "error": str(exc)}), pid))
+            await db.commit()
+        log.error("Re-index failed for %s (%s): %s", pid, name, exc)
+
+
 class ProjectCreate(BaseModel):
     name: str
     git_url: str
@@ -71,12 +139,20 @@ async def setup_project(body: ProjectSetup):
     name = body.name or Path(local_path).name
     workspace = name  # Use project name as workspace identifier
 
+    # Deduplicate: if a project with the same local_path exists, reuse it
     async with db_pool() as db:
-        await db.execute(
-            "INSERT INTO projects (id,name,git_url,branch,workspace,local_path) VALUES (?,?,?,?,?,?)",
-            (pid, name, git_url, body.branch, workspace, local_path),
+        existing = await db.execute_fetchone(
+            "SELECT id, name FROM projects WHERE local_path=?", (local_path,)
         )
-        await db.commit()
+        if existing:
+            pid = existing["id"]
+            log.info("Reusing existing project %s for path %s", pid, local_path)
+        else:
+            await db.execute(
+                "INSERT INTO projects (id,name,git_url,branch,workspace,local_path) VALUES (?,?,?,?,?,?)",
+                (pid, name, git_url, body.branch, workspace, local_path),
+            )
+            await db.commit()
 
     # Start indexing in background
     async def _bg_index():

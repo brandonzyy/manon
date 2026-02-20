@@ -88,10 +88,13 @@ class CodeGraph:
         self._g.add_node(entity.id, **entity.to_dict())
 
     def get_entity(self, entity_id: str) -> Entity | None:
-        data = self._g.nodes.get(entity_id)
-        if data and "id" in data:
-            return Entity.from_dict(data)
-        return None
+        if entity_id not in self._g:
+            return None
+        data = dict(self._g.nodes[entity_id])
+        if not data.get("kind"):  # phantom node (auto-created by add_edge)
+            return None
+        data["id"] = entity_id  # NetworkX strips id after node_link_graph load
+        return Entity.from_dict(data)
 
     def has_entity(self, entity_id: str) -> bool:
         return entity_id in self._g

@@ -9,3 +9,5 @@ repos/
 dist/
 build/
 app/settings.json
+indexes/
+manon.log

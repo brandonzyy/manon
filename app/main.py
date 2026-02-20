@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI):
         data_dir=settings.index_dir,
     )
     log.info("MatrixoneGraph: embedding_url=%s, data_dir=%s", settings.embedding_url, settings.index_dir)
+    # Reconcile projects DB with actual index files on disk
+    from .routers.projects import reconcile_projects
+    await reconcile_projects()
     # Start monitor broadcast loop
     monitor_task = asyncio.create_task(_monitor_broadcast_loop())
     log.info("Manon Gateway ready (no upstream — direct agent management)")
