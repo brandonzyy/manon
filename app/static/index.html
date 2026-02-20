@@ -317,8 +317,8 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
 </head>
 <body>
 <header>
-  <h1>Manon<span>马浓 · AI 架构师</span></h1>
-  <div style="font-size:12px;color:var(--text2);padding:4px 8px">Manon</div>
+  <h1>Manon</h1>
+  <div id="headerProjectInfo" style="font-size:12px;color:var(--text2);padding:4px 10px;display:flex;align-items:center;gap:5px"><span style="color:var(--green);font-size:8px">●</span> 正在 <span id="headerProjName" style="color:var(--accent);font-weight:600">—</span> 项目上工作</div>
   <select class="proj" id="projectSelect"><option value="">加载中...</option></select>
   <button class="add-proj-btn" onclick="openSetupModal()" title="新建项目">+</button>
   <button class="settings-btn" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型</button>
@@ -765,6 +765,14 @@ function endStream(){
   requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
   _streamEl=null;_streamReasoningPre=null;_streamMdBody=null;
 }
+function updateHeaderProject(){
+  const sel=$('projectSelect');
+  const name=sel.selectedOptions[0]?.text||'—';
+  const el=$('headerProjName');
+  if(el)el.textContent=name;
+  const info=$('headerProjectInfo');
+  if(info)info.style.display=projectId?'flex':'none';
+}
 function updateWelcome(){
   const p=$('welcomeProj'),s=$('welcomeStats');
   if(p)p.textContent=projectId?($('projectSelect').selectedOptions[0]?.text||projectId):'未选择';
@@ -968,7 +976,8 @@ async function loadProjects(){
     }
     $('welcomeOverlay').style.display='none';
     sel.innerHTML=ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-    projectId=ps[0].id;sel.onchange=()=>{projectId=sel.value;resetStats();loadStats();updateWelcome();clearChatLog();loadChatLog()};
+    projectId=ps[0].id;sel.onchange=()=>{projectId=sel.value;resetStats();loadStats();updateWelcome();updateHeaderProject();clearChatLog();loadChatLog()};
+    updateHeaderProject();
     loadStats();loadChatLog();
   }catch{$('projectSelect').innerHTML='<option value="">连接失败</option>'}
 }
