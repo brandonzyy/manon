@@ -123,9 +123,11 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 /* ── Markdown in chat (dark theme, adapted from Donnie) ── */
 .msg .md-body{font-family:'Inter','Noto Sans SC',sans-serif;font-size:13px;line-height:1.7;white-space:normal}
 .msg .md-body h1{font-size:18px;font-weight:700;color:var(--accent);margin:12px 0 6px}
-.msg .md-body h2{font-size:16px;font-weight:700;color:var(--accent);margin:10px 0 4px}
-.msg .md-body h3{font-size:14px;font-weight:600;color:var(--cyan);margin:8px 0 4px}
-.msg .md-body h4,.msg .md-body h5,.msg .md-body h6{font-size:13px;font-weight:600;color:var(--text2);margin:6px 0 2px}
+.msg .md-body h2{font-size:16px;font-weight:700;color:#4a90e2;margin:10px 0 4px;border-left:3px solid #4a90e2;padding-left:8px}
+.msg .md-body h1 *,.msg .md-body h2 *{color:inherit}
+.msg .md-body h3{font-size:15px;font-weight:600;color:var(--cyan);margin:8px 0 4px}
+.msg .md-body h4{font-size:14px;font-weight:600;color:var(--accent);margin:8px 0 4px;border-left:3px solid var(--accent);padding-left:8px}
+.msg .md-body h5,.msg .md-body h6{font-size:13px;font-weight:600;color:var(--text2);margin:6px 0 2px}
 .msg .md-body p{margin:4px 0}
 .msg .md-body ul,.msg .md-body ol{padding-left:20px;margin:4px 0}
 .msg .md-body li{margin:2px 0;line-height:1.7}
@@ -154,6 +156,8 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 #input{flex:1;padding:6px 0;background:transparent;border:none;color:var(--text);font-size:13px;resize:none;font-family:'SF Mono',Monaco,'Cascadia Code',Consolas,monospace;line-height:1.5}
 #input:focus{outline:none}
 #sendBtn{display:none}
+.clear-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text2);font-size:11px;cursor:pointer;font-family:inherit;flex-shrink:0;transition:all .15s}
+.clear-btn:hover{border-color:var(--red);color:var(--red)}
 
 /* ── Reports Panel (right) ── */
 .report-item{padding:10px 12px;margin-bottom:6px;background:rgba(255,255,255,.03);border-radius:8px;font-size:12px;border-left:3px solid var(--accent);cursor:pointer;transition:background .15s,border-color .15s;display:flex;align-items:center;gap:10px}
@@ -286,6 +290,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <span class="input-prompt">❯</span>
       <textarea id="input" placeholder="输入问题或命令..." rows="1"></textarea>
       <button id="sendBtn" onclick="sendMessage()">发送</button>
+      <button class="clear-btn" onclick="clearChatLog()" title="清空聊天记录">清空</button>
     </div>
   </div>
   <!-- Right: Reports -->
@@ -373,6 +378,32 @@ let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
 let _lastUserMsg='',_pendingQueryIdx=-1;
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
+let _chatLog=[];
+
+function saveChatLog(){
+  if(!projectId)return;
+  try{localStorage.setItem('manon-chat-'+projectId,JSON.stringify(_chatLog))}catch{}
+}
+function loadChatLog(){
+  _chatLog=[];
+  if(!projectId)return;
+  try{
+    const raw=localStorage.getItem('manon-chat-'+projectId);
+    if(raw)_chatLog=JSON.parse(raw);
+  }catch{_chatLog=[];return}
+  if(!_chatLog.length)return;
+  const w=$('cliWelcome');if(w)w.style.display='none';
+  _chatLog.forEach(m=>addMessage(m.content,m.role,m.reasoning,true));
+}
+function clearChatLog(){
+  _chatLog=[];
+  if(projectId)try{localStorage.removeItem('manon-chat-'+projectId)}catch{}
+  const box=$('messages');
+  box.innerHTML='';
+  // Restore welcome block
+  box.innerHTML=`<div class="cli-welcome" id="cliWelcome"><div class="cli-logo">╭─ Manon 马浓 · AI 架构师 ─╮</div><div>项目: <span id="welcomeProj">—</span> · <span id="welcomeStats">—</span></div><div class="cli-hint">直接提问进行交互 · 描述代码修改需求自动进入开发流程 · <kbd>/reset</kbd> 重置 · <kbd>Shift+Enter</kbd> 换行</div></div>`;
+  updateWelcome();
+}
 
 function $(id){return document.getElementById(id)}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
@@ -466,9 +497,10 @@ function updateStage(stage){
 }
 
 // ── Chat ──
-function addMessage(content,role,reasoning){
+function addMessage(content,role,reasoning,skipSave){
   // Hide welcome on first message
   const w=$('cliWelcome');if(w)w.style.display='none';
+  if(!skipSave&&role!=='thinking-line'){_chatLog.push({role,content,reasoning:reasoning||''});saveChatLog()}
   const el=document.createElement('div');el.className=`msg ${role}`;
   // Reasoning block (collapsible, like Claude Code thinking)
   if(reasoning&&role!=='user'&&role!=='system'){
@@ -534,6 +566,8 @@ function endStream(){
   if(_streamMdBody&&typeof marked!=='undefined')_streamMdBody.innerHTML=marked.parse(preprocessMd(_streamContent));
   if(_streamReasoningPre&&_streamReasoning)_streamReasoningPre.textContent=_streamReasoning;
   _associateResponse(_streamContent);
+  // Persist streamed message
+  if(_streamContent){_chatLog.push({role:'manon',content:_streamContent,reasoning:_streamReasoning||''});saveChatLog()}
   $('thinking').style.display='none';
   requestAnimationFrame(()=>{const b=$('messages');b.scrollTop=b.scrollHeight});
   _streamEl=null;_streamReasoningPre=null;_streamMdBody=null;
@@ -656,8 +690,8 @@ async function loadProjects(){
     }
     $('welcomeOverlay').style.display='none';
     sel.innerHTML=ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-    projectId=ps[0].id;sel.onchange=()=>{projectId=sel.value;resetStats();loadStats();updateWelcome()};
-    loadStats();
+    projectId=ps[0].id;sel.onchange=()=>{projectId=sel.value;resetStats();loadStats();updateWelcome();clearChatLog();loadChatLog()};
+    loadStats();loadChatLog();
   }catch{$('projectSelect').innerHTML='<option value="">连接失败</option>'}
 }
 const inputEl=$('input');
