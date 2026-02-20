@@ -71,8 +71,9 @@ class ModelConfigUpdate(BaseModel):
 class CustomModelAdd(BaseModel):
     name: str
     model_id: str  # the model name sent to the API (e.g. "gpt-4o")
-    api_url: str   # OpenAI-compatible base URL (e.g. "https://api.openai.com/v1")
+    api_url: str   # base URL (e.g. "https://api.openai.com/v1")
     api_key: str
+    api_format: str = "openai"  # "openai" or "anthropic"
 
 
 class CustomModelDelete(BaseModel):
@@ -115,12 +116,14 @@ async def update_settings(body: ModelConfigUpdate):
 @router.post("/settings/models")
 async def add_custom_model(body: CustomModelAdd):
     mid = f"custom-{uuid.uuid4().hex[:8]}"
+    fmt = body.api_format if body.api_format in ("openai", "anthropic") else "openai"
     entry = {
         "id": mid,
         "name": body.name,
         "model_id": body.model_id,
         "api_url": body.api_url.rstrip("/"),
         "api_key": body.api_key,
+        "api_format": fmt,
         "desc": f"{body.model_id} @ {body.api_url[:40]}",
         "provider": "custom",
     }

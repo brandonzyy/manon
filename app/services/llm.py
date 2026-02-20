@@ -33,17 +33,110 @@ def _active_fallback() -> str:
     return get_runtime_config().get("coach_model_fallback") or get_settings().llm_model_fallback
 
 
-def _resolve_model(model: str) -> tuple[str, str, str]:
-    """Return (model_name, api_url, api_key) — handles custom models."""
+def _resolve_model(model: str) -> tuple[str, str, str, str]:
+    """Return (model_name, api_url, api_key, api_format) — handles custom models."""
     from ..routers.settings import get_custom_model
     custom = get_custom_model(model)
     if custom:
+        fmt = custom.get("api_format", "openai")
         base = custom["api_url"].rstrip("/")
-        if not base.endswith("/v1"):
-            base += "/v1"
-        return custom["model_id"], base + "/chat/completions", custom["api_key"]
+        if fmt == "anthropic":
+            if not base.endswith("/v1"):
+                base += "/v1"
+            return custom["model_id"], base + "/messages", custom["api_key"], "anthropic"
+        else:
+            if not base.endswith("/v1"):
+                base += "/v1"
+            return custom["model_id"], base + "/chat/completions", custom["api_key"], "openai"
     s = get_settings()
-    return model, s.llm_api_url, s.llm_api_key
+    return model, s.llm_api_url, s.llm_api_key, "openai"
+
+
+def _split_anthropic_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+    """Extract system prompt from messages list for Anthropic API format."""
+    system = ""
+    filtered = []
+    for m in messages:
+        if m["role"] == "system":
+            system = m.get("content", "")
+        else:
+            filtered.append(m)
+    return system, filtered
+
+
+async def _anthropic_chat(
+    client: httpx.AsyncClient,
+    model: str, url: str, api_key: str,
+    messages: list[dict], max_tokens: int, timeout: float,
+) -> dict:
+    """Non-streaming Anthropic Messages API call."""
+    system, msgs = _split_anthropic_messages(messages)
+    body: dict = {"model": model, "max_tokens": max_tokens, "messages": msgs}
+    if system:
+        body["system"] = system
+    resp = await client.post(
+        url,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        json=body,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    content = ""
+    reasoning = ""
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            content += block.get("text", "")
+        elif block.get("type") == "thinking":
+            reasoning += block.get("thinking", "")
+    return {"content": content, "reasoning": reasoning}
+
+
+async def _anthropic_chat_stream(
+    model: str, url: str, api_key: str,
+    messages: list[dict], max_tokens: int, timeout: float,
+):
+    """Streaming Anthropic Messages API — yields {"type": ..., "delta": ...}."""
+    system, msgs = _split_anthropic_messages(messages)
+    body: dict = {"model": model, "max_tokens": max_tokens, "messages": msgs, "stream": True}
+    if system:
+        body["system"] = system
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
+        async with client.stream(
+            "POST", url,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        ) as resp:
+            resp.raise_for_status()
+            buf = ""
+            async for raw in resp.aiter_text():
+                buf += raw
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        return
+                    try:
+                        evt = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if evt.get("type") == "content_block_delta":
+                        delta = evt.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            yield {"type": "content", "delta": delta.get("text", "")}
+                        elif delta.get("type") == "thinking_delta":
+                            yield {"type": "reasoning", "delta": delta.get("thinking", "")}
 
 
 async def llm_chat(
@@ -55,8 +148,12 @@ async def llm_chat(
 ) -> dict:
     """Low-level chat completion call. Returns {"content": str, "reasoning": str}."""
     model = model or _active_model()
-    model_name, api_url, api_key = _resolve_model(model)
+    model_name, api_url, api_key, api_format = _resolve_model(model)
     client = _get_client()
+
+    if api_format == "anthropic":
+        return await _anthropic_chat(client, model_name, api_url, api_key, messages, max_tokens, timeout)
+
     resp = await client.post(
         api_url,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -76,14 +173,19 @@ async def llm_chat_stream(
     max_tokens: int = 4096,
     timeout: float = 120.0,
 ):
-    """Streaming chat completion via openai SDK (proven SSE parser).
+    """Streaming chat completion.
 
     Yields {"type": "reasoning"|"content", "delta": str}.
     """
-    from openai import AsyncOpenAI
-
     model = model or _active_model()
-    model_name, api_url, api_key = _resolve_model(model)
+    model_name, api_url, api_key, api_format = _resolve_model(model)
+
+    if api_format == "anthropic":
+        async for chunk in _anthropic_chat_stream(model_name, api_url, api_key, messages, max_tokens, timeout):
+            yield chunk
+        return
+
+    from openai import AsyncOpenAI
     # Derive base_url: strip /chat/completions if present, otherwise use as-is
     base_url = api_url.rsplit("/chat/completions", 1)[0]
     client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)

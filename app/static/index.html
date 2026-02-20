@@ -343,13 +343,16 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <div class="modal-row"><label>压缩模型</label><select id="cfgAgentCompress"></select></div>
     </div>
     <div class="modal-section">
-      <h3>自定义模型 (OpenAI 兼容)</h3>
+      <h3>自定义模型</h3>
       <div id="customModelList" style="margin-bottom:10px"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
         <div class="setup-field" style="margin:0"><label>显示名称</label><input id="cmName" placeholder="GPT-4o"></div>
         <div class="setup-field" style="margin:0"><label>模型 ID</label><input id="cmModelId" placeholder="gpt-4o"></div>
       </div>
-      <div class="setup-field" style="margin:6px 0"><label>API Base URL</label><input id="cmUrl" placeholder="https://api.openai.com/v1"></div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;margin:6px 0">
+        <div class="setup-field" style="margin:0"><label>API Base URL</label><input id="cmUrl" placeholder="https://api.openai.com/v1"></div>
+        <div class="setup-field" style="margin:0"><label>API 格式</label><select id="cmFormat" style="height:32px;margin-top:auto"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+      </div>
       <div class="setup-field" style="margin:0 0 8px"><label>API Key</label><input id="cmKey" type="password" placeholder="sk-..."></div>
       <button class="btn btn-ok" style="width:100%;padding:5px" onclick="addCustomModel()">添加模型</button>
     </div>
@@ -759,14 +762,14 @@ function renderCustomModels(list){
   el.innerHTML=list.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;margin-bottom:4px;background:rgba(255,255,255,.03);border-radius:6px;font-size:11px"><div><span style="color:var(--accent);font-weight:600">${esc(m.name)}</span> <span style="color:var(--text2)">${esc(m.model_id)} · ${esc((m.api_url||'').substring(0,35))}</span></div><button onclick="deleteCustomModel('${m.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 4px" title="删除">×</button></div>`).join('');
 }
 async function addCustomModel(){
-  const name=$('cmName').value.trim(),mid=$('cmModelId').value.trim(),url=$('cmUrl').value.trim(),key=$('cmKey').value.trim();
+  const name=$('cmName').value.trim(),mid=$('cmModelId').value.trim(),url=$('cmUrl').value.trim(),key=$('cmKey').value.trim(),fmt=$('cmFormat').value;
   if(!name||!mid||!url||!key){addMessage('请填写所有字段','system');return}
   try{
-    const r=await fetch('/api/v1/settings/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,model_id:mid,api_url:url,api_key:key})});
+    const r=await fetch('/api/v1/settings/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,model_id:mid,api_url:url,api_key:key,api_format:fmt})});
     const data=await r.json();
     if(data.status==='ok'){
-      $('cmName').value='';$('cmModelId').value='';$('cmUrl').value='';$('cmKey').value='';
-      addMessage(`模型 "${name}" 已添加`,'system');
+      $('cmName').value='';$('cmModelId').value='';$('cmUrl').value='';$('cmKey').value='';$('cmFormat').value='openai';
+      addMessage(`模型 "${name}" 已添加 (${fmt})`,'system');
       await openSettings(); // refresh
     }else addMessage('添加失败','system');
   }catch(e){addMessage('添加失败：'+e.message,'system')}
