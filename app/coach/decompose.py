@@ -163,6 +163,14 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
                 log.error("No agents connected after 60s")
                 return False
 
+        # Wait between retries so agent can return to idle
+        if attempt > 0:
+            wait_secs = 5 * attempt
+            log.info("Waiting %ds before retry attempt %d", wait_secs, attempt + 1)
+            await _send_thinking(state.dev_id, True, f"等待 {wait_secs}s 后重试 (第 {attempt + 1} 次)...")
+            await asyncio.sleep(wait_secs)
+            await _send_thinking(state.dev_id, False)
+
         await hub.broadcast_to_agents(assign_msg)
         result = await _wait_for_result(state, task["id"])
 
