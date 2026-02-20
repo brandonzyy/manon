@@ -27,6 +27,7 @@ class Status(str, Enum):
     DESIGNING = "designing"
     DECOMPOSING = "decomposing"
     EXECUTING = "executing"
+    REVIEWING = "reviewing"
     DONE = "done"
     FAILED = "failed"
 
@@ -44,6 +45,7 @@ class FeatureState:
     tasks: list[dict] = field(default_factory=list)
     current_task_idx: int = -1
     failed_attempts: int = 0
+    evaluation: dict | None = None
     _task_result_future: asyncio.Future | None = None
 
 
@@ -491,8 +493,12 @@ ul{padding-left:20px}
 li{margin:3px 0}
 .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff}
 .badge-ok{background:#34c759}.badge-fail{background:#ff3b30}.badge-skip{background:#f5a623}
-pre{background:#f5f7fa;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px}
+pre{background:#f5f7fa;padding:10px;border-radius:6px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .meta{color:#888;font-size:12px;margin-bottom:20px}
+.diff-add{color:#22863a;background:#e6ffec}.diff-del{color:#cb2431;background:#ffeef0}
+.eval-score{font-size:28px;font-weight:800;display:inline-block;padding:4px 16px;border-radius:8px;margin:6px 0}
+.eval-pass{background:#e6ffec;color:#22863a}.eval-fail{background:#ffeef0;color:#cb2431}
+.token-table td:last-child{text-align:right;font-family:monospace}
 """
 
 
@@ -500,8 +506,22 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _render_diff_html(diff_text: str) -> str:
+    """Render diff text with colored add/del lines."""
+    lines = []
+    for line in diff_text.split("\n"):
+        escaped = _esc(line)
+        if line.startswith("+"):
+            lines.append(f'<div class="diff-add">{escaped}</div>')
+        elif line.startswith("-"):
+            lines.append(f'<div class="diff-del">{escaped}</div>')
+        else:
+            lines.append(f"<div>{escaped}</div>")
+    return "".join(lines)
+
+
 async def generate_report(state: FeatureState) -> None:
-    """Build an HTML report from pipeline state and notify the frontend."""
+    """Build a PDF report from pipeline state and notify the frontend."""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
     date_str = now.strftime("%Y%m%d_%H%M")
@@ -549,7 +569,9 @@ async def generate_report(state: FeatureState) -> None:
                 parts.append(f"<tr><td>{_esc(f.get('file',''))}</td><td>{_esc(f.get('action',''))}</td><td>{_esc(f.get('description',''))}</td></tr>")
             parts.append("</table>")
 
-    # Tasks
+    # Tasks with diffs, self-test, and token usage
+    total_prompt = 0
+    total_completion = 0
     if state.tasks:
         done = sum(1 for t in state.tasks if t.get("status") == "completed")
         failed = sum(1 for t in state.tasks if t.get("status") == "failed")
@@ -558,17 +580,68 @@ async def generate_report(state: FeatureState) -> None:
 
         parts.append("<h2>任务执行</h2>")
         parts.append(f"<p>完成: {done} / 总计: {total} · 失败: {failed} · 跳过: {skipped}</p>")
-        parts.append("<table><tr><th>#</th><th>任务</th><th>状态</th><th>涉及文件</th></tr>")
+        parts.append("<table><tr><th>#</th><th>任务</th><th>状态</th><th>涉及文件</th><th>Token</th></tr>")
         for t in state.tasks:
             st = t.get("status", "pending")
             badge_cls = "badge-ok" if st == "completed" else "badge-fail" if st == "failed" else "badge-skip"
             files_str = ", ".join(t.get("files", []))
+            tu = t.get("tokenUsage") or {}
+            tok_str = f'{tu.get("total", 0):,}' if tu else "—"
+            total_prompt += tu.get("prompt", 0)
+            total_completion += tu.get("completion", 0)
             parts.append(
                 f'<tr><td>{t.get("id","")}</td><td>{_esc(t.get("title",""))}</td>'
                 f'<td><span class="badge {badge_cls}">{_esc(st)}</span></td>'
-                f'<td>{_esc(files_str)}</td></tr>'
+                f'<td>{_esc(files_str)}</td><td>{tok_str}</td></tr>'
             )
         parts.append("</table>")
+
+        # Per-task diffs and self-test
+        for t in state.tasks:
+            task_diffs = t.get("diffs") or {}
+            task_st = t.get("selfTest") or {}
+            if task_diffs or task_st:
+                parts.append(f'<h2>任务 #{t.get("id","")} — {_esc(t.get("title",""))}</h2>')
+                # Self-test result
+                if task_st:
+                    passed = task_st.get("passed", True)
+                    badge = '<span class="badge badge-ok">PASS</span>' if passed else '<span class="badge badge-fail">FAIL</span>'
+                    parts.append(f"<p>自测结果: {badge}</p>")
+                    issues = task_st.get("issues", [])
+                    if issues:
+                        parts.append("<ul>")
+                        for iss in issues:
+                            parts.append(f"<li>{_esc(str(iss))}</li>")
+                        parts.append("</ul>")
+                # Diffs
+                if task_diffs:
+                    for fp, diff_content in task_diffs.items():
+                        parts.append(f"<p><strong>{_esc(fp)}</strong></p>")
+                        parts.append(f"<pre>{_render_diff_html(diff_content)}</pre>")
+
+    # Evaluation section
+    ev = state.evaluation
+    if ev:
+        parts.append("<h2>整体评价</h2>")
+        score = ev.get("score", 0)
+        score_cls = "eval-pass" if score >= 5 else "eval-fail"
+        parts.append(f'<div class="eval-score {score_cls}">{score}/10</div>')
+        parts.append(f"<p>{_esc(ev.get('summary', ''))}</p>")
+        ev_issues = ev.get("issues", [])
+        if ev_issues:
+            parts.append("<ul>")
+            for iss in ev_issues:
+                parts.append(f"<li>{_esc(str(iss))}</li>")
+            parts.append("</ul>")
+
+    # Token statistics
+    total_all = total_prompt + total_completion
+    parts.append("<h2>Token 统计</h2>")
+    parts.append('<table class="token-table"><tr><th>类型</th><th>数量</th></tr>')
+    parts.append(f"<tr><td>Prompt Tokens</td><td>{total_prompt:,}</td></tr>")
+    parts.append(f"<tr><td>Completion Tokens</td><td>{total_completion:,}</td></tr>")
+    parts.append(f"<tr><td><strong>Total</strong></td><td><strong>{total_all:,}</strong></td></tr>")
+    parts.append("</table>")
 
     # Result summary
     parts.append("<h2>执行结果</h2>")
@@ -577,11 +650,24 @@ async def generate_report(state: FeatureState) -> None:
     body = "\n".join(parts)
     html = f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{_esc(title)}</title><style>{_REPORT_CSS}</style></head><body>{body}</body></html>"
 
-    # Write file
-    report_path = REPORTS_DIR / f"{safe_name}.html"
-    report_path.write_text(html, encoding="utf-8")
-    report_url = f"/static/reports/{safe_name}.html"
-    log.info("Report generated: %s", report_path)
+    # Write PDF (fallback to HTML if xhtml2pdf unavailable)
+    report_url = ""
+    try:
+        from xhtml2pdf import pisa
+        import io
+        pdf_path = REPORTS_DIR / f"{safe_name}.pdf"
+        with open(pdf_path, "wb") as f:
+            pisa_status = pisa.CreatePDF(io.StringIO(html), dest=f)
+        if pisa_status.err:
+            raise RuntimeError(f"xhtml2pdf errors: {pisa_status.err}")
+        report_url = f"/static/reports/{safe_name}.pdf"
+        log.info("PDF report generated: %s", pdf_path)
+    except Exception as pdf_exc:
+        log.warning("PDF generation failed (%s), falling back to HTML", pdf_exc)
+        html_path = REPORTS_DIR / f"{safe_name}.html"
+        html_path.write_text(html, encoding="utf-8")
+        report_url = f"/static/reports/{safe_name}.html"
+        log.info("HTML report generated: %s", html_path)
 
     # Notify frontend
     await _send_dev(state.dev_id, {
@@ -610,6 +696,10 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
         await _handle_plan_approved(dev_id)
     elif msg_type == "feature-plan-rejected":
         await _handle_plan_rejected(dev_id, msg)
+    elif msg_type == "feature-approved":
+        await handle_feature_approved(dev_id)
+    elif msg_type == "feature-rejected":
+        await handle_feature_rejected(dev_id, msg.get("reason", ""))
     else:
         await _send_dev(dev_id, {"type": "error", "message": f"Unknown message type: {msg_type}"})
 
@@ -629,6 +719,72 @@ async def handle_agent_result(msg: dict) -> None:
 async def handle_upstream_message(msg: dict) -> None:
     """Legacy — redirects to handle_agent_result."""
     await handle_agent_result(msg)
+
+
+# ---- Feature review handlers ----
+
+async def handle_feature_approved(dev_id: str) -> None:
+    """Handle report approval — git add + commit + push."""
+    state = get_session(dev_id)
+    if not state or state.status != Status.REVIEWING:
+        return
+
+    title = (state.spec or {}).get("title", state.description[:40]) or "feature"
+    repo_path = ""
+    if state.project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id = ?", (state.project_id,))
+            if row:
+                repo_path = row["local_path"] or ""
+
+    if repo_path:
+        import asyncio as _asyncio
+        try:
+            await _send_thinking(dev_id, True, "正在提交代码...")
+            proc = await _asyncio.create_subprocess_shell(
+                f'git add -A && git commit -m "feat: {title}" && git push',
+                cwd=repo_path,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=60)
+            out = stdout.decode(errors="replace")
+            err = stderr.decode(errors="replace")
+            await _send_thinking(dev_id, False)
+            if proc.returncode == 0:
+                await _send_chat(dev_id, f"代码已提交并推送。\n{out[:300]}", role="system")
+            else:
+                await _send_chat(dev_id, f"Git 操作失败: {(err or out)[:500]}", role="system")
+        except Exception as exc:
+            await _send_thinking(dev_id, False)
+            await _send_chat(dev_id, f"Git 操作异常: {exc}", role="system")
+    else:
+        await _send_chat(dev_id, "审核通过（未配置项目路径，跳过 git 提交）。", role="system")
+
+    state.status = Status.IDLE
+    await _send_dev(dev_id, {"type": "coach-stage", "stage": "idle"})
+
+
+async def handle_feature_rejected(dev_id: str, reason: str) -> None:
+    """Handle report rejection — go back to executing with user feedback."""
+    state = get_session(dev_id)
+    if not state or state.status != Status.REVIEWING:
+        return
+
+    state.status = Status.EXECUTING
+    await _send_dev(dev_id, {"type": "coach-stage", "stage": "executing"})
+    await _send_chat(dev_id, f"收到驳回意见：{reason}\n正在重新调整...", role="system")
+
+    # Inject feedback and re-run task loop
+    state.description += f"\n\n## 用户驳回意见\n{reason}"
+    # Reset failed tasks to pending for re-execution
+    for t in state.tasks:
+        if t.get("status") in ("completed", "failed"):
+            t["status"] = "pending"
+
+    from .decompose import execute_task_loop
+    await execute_task_loop(state)
 
 
 # ---- Internal handlers ----
@@ -651,6 +807,7 @@ async def _start_feature(dev_id: str, msg: dict) -> None:
     state.tasks = []
     state.current_task_idx = -1
     state.failed_attempts = 0
+    state.evaluation = None
 
     await _send_dev(dev_id, {"type": "coach-stage", "stage": "clarifying"})
     user_prompt = msg.get("prompt")
@@ -684,6 +841,14 @@ async def _handle_user_response(dev_id: str, msg: dict) -> None:
             await _cancel_feature(state)
         else:
             await _retry_with_guidance(state, content)
+
+    elif state.status == Status.REVIEWING:
+        # User can type feedback during review
+        content = msg.get("content", "").strip()
+        if content in ("通过", "approve", "ok"):
+            await handle_feature_approved(dev_id)
+        else:
+            await handle_feature_rejected(dev_id, content)
 
 
 async def _handle_plan_approved(dev_id: str) -> None:

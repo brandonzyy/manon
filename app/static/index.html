@@ -240,9 +240,9 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .add-proj-btn:hover{border-color:var(--accent);color:var(--accent)}
 
 /* ── Pipeline Active Mode ── */
-body.pipeline-active .interaction{border-top:2px solid var(--accent)}
 body.pipeline-active .chat-area{background:rgba(74,144,226,.02)}
-body.pipeline-active .input-area{background:rgba(74,144,226,.04);border-top:2px solid var(--accent)}
+body.pipeline-active .msg{box-shadow:-4px 0 8px -2px rgba(74,144,226,.3)}
+body.pipeline-active .input-area{background:rgba(74,144,226,.04)}
 body.pipeline-active .input-prompt{color:var(--green)}
 
 /* Pipeline 紧凑状态条（info-card 内） */
@@ -454,9 +454,9 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
 // Register marked.js extension: "A. Title" → <h2>
 if(typeof marked!=='undefined'){marked.use({extensions:[{name:'letteredHeading',level:'block',start(src){const m=src.match(/^[A-Z]\.\s/m);return m?m.index:undefined},tokenizer(src){const m=src.match(/^([A-Z])\.\s+(.+?)(?:\n|$)/);if(m)return{type:'letteredHeading',raw:m[0],letter:m[1],text:this.lexer.inlineTokens(m[2])}},renderer(token){return`<h2>${token.letter}. ${this.parser.parseInline(token.text)}</h2>\n`}}]})}
 const CIRC=2*Math.PI*20;
-const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
-const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',done:'开发完成',failed:'执行失败'};
-const STAGE_DESC={clarifying:'正在确认需求细节...',['spec-ready']:'功能规格已生成，等待 LLM 处理...',['user-confirming']:'请确认开发方案',designing:'正在进行技术架构设计...',decomposing:'正在拆解开发任务...',executing:'正在执行开发任务...',done:'开发流程已完成',failed:'执行出错'};
+const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','reviewing','done'];
+const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',reviewing:'报告审核',done:'开发完成',failed:'执行失败'};
+const STAGE_DESC={clarifying:'正在确认需求细节...',['spec-ready']:'功能规格已生成，等待 LLM 处理...',['user-confirming']:'请确认开发方案',designing:'正在进行技术架构设计...',decomposing:'正在拆解开发任务...',executing:'正在执行开发任务...',reviewing:'请审核报告后通过或驳回',done:'开发流程已完成',failed:'执行出错'};
 let ws=null,projectId='',currentStage='idle';
 let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
@@ -875,12 +875,22 @@ function addReport(msg){
   $('reportCount').textContent=reports.length;
   const list=$('reportList');
   if(reports.length===1)list.innerHTML='';
-  const el=document.createElement('div');el.className='report-item';
+  const el=document.createElement('div');el.className='report-item';el.style.flexWrap='wrap';
   const badgeCls=entry.status==='done'?'done':'failed';
   const label=entry.status==='done'?'完成':'失败';
-  el.innerHTML=`<div class="rpt-info"><div class="rpt-title">${esc(entry.title)}</div><div class="rpt-ts">${fmtTime(entry.ts)}</div></div><span class="rpt-badge ${badgeCls}">${label}</span>`;
-  el.onclick=()=>window.open(entry.url,'_blank');
+  el.innerHTML=`<div class="rpt-info"><div class="rpt-title">${esc(entry.title)}</div><div class="rpt-ts">${fmtTime(entry.ts)}</div></div><span class="rpt-badge ${badgeCls}">${label}</span><div class="rpt-actions" style="width:100%;display:flex;gap:6px;margin-top:6px"><button class="btn btn-ok" style="font-size:11px;padding:4px 12px" onclick="event.stopPropagation();approveFeature()">✓ 审核通过</button><button class="btn btn-no" style="font-size:11px;padding:4px 12px" onclick="event.stopPropagation();rejectFeature()">✗ 驳回</button></div>`;
+  el.onclick=(e)=>{if(e.target.tagName==='BUTTON')return;window.open(entry.url,'_blank')};
   list.insertBefore(el,list.firstChild);
+}
+function approveFeature(){
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-approved'}));
+  addMessage('已审核通过，正在提交代码...','system');
+}
+function rejectFeature(){
+  const reason=prompt('请输入驳回原因：');
+  if(reason===null)return;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-rejected',reason:reason}));
+  addMessage('已驳回：'+reason,'system');
 }
 
 // ── Init ──

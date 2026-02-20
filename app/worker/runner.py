@@ -192,6 +192,13 @@ async def execute_task(config: dict) -> dict:
                 fb_model, fb_url, fb_key, fb_fmt,
             )
             log.info("Agent completed in %d turns", agent_result.get("turns", 0))
+            # Initialize token usage from agent result
+            agent_tokens = agent_result.get("token_usage", {})
+            token_usage = {
+                "prompt": agent_tokens.get("prompt", 0),
+                "completion": agent_tokens.get("completion", 0),
+                "total": agent_tokens.get("total", 0),
+            }
         except Exception as exc:
             log.error("Agent failed: %s", exc)
 
@@ -215,6 +222,79 @@ async def execute_task(config: dict) -> dict:
                     "reason": "No changes produced"}
 
         log.info("Task %s changed: %s", task_id, ", ".join(new_changes[:10]))
+
+        # 7b. Capture per-file diffs
+        diffs: dict[str, str] = {}
+        total_diff_len = 0
+        _MAX_FILE_DIFF = 3000
+        _MAX_TOTAL_DIFF = 20000
+        for f in new_changes:
+            if total_diff_len >= _MAX_TOTAL_DIFF:
+                break
+            try:
+                await _run_cmd(f'git ls-files --error-unmatch "{f}"', cwd=repo_root, timeout=10)
+                diff_out = await _run_cmd(f'git diff -- "{f}"', cwd=repo_root, timeout=15)
+                diffs[f] = diff_out[:_MAX_FILE_DIFF]
+            except Exception:
+                # Untracked new file — read content as diff
+                abs_p = Path(repo_root) / f
+                try:
+                    content = abs_p.read_text(encoding="utf-8", errors="replace")[:_MAX_FILE_DIFF]
+                    diffs[f] = f"+++ new file: {f}\n{content}"
+                except Exception:
+                    diffs[f] = f"+++ new file: {f} (unreadable)"
+            total_diff_len += len(diffs.get(f, ""))
+
+        # 7c. Task self-test — verify changes against task objectives
+        self_test: dict = {"passed": True, "issues": []}
+        try:
+            diff_summary = "\n".join(f"--- {fp} ---\n{d[:500]}" for fp, d in list(diffs.items())[:8])
+            self_test_prompt = (
+                f"# Self-Test: Verify Task Completion\n\n"
+                f"## Task Instruction\n{instruction}\n\n"
+                f"## Changed Files\n{', '.join(new_changes)}\n\n"
+                f"## Diffs\n{diff_summary}\n\n"
+                f"## Verification\n"
+                f"Check if the changes fully satisfy the task instruction. "
+                f"Return JSON: {{\"passed\": true/false, \"issues\": [\"issue1\", ...], \"fix_needed\": true/false}}"
+            )
+            st_result = await call_agent(
+                self_test_prompt, system_prompt, repo_root,
+                model_name, api_url, api_key, api_format,
+                fb_model, fb_url, fb_key, fb_fmt,
+            )
+            # Accumulate self-test token usage
+            st_tokens = st_result.get("token_usage", {})
+            token_usage["prompt"] += st_tokens.get("prompt", 0)
+            token_usage["completion"] += st_tokens.get("completion", 0)
+            token_usage["total"] += st_tokens.get("total", 0)
+            # Parse self-test result
+            import json as _json
+            st_text = st_result.get("output", "")
+            start = st_text.find("{")
+            end = st_text.rfind("}") + 1
+            if start >= 0 and end > start:
+                st_parsed = _json.loads(st_text[start:end])
+                self_test = {
+                    "passed": st_parsed.get("passed", True),
+                    "issues": st_parsed.get("issues", []),
+                }
+                if st_parsed.get("fix_needed"):
+                    log.info("Self-test requests fix, giving agent one chance...")
+                    fix_result = await call_agent(
+                        f"Self-test found issues: {st_parsed.get('issues', [])}. Fix them.\n\nOriginal task: {instruction}",
+                        system_prompt, repo_root,
+                        model_name, api_url, api_key, api_format,
+                        fb_model, fb_url, fb_key, fb_fmt,
+                    )
+                    fix_tokens = fix_result.get("token_usage", {})
+                    token_usage["prompt"] += fix_tokens.get("prompt", 0)
+                    token_usage["completion"] += fix_tokens.get("completion", 0)
+                    token_usage["total"] += fix_tokens.get("total", 0)
+            log.info("Self-test result: passed=%s, issues=%s", self_test["passed"], self_test.get("issues", []))
+        except Exception as st_exc:
+            log.warning("Self-test failed: %s", st_exc)
+            self_test = {"passed": True, "issues": [f"Self-test error: {st_exc}"]}
 
         # 8. Run tests (if test_command provided)
         if test_command:
@@ -258,6 +338,9 @@ async def execute_task(config: dict) -> dict:
             "taskId": task_id,
             "changes": changes_preview,
             "output": agent_result.get("output", "") if 'agent_result' in dir() else "",
+            "diffs": diffs,
+            "selfTest": self_test,
+            "tokenUsage": token_usage,
         }
 
     except Exception as exc:

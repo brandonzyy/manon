@@ -86,6 +86,8 @@ async def call_agent(
     primary_fail_count = 0
     final_output = ""
     turn = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         for turn in range(MAX_AGENT_TURNS):
@@ -124,6 +126,11 @@ async def call_agent(
                         raise RuntimeError(f"Both models failed. Fallback: {exc2}") from exc2
                 else:
                     raise
+
+            # Accumulate token usage
+            usage = data.get("usage") or {}
+            total_prompt_tokens += usage.get("prompt_tokens", 0)
+            total_completion_tokens += usage.get("completion_tokens", 0)
 
             choice = (data.get("choices") or [None])[0]
             if not choice:
@@ -180,4 +187,17 @@ async def call_agent(
                     "content": json.dumps(result, ensure_ascii=False)[:16000],
                 })
 
-    return {"output": final_output, "turns": turn + 1}
+    # Estimate tokens if API didn't return usage
+    if total_prompt_tokens == 0 and total_completion_tokens == 0:
+        total_prompt_tokens = sum(len(m.get("content", "")) // 4 for m in messages if m.get("role") != "assistant")
+        total_completion_tokens = len(final_output) // 4
+
+    return {
+        "output": final_output,
+        "turns": turn + 1,
+        "token_usage": {
+            "prompt": total_prompt_tokens,
+            "completion": total_completion_tokens,
+            "total": total_prompt_tokens + total_completion_tokens,
+        },
+    }

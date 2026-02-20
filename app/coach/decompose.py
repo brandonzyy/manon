@@ -10,7 +10,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
-from ..services.llm import call_glm5, parse_json_from_llm
+from ..services.llm import call_glm5, parse_json_from_llm, llm_chat
 from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking, generate_report
 
 log = logging.getLogger("manon.coach.decompose")
@@ -157,12 +157,111 @@ async def execute_task_loop(state: FeatureState) -> None:
 
             state.failed_attempts = 0
 
-    # All tasks done
+    # All tasks done — run overall evaluation
     log.info("All %d tasks completed for feature #%s", len(state.tasks), state.feature_id)
-    state.status = Status.DONE
-    await _send_dev(state.dev_id, {"type": "feature-done", "featureId": state.feature_id})
-    await _send_chat(state.dev_id, "所有任务已完成！", role="system")
+
+    # 1. Project-level test
+    test_result_text = ""
+    if state.project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone("SELECT test_command, local_path, workspace FROM projects WHERE id = ?", (state.project_id,))
+        if row and row["test_command"]:
+            test_cmd = row["test_command"]
+            test_cwd = row["workspace"] or row["local_path"] or ""
+            try:
+                await _send_thinking(state.dev_id, True, f"运行项目测试: {test_cmd}")
+                proc = await asyncio.create_subprocess_shell(
+                    test_cmd, cwd=test_cwd,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+                out = stdout.decode(errors="replace")
+                err = stderr.decode(errors="replace")
+                await _send_thinking(state.dev_id, False)
+                if proc.returncode == 0:
+                    test_result_text = f"项目测试通过\n{out[:500]}"
+                    await _send_chat(state.dev_id, "项目测试通过 ✓", role="system")
+                else:
+                    test_result_text = f"项目测试失败 (exit {proc.returncode})\n{(err or out)[:1000]}"
+                    await _send_chat(state.dev_id, f"项目测试失败: {(err or out)[:200]}", role="system")
+            except Exception as exc:
+                await _send_thinking(state.dev_id, False)
+                test_result_text = f"测试执行异常: {exc}"
+        else:
+            test_result_text = "未配置测试命令"
+
+    # 2. LLM overall evaluation
+    try:
+        await _send_thinking(state.dev_id, True, "LLM 整体评价中...")
+        # Build evaluation context
+        task_summaries = []
+        for t in state.tasks:
+            diffs_preview = ""
+            for fp, d in (t.get("diffs") or {}).items():
+                diffs_preview += f"\n--- {fp} ---\n{d[:300]}"
+            st = t.get("selfTest") or {}
+            task_summaries.append(
+                f"### 任务 #{t.get('id')}: {t.get('title','')}\n"
+                f"状态: {t.get('status','')}\n"
+                f"自测: {'通过' if st.get('passed', True) else '未通过'}\n"
+                f"变更:\n{diffs_preview[:600]}"
+            )
+
+        eval_prompt = (
+            f"## 原始需求\n{state.description}\n\n"
+            f"## 设计方案\n{(state.design or {}).get('approach', '无')}\n\n"
+            f"## 各任务执行结果\n" + "\n\n".join(task_summaries) + "\n\n"
+            f"## 项目测试结果\n{test_result_text}\n\n"
+            f"## 评估要求\n"
+            f"评估这次功能开发的完成度和质量。输出严格 JSON（不要 markdown 包裹）：\n"
+            f'{{\"score\": 1-10, \"summary\": \"总结\", \"issues\": [\"问题1\", ...], \"passed\": true/false}}'
+        )
+        eval_messages = [
+            {"role": "system", "content": "你是代码审查专家，评估功能开发的完成度和质量。"},
+            {"role": "user", "content": eval_prompt},
+        ]
+        eval_result = await llm_chat(eval_messages, max_tokens=2048, timeout=60.0)
+        eval_text = eval_result.get("content", "").strip()
+        await _send_thinking(state.dev_id, False)
+
+        # Parse evaluation JSON
+        import json as _json
+        start = eval_text.find("{")
+        end = eval_text.rfind("}") + 1
+        if start >= 0 and end > start:
+            evaluation = _json.loads(eval_text[start:end])
+        else:
+            evaluation = {"score": 5, "summary": eval_text[:200], "issues": [], "passed": True}
+
+        state.evaluation = evaluation
+        score = evaluation.get("score", 5)
+        log.info("Evaluation: score=%d, passed=%s", score, evaluation.get("passed"))
+        await _send_chat(
+            state.dev_id,
+            f"整体评价: {score}/10 — {evaluation.get('summary', '')[:200]}",
+            role="system",
+        )
+
+        if score < 5:
+            state.status = Status.FAILED
+            await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": f"评价分数 {score}/10"})
+        else:
+            state.status = Status.DONE
+            await _send_dev(state.dev_id, {"type": "feature-done", "featureId": state.feature_id})
+
+    except Exception as eval_exc:
+        await _send_thinking(state.dev_id, False)
+        log.warning("Evaluation failed: %s", eval_exc)
+        state.evaluation = {"score": 0, "summary": f"评价失败: {eval_exc}", "issues": [], "passed": True}
+        state.status = Status.DONE
+        await _send_dev(state.dev_id, {"type": "feature-done", "featureId": state.feature_id})
+
+    # 3. Generate report and enter REVIEWING state
     await generate_report(state)
+    state.status = Status.REVIEWING
+    await _send_dev(state.dev_id, {"type": "coach-stage", "stage": "reviewing"})
+    await _send_chat(state.dev_id, "报告已生成，请审核后点击「审核通过」或「驳回」。", role="system")
 
 
 async def assign_task(state: FeatureState, task: dict) -> bool:
@@ -219,6 +318,10 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
 
         if result.get("type") == "feature-task-done":
             task["output"] = result.get("output", "")
+            task["changes"] = result.get("changes", "")
+            task["diffs"] = result.get("diffs") or {}
+            task["selfTest"] = result.get("selfTest") or {}
+            task["tokenUsage"] = result.get("tokenUsage") or {}
             return True
 
         # Failed — retry with feedback if attempts remain
