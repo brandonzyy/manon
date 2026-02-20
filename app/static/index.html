@@ -537,7 +537,6 @@ function handleMonitorState(msg){
     const tasks=s.tasks||[];
     done+=tasks.filter(t=>t.status==='completed').length;
     failed+=tasks.filter(t=>t.status==='failed').length;
-    if(s.devId&&s.status)updateStage(s.status);
   });
   // Indexing badge on metrics
   const idx=msg.indexing||{};

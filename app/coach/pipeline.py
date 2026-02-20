@@ -347,6 +347,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         await _start_feature(dev_id, {
             "description": context_desc,
             "projectId": project_id,
+            "prompt": extra or None,
         })
         return
 
@@ -419,6 +420,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         await _start_feature(dev_id, {
             "description": context_desc,
             "projectId": project_id,
+            "prompt": prompt,
         })
         return
 
@@ -650,7 +652,11 @@ async def _start_feature(dev_id: str, msg: dict) -> None:
     state.failed_attempts = 0
 
     await _send_dev(dev_id, {"type": "coach-stage", "stage": "clarifying"})
-    await _send_chat(dev_id, f"收到您的功能需求：「{state.description}」\n\n让我确认几个细节，以便更好地实现...")
+    user_prompt = msg.get("prompt")
+    if user_prompt:
+        await _send_chat(dev_id, f"收到需求：「{user_prompt}」，进入开发流程...")
+    else:
+        await _send_chat(dev_id, "已根据对话上下文进入开发流程...")
     await clarify_intent(state)
 
 
