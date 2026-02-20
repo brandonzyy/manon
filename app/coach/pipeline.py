@@ -108,6 +108,12 @@ _DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的
 
 3. **生成补充查询**：对未覆盖的子问题，提取最精确的查询词（函数名、类名、文件名、模块名）。优先使用已有上下文中出现但未展开的标识符。
 
+## 关键规则
+
+- **有 missing 就必须有 queries**：只要 missing 不为空，queries 也不能为空。从已有上下文中提取相关的函数名、类名、变量名作为查询词。
+- **不要假设查不到**：即使你觉得知识图谱可能没有某个信息，也要尝试查询。宁可查了没结果，也不要跳过。
+- **从上下文提取线索**：如果上下文中提到了某个类名/函数名但没有展开实现，用它作为查询词。
+
 ## 输出格式
 
 只返回 JSON：
@@ -200,11 +206,15 @@ async def _iterative_graph_query(
             else:
                 break
             follow_ups = parsed.get("queries", [])
+            missing = parsed.get("missing", [])
+            # Fallback: if LLM reports missing but no queries, use missing items as queries
+            if not follow_ups and missing:
+                follow_ups = [m.split("（")[0].split("(")[0].strip() for m in missing[:3]]
+                log.info("Auto-generated queries from missing: %s", follow_ups)
             if not follow_ups:
                 await _send_thinking(dev_id, True, "完整性检查：上下文已完整覆盖所有子问题")
                 break
             reason = parsed.get("reason", "")
-            missing = parsed.get("missing", [])
             missing_str = "、".join(missing[:3]) if missing else reason
             await _send_thinking(dev_id, True, f"完整性检查：缺失 [{missing_str}]，补充查询 {follow_ups}")
         except Exception as exc:
