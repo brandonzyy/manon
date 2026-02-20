@@ -126,6 +126,53 @@ _DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的
 {"sub_questions": [...], "covered": [...], "missing": [], "queries": [], "reason": "上下文已完整覆盖所有子问题"}
 ```"""
 
+_COMPRESS_PROMPT = """请将以下对话历史压缩为一段简洁的摘要（500字以内），保留：
+1. 用户问了什么关键问题
+2. 得到了什么重要结论
+3. 讨论过的核心技术点
+
+对话历史：
+"""
+
+
+async def _compress_history(dev_id: str, history: list[dict]) -> None:
+    """Compress chat history when it exceeds 20 messages.
+
+    Keeps the latest 10 messages and replaces older ones with an LLM-generated summary.
+    """
+    if len(history) <= 20:
+        return
+
+    from ..services.llm import llm_chat
+
+    old_count = len(history) - 10
+    old_messages = history[:old_count]
+
+    # Build text representation of old messages
+    lines = []
+    for m in old_messages:
+        role = "用户" if m["role"] == "user" else "Manon"
+        lines.append(f"{role}: {m['content'][:500]}")
+    old_text = "\n".join(lines)
+
+    try:
+        await _send_thinking(dev_id, True, "压缩对话历史...")
+        result = await llm_chat(
+            [{"role": "user", "content": _COMPRESS_PROMPT + old_text}],
+            max_tokens=800,
+            timeout=30.0,
+        )
+        summary = result.get("content", "").strip()
+        if summary:
+            history[:] = [
+                {"role": "system", "content": f"[历史摘要] {summary}"},
+            ] + history[-10:]
+            log.info("Chat history compressed: %d messages → summary + 10 recent", old_count)
+        await _send_thinking(dev_id, False)
+    except Exception as exc:
+        log.warning("Chat history compression failed: %s", exc)
+        await _send_thinking(dev_id, False)
+
 
 async def _iterative_graph_query(
     dev_id: str, prompt: str, mg, initial_context: str, max_rounds: int = 3,
@@ -308,6 +355,11 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     # Chat mode (default) — answer directly with graph context
     history = _chat_history.setdefault(dev_id, [])
     history.append({"role": "user", "content": prompt})
+
+    # Compress old history if it exceeds 20 messages
+    await _compress_history(dev_id, history)
+
+    # Hard truncation as safety net
     if len(history) > 40:
         history[:] = history[-40:]
 

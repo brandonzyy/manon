@@ -82,6 +82,12 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .query-item .q-text{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .query-item .q-dur{font-size:10px;color:var(--text2);margin-top:2px}
 .query-item .q-chat-badge{font-size:9px;color:var(--cyan);margin-top:3px}
+.q-clear-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:1px 8px;color:var(--text2);font-size:10px;cursor:pointer;font-family:inherit;transition:all .15s}
+.q-clear-btn:hover{border-color:var(--red);color:var(--red)}
+.q-del-btn{position:absolute;top:4px;right:4px;background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer;opacity:0;transition:opacity .15s;padding:0 3px;line-height:1}
+.query-item{position:relative}
+.query-item:hover .q-del-btn{opacity:1}
+.q-del-btn:hover{color:var(--red)}
 
 /* ── Query Detail Overlay ── */
 .query-detail{position:absolute;inset:0;background:var(--card);z-index:10;display:flex;flex-direction:column;overflow:hidden}
@@ -270,7 +276,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 <div class="interaction">
   <!-- Left: Queries -->
   <div class="side-panel">
-    <div class="side-panel-title">Queries <span class="count" id="queryCount">0</span></div>
+    <div class="side-panel-title">Queries <span class="count" id="queryCount">0</span><button class="q-clear-btn" onclick="clearQueries()">清空</button></div>
     <div class="side-scroll" id="queryList"><div class="empty-hint">暂无查询记录</div></div>
   </div>
   <!-- Center: Chat -->
@@ -614,7 +620,7 @@ function addQuery(q){
   const durStr=q.duration_ms?`${q.duration_ms}ms`:'';
   const tokStr=q.context_tokens?`~${(q.context_tokens/1000).toFixed(1)}k tok`:'';
   const metaStr=[durStr,tokStr].filter(Boolean).join(' · ');
-  el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
+  el.innerHTML=`<button class="q-del-btn" onclick="event.stopPropagation();deleteQuery(this)" title="删除">&times;</button><div class="q-head"><span class="q-caller">${esc(q.caller||'—')}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
   el._queryRef=q;
   el.onclick=()=>showQueryDetail(queries.indexOf(q));
   list.insertBefore(el,list.firstChild);
@@ -660,6 +666,20 @@ function showQueryDetail(idx){
   html+=`</div>`;
   detail.innerHTML=html;
   panel.appendChild(detail);
+}
+function clearQueries(){
+  queries=[];
+  $('queryCount').textContent='0';
+  $('queryList').innerHTML='<div class="empty-hint">暂无查询记录</div>';
+}
+function deleteQuery(btn){
+  const el=btn.closest('.query-item');if(!el)return;
+  const ref=el._queryRef;
+  const idx=queries.indexOf(ref);
+  if(idx>=0)queries.splice(idx,1);
+  el.remove();
+  $('queryCount').textContent=queries.length;
+  if(!queries.length)$('queryList').innerHTML='<div class="empty-hint">暂无查询记录</div>';
 }
 
 // ── Reports ──
