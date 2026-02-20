@@ -28,10 +28,10 @@ class ManonSettings(BaseSettings):
     api_server_ws: str = "ws://localhost:3501/ws/coach"
 
     # LLM
-    llm_api_url: str = "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
-    llm_model: str = "GLM-5"
-    llm_model_fallback: str = "GLM-4.7"
-    llm_api_key: str = ""
+    llm_api_url: str = "https://api.matrixone.online/v1/chat/completions"
+    llm_model: str = "glm-4.7-fp8"
+    llm_model_fallback: str = "GLM-5"
+    llm_api_key: str = "sk-f05sj8cb25syBlnH3pUFN9TuczxgwtEtIEwQ5PEtD22sxeH1"
 
     # Auth
     api_keys: list[str] = []

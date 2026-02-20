@@ -81,7 +81,76 @@ _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可
 - 分析代码结构、依赖关系、技术债务
 - 讨论架构设计和最佳实践
 - 帮助理解代码逻辑和调用链
+
+## 核心原则：禁止假设，只用事实
+
+你的回答必须严格基于下方提供的「项目知识图谱上下文」。遵守以下规则：
+
+1. **只说你知道的**：回答必须基于知识图谱返回的实体、关系和代码片段。如果上下文中有明确信息，直接引用。
+2. **禁止假设**：如果知识图谱上下文中没有覆盖某个信息（如某个函数的实现细节、某个模块的依赖关系、某个配置的具体值），你必须明确告诉用户「这部分信息不在当前上下文中」，而不是猜测或编造。
+3. **主动索引引导**：当你发现回答需要的信息不在上下文中时，告诉用户可以用更精确的关键词重新提问，以便系统查询知识图谱获取准确信息。例如：「关于 XXX 的具体实现，建议你追问一下这个函数/模块的细节，我会从知识图谱中获取准确信息。」
+4. **区分确定与不确定**：如果你对某个结论有把握（基于上下文），直接陈述；如果不确定，用「根据当前上下文无法确认」明确标注，绝不含糊带过。
+5. **不要用通用知识替代项目事实**：即使你对某个框架或库很熟悉，也不要假设项目中的用法与通用做法一致。项目可能有自定义封装、特殊配置或非常规用法。
+
 回答简洁、专业，用中文。"""
+
+_DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索助手。你的任务是分析用户问题和已有的知识图谱上下文，判断是否需要补充查询。
+
+规则：
+1. 分析用户问题需要哪些信息才能准确回答
+2. 检查已有上下文是否覆盖了这些信息
+3. 如果有缺失，提取 2-3 个最关键的查询词（函数名、类名、模块名、文件名等具体标识符）
+4. 如果已有上下文足够回答，返回空列表
+
+只返回 JSON，格式：{"queries": ["关键词1", "关键词2"], "reason": "简要说明为什么需要这些信息"}
+如果不需要补充查询：{"queries": [], "reason": "已有上下文足够"}"""
+
+
+async def _iterative_graph_query(
+    dev_id: str, prompt: str, mg, initial_context: str, max_rounds: int = 2,
+) -> str:
+    """Perform iterative graph queries — LLM analyzes gaps and triggers follow-up searches."""
+    import json as _json
+    from ..services.llm import llm_chat
+
+    accumulated = initial_context
+    for round_idx in range(max_rounds):
+        # Ask LLM what additional info is needed
+        plan_messages = [
+            {"role": "system", "content": _DEEPQUERY_SYSTEM},
+            {"role": "user", "content": f"## 用户问题\n{prompt}\n\n## 已有知识图谱上下文\n{accumulated}"},
+        ]
+        try:
+            await _send_thinking(dev_id, True, f"深度检索：分析第 {round_idx + 2} 轮查询需求...")
+            result = await llm_chat(plan_messages, max_tokens=256, timeout=30.0)
+            text = result.get("content", "").strip()
+            # Parse JSON from response
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                parsed = _json.loads(text[start:end])
+            else:
+                break
+            follow_ups = parsed.get("queries", [])
+            if not follow_ups:
+                await _send_thinking(dev_id, True, "深度检索：上下文已充分")
+                break
+            reason = parsed.get("reason", "")
+            await _send_thinking(dev_id, True, f"深度检索：补充查询 {follow_ups}（{reason}）")
+        except Exception as exc:
+            log.warning("Deep query planning failed: %s", exc)
+            break
+
+        # Execute follow-up queries
+        for q in follow_ups[:3]:
+            try:
+                r = await mg.query(q, top_k=5, depth=1)
+                if r.context:
+                    accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
+            except Exception as exc:
+                log.warning("Follow-up query '%s' failed: %s", q, exc)
+
+    return accumulated
 
 
 def _is_feature_request(prompt: str) -> bool:
@@ -179,6 +248,14 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                         "duration_ms": graph_ms,
                         "context_tokens": context_tokens,
                     })
+                    # Iterative deep retrieval: LLM analyzes gaps → follow-up queries
+                    try:
+                        graph_context = await _iterative_graph_query(
+                            dev_id, prompt, mg, graph_context, max_rounds=2,
+                        )
+                        context_tokens = len(graph_context) // 2
+                    except Exception as exc:
+                        log.warning("Iterative graph query failed: %s", exc)
                 else:
                     await _send_thinking(dev_id, True, f"知识图谱无匹配结果 ({graph_ms}ms)")
                 await _send_thinking(dev_id, False)
@@ -213,11 +290,11 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
 
     system = _MANON_SYSTEM
     if project_name or project_path:
-        system += f"\n\n## 当前项目\n项目名称: {project_name}\n项目路径: {project_path}"
+        system += f"\n\n## 当前工作项目\n你正在为「{project_name}」项目提供服务。\n项目路径: {project_path}\n\n请始终记住你当前所处的项目是「{project_name}」，你的所有回答都应该围绕这个项目。当用户提问时，默认是在问关于「{project_name}」项目的问题。"
     if graph_context:
         system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
     elif project_path:
-        system += "\n\n（知识图谱未返回相关上下文，请基于你的通用知识回答）"
+        system += "\n\n（知识图谱未返回相关上下文。请告知用户当前查询未匹配到项目代码信息，建议用更具体的关键词（如函数名、类名、文件名）重新提问。不要基于假设回答项目相关问题。）"
 
     messages = [{"role": "system", "content": system}] + history
 
@@ -236,6 +313,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 await _send_dev(dev_id, {"type": "coach-content-delta", "delta": chunk["delta"]})
             await asyncio.sleep(0)  # flush WS between chunks
         llm_ms = int((time.monotonic() - t0) * 1000)
+        log.info("Stream done: reasoning=%d chars, content=%d chars, %.1fs", len(full_reasoning), len(full_content), llm_ms/1000)
         history.append({"role": "assistant", "content": full_content})
         await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
         await _send_thinking(dev_id, False)

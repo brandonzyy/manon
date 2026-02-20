@@ -15,16 +15,23 @@ router = APIRouter(tags=["settings"])
 
 # ── Built-in models ──
 BUILTIN_MODELS = [
-    {"id": "GLM-5", "name": "GLM-5", "provider": "zhipu", "desc": "智谱旗舰模型"},
-    {"id": "GLM-4.7", "name": "GLM-4.7", "provider": "zhipu", "desc": "智谱编程模型"},
-    {"id": "GLM-4-Plus", "name": "GLM-4-Plus", "provider": "zhipu", "desc": "智谱增强模型"},
-    {"id": "deepseek-chat", "name": "DeepSeek V3", "provider": "deepseek", "desc": "DeepSeek 对话模型"},
-    {"id": "deepseek-reasoner", "name": "DeepSeek R1", "provider": "deepseek", "desc": "DeepSeek 推理模型"},
+    {"id": "glm-4.7-fp8", "name": "GLM-4.7-FP8", "provider": "zhipu", "desc": "智谱免费编程模型（默认）"},
 ]
+
+# ── Pre-configured models (need separate API endpoints) ──
+import os as _os
+_ZHIPU_KEY = _os.environ.get("MANON_LLM_API_KEY") or _os.environ.get("ZHIPU_API_KEY") or ""
 
 # ── Custom models (user-added, OpenAI-compatible) ──
 # Each: {"id": str, "name": str, "model_id": str, "api_url": str, "api_key": str, "desc": str, "provider": "custom"}
-_custom_models: list[dict] = []
+_custom_models: list[dict] = [
+    {
+        "id": "GLM-5", "name": "GLM-5", "model_id": "GLM-5",
+        "api_url": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+        "api_key": _ZHIPU_KEY, "api_format": "openai",
+        "desc": "智谱旗舰模型 @ open.bigmodel.cn", "provider": "custom", "_builtin": True,
+    },
+]
 
 
 def get_all_models() -> list[dict]:
@@ -48,11 +55,11 @@ def get_custom_model(model_id: str) -> dict | None:
 
 # ── Runtime config (in-memory, survives until restart) ──
 _runtime: dict[str, Any] = {
-    "coach_model": "GLM-5",
-    "coach_model_fallback": "GLM-4.7",
-    "agent_model": "GLM-5",
-    "agent_model_fallback": "GLM-4.7",
-    "agent_compress_model": "GLM-5",
+    "coach_model": "glm-4.7-fp8",
+    "coach_model_fallback": "GLM-5",
+    "agent_model": "glm-4.7-fp8",
+    "agent_model_fallback": "GLM-5",
+    "agent_compress_model": "glm-4.7-fp8",
 }
 
 

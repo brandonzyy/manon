@@ -1,4 +1,4 @@
-"""LLM service — async GLM-5 API calls via httpx, mirroring coach-llm.js patterns."""
+"""LLM service — async API calls via httpx, default glm-4.7-fp8."""
 
 from __future__ import annotations
 
@@ -41,13 +41,17 @@ def _resolve_model(model: str) -> tuple[str, str, str, str]:
         fmt = custom.get("api_format", "openai")
         base = custom["api_url"].rstrip("/")
         if fmt == "anthropic":
-            if not base.endswith("/v1"):
-                base += "/v1"
-            return custom["model_id"], base + "/messages", custom["api_key"], "anthropic"
+            if "/messages" not in base:
+                if not base.endswith("/v1"):
+                    base += "/v1"
+                base += "/messages"
+            return custom["model_id"], base, custom["api_key"], "anthropic"
         else:
-            if not base.endswith("/v1"):
-                base += "/v1"
-            return custom["model_id"], base + "/chat/completions", custom["api_key"], "openai"
+            if "/chat/completions" not in base:
+                if not base.endswith("/v1"):
+                    base += "/v1"
+                base += "/chat/completions"
+            return custom["model_id"], base, custom["api_key"], "openai"
     s = get_settings()
     return model, s.llm_api_url, s.llm_api_key, "openai"
 

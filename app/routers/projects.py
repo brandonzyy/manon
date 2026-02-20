@@ -81,6 +81,8 @@ async def setup_project(body: ProjectSetup):
     # Start indexing in background
     async def _bg_index():
         try:
+            import time as _time
+            t0 = _time.monotonic()
             # Mark indexing in DB
             async with db_pool() as db:
                 await db.execute("UPDATE projects SET index_stats=? WHERE id=?",
@@ -88,6 +90,7 @@ async def setup_project(body: ProjectSetup):
                 await db.commit()
             _index_tasks[pid]["status"] = "indexing"
             result = await MatrixoneGraph.get(local_path).index_report()
+            elapsed = _time.monotonic() - t0
             _index_tasks[pid]["status"] = "done"
             _index_tasks[pid]["result"] = result
             # Save stats to DB
@@ -106,7 +109,8 @@ async def setup_project(body: ProjectSetup):
             async with db_pool() as db:
                 await db.execute("UPDATE projects SET index_stats=?, updated_at=datetime('now') WHERE id=?", (stats_json, pid))
                 await db.commit()
-            log.info("Background indexing done for %s: %s files, %s entities", pid, result.get("files"), result.get("entities"))
+            log.info("Background indexing done for %s: %s files, %s entities, skipped=%s, %.1fs",
+                     pid, result.get("files"), result.get("entities"), result.get("skipped"), elapsed)
         except Exception as exc:
             _index_tasks[pid]["status"] = "error"
             _index_tasks[pid]["result"] = {"error": str(exc)}
