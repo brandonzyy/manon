@@ -1,4 +1,4 @@
-"""Manus task execution pipeline — ported from donnie/agent/auto-fix.js executeTask().
+"""Worker task execution pipeline — run agent loop, capture diffs, self-test, return result.
 
 Flow: baseline diff → graph context → build prompt → load scoped files → agent loop →
       git diff → run tests → retry on failure → revert on final failure → return result.
@@ -16,24 +16,24 @@ _TEST_TIMEOUT = 120  # seconds
 _MAX_SCOPED_CHARS = 60_000
 
 
-def _resolve_agent_model() -> tuple[str, str, str, str]:
-    """Return (model_name, api_url, api_key, api_format) for the agent primary model."""
+def _resolve_worker_model() -> tuple[str, str, str, str]:
+    """Return (model_name, api_url, api_key, api_format) for the worker primary model."""
     from ..routers.settings import get_runtime_config, get_custom_model
     from ..services.llm import _resolve_model
     cfg = get_runtime_config()
-    model_id = cfg.get("agent_model", "")
+    model_id = cfg.get("worker_model", "")
     if model_id:
         return _resolve_model(model_id)
     return _resolve_model("glm-4.7-fp8")
 
 
-def _resolve_agent_fallback() -> tuple[str, str, str, str] | None:
+def _resolve_worker_fallback() -> tuple[str, str, str, str] | None:
     """Return fallback model config, or None if same as primary."""
     from ..routers.settings import get_runtime_config
     from ..services.llm import _resolve_model
     cfg = get_runtime_config()
-    fb = cfg.get("agent_model_fallback", "")
-    primary = cfg.get("agent_model", "")
+    fb = cfg.get("worker_model_fallback", "")
+    primary = cfg.get("worker_model", "")
     if fb and fb != primary:
         return _resolve_model(fb)
     return None
@@ -176,8 +176,8 @@ async def execute_task(config: dict) -> dict:
         log.info("Running agent for task %s (%d chars prompt)", task_id, len(task_prompt))
 
         # 5. Resolve models
-        model_name, api_url, api_key, api_format = _resolve_agent_model()
-        fb = _resolve_agent_fallback()
+        model_name, api_url, api_key, api_format = _resolve_worker_model()
+        fb = _resolve_worker_fallback()
         fb_model = fb[0] if fb else None
         fb_url = fb[1] if fb else None
         fb_key = fb[2] if fb else None

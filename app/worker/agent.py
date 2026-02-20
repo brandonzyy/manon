@@ -1,4 +1,4 @@
-"""Manus LLM agent loop — tool-calling cycle with primary/fallback model switch.
+"""Worker LLM agent loop — tool-calling cycle with primary/fallback model switch.
 
 Ported from donnie/agent/lib/llm-agent.js callAgent().
 Does its own httpx calls (with tools param) since services/llm.py llm_chat() doesn't support tools.
@@ -31,7 +31,7 @@ async def _llm_chat_with_tools(
 ) -> dict:
     """Single LLM API call with tools. Returns raw API response dict."""
     if api_format == "anthropic":
-        raise NotImplementedError("Anthropic tool-calling not yet supported in Manus agent")
+        raise NotImplementedError("Anthropic tool-calling not yet supported in worker agent")
 
     body = {
         "model": model,

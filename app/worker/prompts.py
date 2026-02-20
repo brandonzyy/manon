@@ -1,4 +1,4 @@
-"""Manus agent system prompt builder — generic, no project-specific hardcoding."""
+"""Worker agent system prompt builder — generic, no project-specific hardcoding."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ def build_system_prompt(
     graph_context: str | None = None,
 ) -> str:
     sections = [
-        "You are Manus, Manon's built-in coding agent. You receive development tasks and implement them by editing source code.",
+        "You are a coding worker for Manon. You receive development tasks and implement them by editing source code.",
         "",
         f"Project: {project_name}",
         f"Project root: {project_path}",

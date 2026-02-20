@@ -459,15 +459,15 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
   <div class="modal" style="width:480px">
     <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>模型配置</h2>
     <div class="modal-section">
-      <h3>Manon Pipeline</h3>
+      <h3>Manon</h3>
       <div class="modal-row"><label>主模型</label><select id="cfgCoachModel"></select></div>
       <div class="modal-row"><label>备用模型</label><select id="cfgCoachFallback"></select></div>
     </div>
     <div class="modal-section">
-      <h3>Manus Agent</h3>
-      <div class="modal-row"><label>主模型</label><select id="cfgAgentModel"></select></div>
-      <div class="modal-row"><label>备用模型</label><select id="cfgAgentFallback"></select></div>
-      <div class="modal-row"><label>压缩模型</label><select id="cfgAgentCompress"></select></div>
+      <h3>Worker</h3>
+      <div class="modal-row"><label>主模型</label><select id="cfgWorkerModel"></select></div>
+      <div class="modal-row"><label>备用模型</label><select id="cfgWorkerFallback"></select></div>
+      <div class="modal-row"><label>压缩模型</label><select id="cfgWorkerCompress"></select></div>
     </div>
     <div class="modal-section">
       <h3>自定义模型</h3>
@@ -1068,8 +1068,8 @@ async function openSettings(){
     availableModels=data.models||[];
     const customModels=data.custom_models||[];
     const cfg=data.config||{};
-    const selects=['cfgCoachModel','cfgCoachFallback','cfgAgentModel','cfgAgentFallback','cfgAgentCompress'];
-    const keys=['coach_model','coach_model_fallback','agent_model','agent_model_fallback','agent_compress_model'];
+    const selects=['cfgCoachModel','cfgCoachFallback','cfgWorkerModel','cfgWorkerFallback','cfgWorkerCompress'];
+    const keys=['coach_model','coach_model_fallback','worker_model','worker_model_fallback','worker_compress_model'];
     selects.forEach((id,i)=>{
       const sel=$(id);sel.innerHTML=availableModels.map(m=>`<option value="${m.id}"${m.id===cfg[keys[i]]?' selected':''}>${m.name} — ${m.desc}</option>`).join('');
     });
@@ -1106,9 +1106,9 @@ async function saveSettings(){
   const body={
     coach_model:$('cfgCoachModel').value,
     coach_model_fallback:$('cfgCoachFallback').value,
-    agent_model:$('cfgAgentModel').value,
-    agent_model_fallback:$('cfgAgentFallback').value,
-    agent_compress_model:$('cfgAgentCompress').value,
+    worker_model:$('cfgWorkerModel').value,
+    worker_model_fallback:$('cfgWorkerFallback').value,
+    worker_compress_model:$('cfgWorkerCompress').value,
   };
   try{
     const r=await fetch('/api/v1/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

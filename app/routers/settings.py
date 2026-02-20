@@ -1,4 +1,4 @@
-"""Settings API — runtime model configuration for Coach and Agent."""
+"""Settings API — runtime model configuration for Coach and Worker."""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ _BUILTIN_CUSTOM: list[dict] = []
 _DEFAULT_RUNTIME: dict[str, Any] = {
     "coach_model": "glm-4.7-fp8",
     "coach_model_fallback": "glm-4.7-fp8",
-    "agent_model": "glm-4.7-fp8",
-    "agent_model_fallback": "glm-4.7-fp8",
-    "agent_compress_model": "glm-4.7-fp8",
+    "worker_model": "glm-4.7-fp8",
+    "worker_model_fallback": "glm-4.7-fp8",
+    "worker_compress_model": "glm-4.7-fp8",
 }
 
 
@@ -94,9 +94,9 @@ def get_runtime_config() -> dict[str, Any]:
 class ModelConfigUpdate(BaseModel):
     coach_model: str | None = None
     coach_model_fallback: str | None = None
-    agent_model: str | None = None
-    agent_model_fallback: str | None = None
-    agent_compress_model: str | None = None
+    worker_model: str | None = None
+    worker_model_fallback: str | None = None
+    worker_compress_model: str | None = None
 
 
 class CustomModelAdd(BaseModel):
@@ -133,13 +133,13 @@ async def update_settings(body: ModelConfigUpdate):
         _save_config()
 
     # Push model config to connected agents
-    if any(f.startswith("agent_") for f in updated):
+    if any(f.startswith("worker_") for f in updated):
         from ..ws_hub import hub
         await hub.broadcast_to_agents({
             "type": "model-config",
-            "model": _runtime["agent_model"],
-            "modelFallback": _runtime["agent_model_fallback"],
-            "compressModel": _runtime["agent_compress_model"],
+            "model": _runtime["worker_model"],
+            "modelFallback": _runtime["worker_model_fallback"],
+            "compressModel": _runtime["worker_compress_model"],
         })
         log.info("Pushed model-config to %d agents", len(hub._agents))
 

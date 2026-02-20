@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
     webbrowser.open(f"http://localhost:{settings.port}")
     yield
     monitor_task.cancel()
-    # Shutdown Manus worker pool
+    # Shutdown worker pool
     from .worker import worker_pool
     await worker_pool.shutdown()
     await MatrixoneGraph.shutdown_all()

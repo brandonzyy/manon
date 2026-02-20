@@ -1,4 +1,4 @@
-"""Manus agent tools — OpenAI function-calling format definitions + execution."""
+"""Worker agent tools — OpenAI function-calling format definitions + execution."""
 
 from __future__ import annotations
 

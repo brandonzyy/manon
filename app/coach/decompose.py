@@ -1,4 +1,4 @@
-"""Task decomposition + execution loop — split spec into tasks, assign to Manus worker pool.
+"""Task decomposition + execution loop — split spec into tasks, assign to worker pool.
 
 Replaces the old WebSocket-based auto-fix dispatch with direct worker_pool.submit() calls.
 Supports order-based parallel scheduling: same-order tasks run concurrently via asyncio.gather().
@@ -265,8 +265,8 @@ async def execute_task_loop(state: FeatureState) -> None:
 
 
 async def assign_task(state: FeatureState, task: dict) -> bool:
-    """Submit task to Manus worker pool, wait for result. Retry up to MAX_RETRIES."""
-    log.info("Assigning task %s to Manus worker: %s", task.get("id"), task.get("title", ""))
+    """Submit task to worker pool, wait for result. Retry up to MAX_RETRIES."""
+    log.info("Assigning task %s to worker: %s", task.get("id"), task.get("title", ""))
 
     # Build context from spec + design + completed tasks
     parts: list[str] = []

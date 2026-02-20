@@ -1,4 +1,4 @@
-"""Manus WorkerPool — semaphore-gated async worker management."""
+"""WorkerPool — semaphore-gated async worker management."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ MAX_WORKERS = 5
 
 
 class WorkerPool:
-    """Manages concurrent Manus worker slots with asyncio.Semaphore."""
+    """Manages concurrent worker slots with asyncio.Semaphore."""
 
     def __init__(self, max_workers: int = MAX_WORKERS) -> None:
         self._sem = asyncio.Semaphore(max_workers)
