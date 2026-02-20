@@ -42,8 +42,6 @@ async def lifespan(app: FastAPI):
     yield
     monitor_task.cancel()
     await MatrixoneGraph.shutdown_all()
-    from .services.pty_manager import pty_mgr
-    await pty_mgr.shutdown()
     await hub.shutdown()
     log.info("Manon Gateway shut down")
 
@@ -88,8 +86,6 @@ async def ws_dev(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        from .services.pty_manager import pty_mgr
-        await pty_mgr.kill(dev_id)
         hub.remove_dev(dev_id)
 
 

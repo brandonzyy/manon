@@ -8,9 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0e0;--text2:#888;--accent:#4a90e2;--green:#34c759;--red:#ff3b30;--yellow:#f5a623;--blue:#4a90e2;--purple:#af52de;--cyan:#5eead4}
@@ -26,11 +23,6 @@ header h1 span{color:var(--accent);font-weight:400;font-size:12px;margin-left:6p
 .hbadge{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text2);display:flex;align-items:center;gap:5px;text-decoration:none}
 .hbadge:hover{border-color:var(--text2);color:var(--text)}
 select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;font-family:inherit}
-.mode-toggle{display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
-.mode-btn{padding:4px 12px;font-size:11px;background:transparent;border:none;color:var(--text2);cursor:pointer;font-family:inherit;transition:all .15s}
-.mode-btn:not(:last-child){border-right:1px solid var(--border)}
-.mode-btn.active{background:var(--accent);color:#fff}
-.mode-btn:hover:not(.active){background:rgba(255,255,255,.05)}
 
 /* ── Top Status Bar ── */
 .status-bar{height:auto;display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:8px 20px;flex-shrink:0;border-bottom:1px solid var(--border)}
@@ -126,8 +118,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .msg .reasoning-block summary{cursor:pointer;opacity:.6;font-size:10px;letter-spacing:.5px;text-transform:uppercase}
 .msg .reasoning-block pre{white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;padding:6px 10px;margin:4px 0 0;background:rgba(255,255,255,.02);border-radius:4px;border-left:2px solid var(--border);font-size:11px;line-height:1.5;color:var(--text2)}
 .msg .role{display:none}
-.msg.claude{background:transparent;border-left:2px solid var(--purple);margin:4px 0;padding:8px 22px;margin-left:24px}
-.msg.codebuddy{background:transparent;border-left:2px solid var(--yellow);margin:4px 0;padding:8px 22px;margin-left:24px}
+
 
 /* ── Markdown in chat (dark theme, adapted from Donnie) ── */
 .msg .md-body{font-family:'Inter','Noto Sans SC',sans-serif;font-size:13px;line-height:1.7;white-space:normal}
@@ -151,7 +142,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .msg .md-body strong{font-weight:700;color:var(--text)}
 .msg .md-body em{font-style:italic}
 .msg .md-body img{max-width:100%;border-radius:6px}
-.cli-stream{font-family:'SF Mono',Monaco,Consolas,monospace;font-size:12px;color:var(--text2);padding:2px 24px;line-height:1.5;max-width:none;margin:0;word-break:break-all}
+
 .thinking-bar{display:flex;align-items:center;gap:8px;padding:6px 24px;color:var(--accent);font-size:12px;font-family:'SF Mono',Monaco,Consolas,monospace}
 .spinner{width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -173,17 +164,6 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .report-item .rpt-badge{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600;color:#fff;flex-shrink:0}
 .rpt-badge.done{background:var(--green)}.rpt-badge.failed{background:var(--red)}
 .empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px}
-
-/* ── xterm.js Terminal ── */
-#termContainer{display:none;flex:1;overflow:hidden;background:#0a0a0f;padding:4px}
-#termContainer .xterm{height:100%}
-#termContainer .xterm-viewport{overflow-y:auto}
-.chat-area.term-mode .messages,
-.chat-area.term-mode .thinking-bar,
-.chat-area.term-mode .confirm-bar,
-.chat-area.term-mode .input-area,
-.chat-area.term-mode .cli-welcome{display:none!important}
-.chat-area.term-mode #termContainer{display:flex}
 
 /* ── Settings Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
@@ -229,11 +209,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 <body>
 <header>
   <h1>Manon<span>马浓 · AI 架构师</span></h1>
-  <div class="mode-toggle">
-    <button class="mode-btn active" onclick="setMode('manon')">Manon</button>
-    <button class="mode-btn" onclick="setMode('claude')">Claude</button>
-    <button class="mode-btn" onclick="setMode('codebuddy')">CodeBuddy</button>
-  </div>
+  <div style="font-size:12px;color:var(--text2);padding:4px 8px">Manon</div>
   <select class="proj" id="projectSelect"><option value="">加载中...</option></select>
   <button class="add-proj-btn" onclick="openSetupModal()" title="新建项目">+</button>
   <button class="settings-btn" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型</button>
@@ -294,7 +270,6 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
   </div>
   <!-- Center: Chat -->
   <div class="chat-area" id="chatArea">
-    <div id="termContainer"></div>
     <div class="messages" id="messages">
       <div class="cli-welcome" id="cliWelcome">
         <div class="cli-logo">╭─ Manon 马浓 · AI 架构师 ─╮</div>
@@ -354,7 +329,7 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 </div>
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
-  <div class="modal">
+  <div class="modal" style="width:480px">
     <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>模型配置</h2>
     <div class="modal-section">
       <h3>Manon Pipeline</h3>
@@ -366,6 +341,17 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
       <div class="modal-row"><label>主模型</label><select id="cfgAgentModel"></select></div>
       <div class="modal-row"><label>备用模型</label><select id="cfgAgentFallback"></select></div>
       <div class="modal-row"><label>压缩模型</label><select id="cfgAgentCompress"></select></div>
+    </div>
+    <div class="modal-section">
+      <h3>自定义模型 (OpenAI 兼容)</h3>
+      <div id="customModelList" style="margin-bottom:10px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div class="setup-field" style="margin:0"><label>显示名称</label><input id="cmName" placeholder="GPT-4o"></div>
+        <div class="setup-field" style="margin:0"><label>模型 ID</label><input id="cmModelId" placeholder="gpt-4o"></div>
+      </div>
+      <div class="setup-field" style="margin:6px 0"><label>API Base URL</label><input id="cmUrl" placeholder="https://api.openai.com/v1"></div>
+      <div class="setup-field" style="margin:0 0 8px"><label>API Key</label><input id="cmKey" type="password" placeholder="sk-..."></div>
+      <button class="btn btn-ok" style="width:100%;padding:5px" onclick="addCustomModel()">添加模型</button>
     </div>
     <div class="modal-actions">
       <button class="btn btn-no" onclick="closeSettings()">取消</button>
@@ -379,12 +365,11 @@ if(typeof marked!=='undefined'){marked.use({extensions:[{name:'letteredHeading',
 const CIRC=2*Math.PI*20;
 const STAGES=['idle','clarifying','spec-ready','user-confirming','designing','decomposing','executing','done'];
 const STAGE_L={idle:'空闲待命',clarifying:'需求对齐',['spec-ready']:'方案就绪',['user-confirming']:'用户确认',designing:'架构设计',decomposing:'任务拆解',executing:'代码执行',done:'开发完成',failed:'执行失败'};
-let ws=null,projectId='',currentStage='idle',chatMode='manon';
+let ws=null,projectId='',currentStage='idle';
 let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
 let _lastUserMsg='',_pendingQueryIdx=-1;
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
-let _xterm=null,_xtermFit=null;
 
 function $(id){return document.getElementById(id)}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
@@ -409,21 +394,13 @@ function handleMsg(msg){
   else if(t==='feature-done'){updateStage('done');addMessage('功能开发完成！','system');$('specConfirm').style.display='none'}
   else if(t==='feature-failed'){updateStage('failed');addMessage('失败：'+msg.reason,'system')}
   else if(t==='feature-report'){addReport(msg)}
-  else if(t==='cli-stream'){appendCliStream(msg.content,msg.cli)}
-  else if(t==='cli-task-progress'){showCliTaskProgress(msg)}
-  else if(t==='cli-review-result'){showCliReviewResult(msg)}
   else if(t==='monitor-state'){handleMonitorState(msg)}
-  else if(t==='cli-ready'){showCliReady(msg)}
   else if(t==='llm-query')addQuery(msg);
   else if(t==='coach-stream-start')startStream();
   else if(t==='coach-reasoning-delta')appendStreamReasoning(msg.delta);
   else if(t==='coach-content-delta')appendStreamContent(msg.delta);
   else if(t==='coach-stream-end')endStream();
   else if(t==='error')addMessage(msg.message,'system');
-  else if(t==='pty-output'&&_xterm)_xterm.write(msg.data);
-  else if(t==='pty-started')addMessage(`── ${msg.cli||'CLI'} terminal ready ──`,'system');
-  else if(t==='pty-stopped'){/* terminal closed */}
-  else if(t==='pty-error')addMessage('PTY: '+msg.message,'system');
 }
 
 // ── Stats ──
@@ -566,112 +543,16 @@ function updateWelcome(){
 function sendMessage(){
   const text=$('input').value.trim();if(!text||!ws||ws.readyState!==1)return;
   _lastUserMsg=text;
-  if(chatMode==='claude'||chatMode==='codebuddy'){
-    ws.send(JSON.stringify({type:chatMode+'-chat',content:text,projectId}));
-    addMessage(text,'user');
+  const inPipeline=currentStage!=='idle'&&currentStage!=='done'&&currentStage!=='failed';
+  if(inPipeline){
+    ws.send(JSON.stringify({type:'user-response',content:text}));
   } else {
-    // Manon mode: pipeline active → user-response, otherwise → manon-chat (backend classifies intent)
-    const inPipeline=currentStage!=='idle'&&currentStage!=='done'&&currentStage!=='failed';
-    if(inPipeline){
-      ws.send(JSON.stringify({type:'user-response',content:text}));
-    } else {
-      ws.send(JSON.stringify({type:'manon-chat',content:text,projectId}));
-    }
-    addMessage(text,'user');
+    ws.send(JSON.stringify({type:'manon-chat',content:text,projectId}));
   }
+  addMessage(text,'user');
   $('input').value='';
 }
 
-function setMode(mode){
-  chatMode=mode;
-  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===mode));
-  const placeholder={manon:'输入问题或命令...',claude:'Ask Claude Code anything...',codebuddy:'Ask CodeBuddy anything...'};
-  $('input').placeholder=placeholder[mode]||'';
-  const area=$('chatArea');
-  // Always use chat mode — kill PTY if switching away from terminal
-  if(ws&&ws.readyState===1&&_xterm) ws.send(JSON.stringify({type:'pty-stop'}));
-  area.classList.remove('term-mode');
-  destroyTerminal();
-  // Send cli-init to check CLI availability when switching to claude/codebuddy
-  if((mode==='claude'||mode==='codebuddy')&&ws&&ws.readyState===1){
-    ws.send(JSON.stringify({type:'cli-init',cli:mode,projectId}));
-  }
-}
-
-function showCliReady(msg){
-  const name=msg.cli==='claude'?'Claude Code':'CodeBuddy';
-  const cliOk=msg.available;
-  const gs=msg.graphStatus;
-  let lines=[`── ${name} 模式 ──`];
-  lines.push(cliOk?'CLI: 已就绪':'CLI: 未找到，请先安装 '+name);
-  if(gs==='connected') lines.push(`知识图谱: 已连接 (${msg.entities||0} entities, ${msg.relations||0} relations)`);
-  else if(gs==='not_indexed') lines.push('知识图谱: 项目未索引，建议先初始化');
-  else if(gs==='disconnected') lines.push('知识图谱: 未连接');
-  else lines.push('知识图谱: 请先选择项目');
-  if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 MatrixoneGraph 上下文。');
-  addMessage(lines.join('\n'),'system');
-}
-
-function initTerminal(){
-  if(_xterm)return;
-  const container=$('termContainer');
-  _xterm=new Terminal({
-    cursorBlink:true,
-    fontSize:13,
-    fontFamily:"'SF Mono',Monaco,'Cascadia Code',Consolas,monospace",
-    theme:{background:'#0a0a0f',foreground:'#e0e0e0',cursor:'#4a90e2',selectionBackground:'rgba(74,144,226,0.3)'},
-    allowProposedApi:true,
-  });
-  _xtermFit=new FitAddon.FitAddon();
-  _xterm.loadAddon(_xtermFit);
-  _xterm.open(container);
-  _xtermFit.fit();
-  // Forward keystrokes to PTY
-  _xterm.onData(data=>{
-    if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:'pty-input',data}));
-  });
-  // Resize observer
-  _xtermResizeObs=new ResizeObserver(()=>{if(_xtermFit){_xtermFit.fit();if(ws&&ws.readyState===1&&_xterm)ws.send(JSON.stringify({type:'pty-resize',cols:_xterm.cols,rows:_xterm.rows}))}});
-  _xtermResizeObs.observe(container);
-}
-let _xtermResizeObs=null;
-function destroyTerminal(){
-  if(_xtermResizeObs){_xtermResizeObs.disconnect();_xtermResizeObs=null}
-  if(_xterm){_xterm.dispose();_xterm=null;_xtermFit=null}
-  $('termContainer').innerHTML='';
-}
-
-function appendCliStream(content,cli){
-  const box=$('messages');
-  let el=box.querySelector('.cli-stream-live');
-  if(!el){el=document.createElement('div');el.className='cli-stream cli-stream-live';box.appendChild(el)}
-  el.textContent+=content+'\n';
-  box.scrollTop=box.scrollHeight;
-}
-// Clear live stream block when a full message arrives
-const _origAddMsg=addMessage;
-addMessage=function(content,role,reasoning){
-  const live=document.querySelector('.cli-stream-live');
-  if(live)live.classList.remove('cli-stream-live');
-  _origAddMsg(content,role,reasoning);
-}
-function showCliTaskProgress(msg){
-  const p=msg.phase;
-  if(p==='tasks_ready'&&msg.tasks){
-    const list=msg.tasks.map(t=>`  ${t.id}. ${t.title}`).join('\n');
-    addMessage(`任务拆解完成（${msg.tasks.length} 个子任务）：\n${list}`,'system');
-  }else if(p==='executing'){
-    addMessage(`[${msg.taskIndex}/${msg.taskTotal}] 执行: ${msg.title}`,'system');
-  }else if(p==='done'){
-    addMessage(msg.message||'全部完成','system');
-  }
-}
-function showCliReviewResult(msg){
-  const icon=msg.passed?'✓':'✗';
-  let text=`Review ${icon} 任务#${msg.taskId}: ${msg.summary||''}`;
-  if(msg.issues&&msg.issues.length) text+='\n  问题：'+msg.issues.join('; ');
-  if(!msg.passed) addMessage(text,'system');
-}
 function approveSpec(){
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'feature-plan-approved'}));
   $('specConfirm').style.display='none';addMessage('已确认，开始开发','user');updateStage('designing');
@@ -861,14 +742,40 @@ async function openSettings(){
     const r=await fetch('/api/v1/settings');
     const data=await r.json();
     availableModels=data.models||[];
+    const customModels=data.custom_models||[];
     const cfg=data.config||{};
     const selects=['cfgCoachModel','cfgCoachFallback','cfgAgentModel','cfgAgentFallback','cfgAgentCompress'];
     const keys=['coach_model','coach_model_fallback','agent_model','agent_model_fallback','agent_compress_model'];
     selects.forEach((id,i)=>{
       const sel=$(id);sel.innerHTML=availableModels.map(m=>`<option value="${m.id}"${m.id===cfg[keys[i]]?' selected':''}>${m.name} — ${m.desc}</option>`).join('');
     });
+    renderCustomModels(customModels);
   }catch(e){addMessage('加载设置失败：'+e.message,'system');return}
   $('settingsModal').style.display='flex';
+}
+function renderCustomModels(list){
+  const el=$('customModelList');
+  if(!list.length){el.innerHTML='<div style="font-size:11px;color:var(--text2);padding:4px 0">暂无自定义模型</div>';return}
+  el.innerHTML=list.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;margin-bottom:4px;background:rgba(255,255,255,.03);border-radius:6px;font-size:11px"><div><span style="color:var(--accent);font-weight:600">${esc(m.name)}</span> <span style="color:var(--text2)">${esc(m.model_id)} · ${esc((m.api_url||'').substring(0,35))}</span></div><button onclick="deleteCustomModel('${m.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 4px" title="删除">×</button></div>`).join('');
+}
+async function addCustomModel(){
+  const name=$('cmName').value.trim(),mid=$('cmModelId').value.trim(),url=$('cmUrl').value.trim(),key=$('cmKey').value.trim();
+  if(!name||!mid||!url||!key){addMessage('请填写所有字段','system');return}
+  try{
+    const r=await fetch('/api/v1/settings/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,model_id:mid,api_url:url,api_key:key})});
+    const data=await r.json();
+    if(data.status==='ok'){
+      $('cmName').value='';$('cmModelId').value='';$('cmUrl').value='';$('cmKey').value='';
+      addMessage(`模型 "${name}" 已添加`,'system');
+      await openSettings(); // refresh
+    }else addMessage('添加失败','system');
+  }catch(e){addMessage('添加失败：'+e.message,'system')}
+}
+async function deleteCustomModel(id){
+  try{
+    await fetch(`/api/v1/settings/models/${id}`,{method:'DELETE'});
+    await openSettings(); // refresh
+  }catch(e){addMessage('删除失败：'+e.message,'system')}
 }
 function closeSettings(){$('settingsModal').style.display='none'}
 async function saveSettings(){

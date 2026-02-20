@@ -33,6 +33,19 @@ def _active_fallback() -> str:
     return get_runtime_config().get("coach_model_fallback") or get_settings().llm_model_fallback
 
 
+def _resolve_model(model: str) -> tuple[str, str, str]:
+    """Return (model_name, api_url, api_key) — handles custom models."""
+    from ..routers.settings import get_custom_model
+    custom = get_custom_model(model)
+    if custom:
+        base = custom["api_url"].rstrip("/")
+        if not base.endswith("/v1"):
+            base += "/v1"
+        return custom["model_id"], base + "/chat/completions", custom["api_key"]
+    s = get_settings()
+    return model, s.llm_api_url, s.llm_api_key
+
+
 async def llm_chat(
     messages: list[dict],
     *,
@@ -41,13 +54,13 @@ async def llm_chat(
     timeout: float = 120.0,
 ) -> dict:
     """Low-level chat completion call. Returns {"content": str, "reasoning": str}."""
-    s = get_settings()
     model = model or _active_model()
+    model_name, api_url, api_key = _resolve_model(model)
     client = _get_client()
     resp = await client.post(
-        s.llm_api_url,
-        headers={"Authorization": f"Bearer {s.llm_api_key}", "Content-Type": "application/json"},
-        json={"model": model, "max_tokens": max_tokens, "messages": messages},
+        api_url,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model_name, "max_tokens": max_tokens, "messages": messages},
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -69,14 +82,14 @@ async def llm_chat_stream(
     """
     from openai import AsyncOpenAI
 
-    s = get_settings()
     model = model or _active_model()
-    # ZhipuAI is OpenAI-compatible; derive base_url from chat/completions URL
-    base_url = s.llm_api_url.rsplit("/chat/completions", 1)[0]
-    client = AsyncOpenAI(api_key=s.llm_api_key, base_url=base_url, timeout=timeout)
+    model_name, api_url, api_key = _resolve_model(model)
+    # Derive base_url: strip /chat/completions if present, otherwise use as-is
+    base_url = api_url.rsplit("/chat/completions", 1)[0]
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
     try:
         stream = await client.chat.completions.create(
-            model=model, messages=messages, max_tokens=max_tokens, stream=True,
+            model=model_name, messages=messages, max_tokens=max_tokens, stream=True,
         )
         async for chunk in stream:
             if not chunk.choices:
