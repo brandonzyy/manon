@@ -378,17 +378,18 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 mg = MatrixoneGraph.get(project_path)
                 result = await mg.query(prompt, top_k=10, depth=1)
                 graph_ms = int((time.monotonic() - t0) * 1000)
+                # Always send query record so user sees graph activity
+                context_tokens = len(result.context) // 2 if result.context else 0
+                await _send_dev(dev_id, {
+                    "type": "llm-query", "caller": "manon",
+                    "command": "matrixone_graph.query(hybrid)",
+                    "query": prompt[:120], "ts": datetime.now().isoformat(),
+                    "duration_ms": graph_ms,
+                    "context_tokens": context_tokens,
+                })
                 if result.context:
                     graph_context = result.context
-                    context_tokens = len(graph_context) // 2  # rough CJK estimate
                     await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens/1000:.1f}k tokens ({graph_ms}ms)")
-                    await _send_dev(dev_id, {
-                        "type": "llm-query", "caller": "manon",
-                        "command": "matrixone_graph.query(hybrid)",
-                        "query": prompt[:120], "ts": datetime.now().isoformat(),
-                        "duration_ms": graph_ms,
-                        "context_tokens": context_tokens,
-                    })
                     # Iterative deep retrieval: LLM analyzes gaps → follow-up queries
                     try:
                         graph_context = await _iterative_graph_query(

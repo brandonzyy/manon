@@ -4,8 +4,11 @@ Usage::
 
     from matrixone_graph import MatrixoneGraph
 
-    # Configure once at startup
-    MatrixoneGraph.configure(embedding_url="http://localhost:8080")
+    # Configure once at startup (data_dir = centralized index storage)
+    MatrixoneGraph.configure(
+        embedding_url="http://localhost:8080",
+        data_dir="/path/to/manon/indexes",
+    )
 
     # Get pooled instance (auto-created per repo)
     mg = MatrixoneGraph.get("/path/to/repo")
@@ -20,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -45,11 +49,21 @@ class MatrixoneGraph:
     # Class-level instance pool
     _pool: dict[str, "MatrixoneGraph"] = {}
     _embedding_url: str = "http://localhost:8080"
+    _data_dir: Path | None = None  # centralized index storage root
+
+    @staticmethod
+    def _repo_key(repo_path: Path) -> str:
+        """Derive a unique, readable directory name from a repo path."""
+        h = hashlib.sha256(str(repo_path).encode()).hexdigest()[:10]
+        return f"{repo_path.name}-{h}"
 
     @classmethod
-    def configure(cls, *, embedding_url: str = "") -> None:
+    def configure(cls, *, embedding_url: str = "", data_dir: str | Path = "") -> None:
         if embedding_url:
             cls._embedding_url = embedding_url
+        if data_dir:
+            cls._data_dir = Path(data_dir).resolve()
+            cls._data_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def get(cls, repo_path: str | Path) -> "MatrixoneGraph":
@@ -80,12 +94,18 @@ class MatrixoneGraph:
         self._embedder = EmbeddingClient(
             base_url=embedding_url, batch_size=batch_size
         )
+        # Compute kg_path: centralized if data_dir is set, else in-repo fallback
+        if self._data_dir:
+            self.kg_path = self._data_dir / self._repo_key(self.repo_path) / "kg"
+        else:
+            self.kg_path = self.repo_path / KG_DIR
 
     # -- Indexing --
 
     async def index(self, *, incremental=True, on_progress=None) -> IndexResult:
         return await index_repo(
             self.repo_path, self._embedder,
+            kg_path=self.kg_path,
             incremental=incremental, on_progress=on_progress,
         )
 
@@ -116,14 +136,14 @@ class MatrixoneGraph:
     async def query(self, text: str, *, top_k=10, depth=1) -> QueryResult:
         return await query(
             self.repo_path, text, self._embedder,
-            top_k=top_k, depth=depth,
+            top_k=top_k, depth=depth, kg_path=self.kg_path,
         )
 
     # -- Impact analysis (graph-based, no LLM calls) --
 
     def _load_graph(self) -> CodeGraph:
         g = CodeGraph()
-        g.load(self.repo_path / KG_DIR / GRAPH_FILE)
+        g.load(self.kg_path / GRAPH_FILE)
         return g
 
     def impact_commit(self, commit: str = "HEAD", *, max_depth: int = 2) -> dict:
@@ -168,8 +188,7 @@ class MatrixoneGraph:
     # -- Status / lifecycle --
 
     def status(self) -> dict[str, Any]:
-        kg_path = self.repo_path / KG_DIR
-        meta_file = kg_path / META_FILE
+        meta_file = self.kg_path / META_FILE
         if not meta_file.exists():
             return {"indexed": False}
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
@@ -184,9 +203,8 @@ class MatrixoneGraph:
 
     def clear(self) -> None:
         import shutil
-        kg_path = self.repo_path / KG_DIR
-        if kg_path.exists():
-            shutil.rmtree(kg_path)
+        if self.kg_path.exists():
+            shutil.rmtree(self.kg_path)
 
     async def close(self) -> None:
         await self._embedder.close()

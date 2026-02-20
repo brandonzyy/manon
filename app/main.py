@@ -32,8 +32,11 @@ async def lifespan(app: FastAPI):
     log.info("DB initialized at %s", settings.db_path)
     # Configure MatrixoneGraph pool
     from matrixone_graph import MatrixoneGraph
-    MatrixoneGraph.configure(embedding_url=settings.embedding_url)
-    log.info("MatrixoneGraph: embedding_url=%s", settings.embedding_url)
+    MatrixoneGraph.configure(
+        embedding_url=settings.embedding_url,
+        data_dir=settings.index_dir,
+    )
+    log.info("MatrixoneGraph: embedding_url=%s, data_dir=%s", settings.embedding_url, settings.index_dir)
     # Start monitor broadcast loop
     monitor_task = asyncio.create_task(_monitor_broadcast_loop())
     log.info("Manon Gateway ready (no upstream — direct agent management)")
@@ -84,7 +87,11 @@ async def ws_dev(ws: WebSocket):
                 continue
             msg["_dev_id"] = dev_id
             from .coach.pipeline import handle_dev_message
-            await handle_dev_message(dev_id, msg)
+            try:
+                await handle_dev_message(dev_id, msg)
+            except Exception as exc:
+                log.exception("handle_dev_message error for %s: %s", dev_id, exc)
+                await ws.send_json({"type": "error", "message": f"内部错误: {exc}"})
             await hub.broadcast_to_monitors({**msg, "_dir": "in"})
     except WebSocketDisconnect:
         pass

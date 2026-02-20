@@ -198,11 +198,13 @@ async def index_repo(
     repo_path: Path,
     embedder: EmbeddingClient,
     *,
+    kg_path: Path | None = None,
     incremental: bool = True,
     on_progress: Callable[[str], None] | None = None,
 ) -> IndexResult:
     repo_path = repo_path.resolve()
-    kg_path = repo_path / KG_DIR
+    if kg_path is None:
+        kg_path = repo_path / KG_DIR
     result = IndexResult()
 
     graph = CodeGraph()
@@ -306,10 +308,11 @@ async def index_repo(
 
 async def query(
     repo_path: Path, text: str, embedder: EmbeddingClient,
-    *, top_k: int = 10, depth: int = 1,
+    *, top_k: int = 10, depth: int = 1, kg_path: Path | None = None,
 ) -> QueryResult:
     repo_path = repo_path.resolve()
-    kg_path = repo_path / KG_DIR
+    if kg_path is None:
+        kg_path = repo_path / KG_DIR
 
     graph = CodeGraph()
     vec_index = VectorIndex()

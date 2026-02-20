@@ -14,7 +14,7 @@ log = logging.getLogger("manon.worker.tools")
 # ── Safety constants ──
 
 _DANGEROUS_CMD_RE = re.compile(
-    r"rm\s+-rf|rmdir\s+/|del\s+/|format\s+|mkfs\.|dd\s+if=",
+    r"rm\s+-rf|rmdir\s+/|del\s+/|format\s+|mkfs\.|dd\s+if=|git\s+clean|git\s+reset\s+--hard",
     re.IGNORECASE,
 )
 _PKG_MGR_RE = re.compile(

@@ -19,6 +19,7 @@ class ManonSettings(BaseSettings):
     port: int = 3600
     db_path: str = "./manon.db"
     repos_dir: str = "./repos"
+    index_dir: str = "./indexes"
 
     # MatrixoneGraph / CodeIndex
     codeindex_bin: str = str(_VENV_BIN / "codeindex")
