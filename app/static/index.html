@@ -324,9 +324,8 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
       <div class="info-label">Gateway</div>
     </div>
     <div class="info-row" style="display:flex;gap:16px;justify-content:center">
-      <div style="text-align:center"><div class="info-val" id="statAgents" style="font-size:16px;color:var(--accent)">0</div><div class="info-label">Agents</div></div>
-      <div style="text-align:center"><div class="info-val" id="statDevs" style="font-size:16px;color:var(--text)">0</div><div class="info-label">Devs</div></div>
       <div style="text-align:center"><div class="info-val" id="statWorkers" style="font-size:16px;color:var(--purple)">0</div><div class="info-label">Workers</div></div>
+      <div style="text-align:center"><div class="info-val" id="statDevs" style="font-size:16px;color:var(--text)">0</div><div class="info-label">Devs</div></div>
     </div>
     <div>
       <div class="pipeline-mini-banner" id="pipelineBanner">
@@ -426,7 +425,7 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
       <div class="modal-row"><label>备用模型</label><select id="cfgCoachFallback"></select></div>
     </div>
     <div class="modal-section">
-      <h3>Auto-Fix Agent</h3>
+      <h3>Manus Agent</h3>
       <div class="modal-row"><label>主模型</label><select id="cfgAgentModel"></select></div>
       <div class="modal-row"><label>备用模型</label><select id="cfgAgentFallback"></select></div>
       <div class="modal-row"><label>压缩模型</label><select id="cfgAgentCompress"></select></div>
@@ -552,7 +551,6 @@ function connectMonitorWS(){
   monitorWs.onmessage=e=>{try{const msg=JSON.parse(e.data);if(msg.type==='monitor-state')handleMonitorState(msg)}catch{}};
 }
 function handleMonitorState(msg){
-  $('statAgents').textContent=msg.agentCount||0;
   $('statDevs').textContent=msg.devCount||0;
   $('statWorkers').textContent=msg.workerCount||0;
   const sessions=msg.sessions||[];
