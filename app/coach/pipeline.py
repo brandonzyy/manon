@@ -84,18 +84,36 @@ _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可
 回答简洁、专业，用中文。"""
 
 
-def _is_question(prompt: str) -> bool:
-    """Heuristic: detect if the prompt is a question rather than a feature request."""
+def _is_feature_request(prompt: str) -> bool:
+    """Heuristic: detect if the prompt is an explicit code-change / feature request."""
     p = prompt.strip()
-    if p.endswith("?") or p.endswith("？"):
+    # Explicit pipeline trigger
+    if p.startswith("/feature") or p.startswith("/pipeline"):
         return True
-    q_starts = (
-        "什么", "为什么", "怎么", "如何", "哪", "是不是", "能不能", "有没有",
-        "请问", "请解释", "请说明", "请分析", "解释", "说明", "分析", "介绍",
-        "看看", "查看", "了解", "告诉我", "帮我看",
+    # Chinese keywords that signal code modification intent
+    action_starts = (
+        "实现", "添加", "新增", "开发", "创建", "搭建", "构建",
+        "修改", "改一下", "改成", "改为", "重构", "优化",
+        "删除", "移除", "去掉",
+        "修复", "修bug", "修一下", "fix",
+        "写一个", "写个", "帮我写", "帮我实现", "帮我添加", "帮我开发",
+        "帮我修改", "帮我修复", "帮我重构", "帮我优化", "帮我创建",
+        "请实现", "请添加", "请修改", "请开发", "请创建",
+        "把这个", "把它",
     )
-    for q in q_starts:
-        if p.startswith(q):
+    for kw in action_starts:
+        if p.startswith(kw):
+            return True
+    # English keywords for code changes
+    p_lower = p.lower()
+    en_starts = (
+        "implement", "add ", "create ", "build ", "develop ",
+        "modify ", "change ", "update ", "refactor ", "optimize ",
+        "delete ", "remove ",
+        "fix ", "write ",
+    )
+    for kw in en_starts:
+        if p_lower.startswith(kw):
             return True
     return False
 
@@ -152,8 +170,8 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 await _send_thinking(dev_id, False)
                 log.warning("MatrixoneGraph query failed: %s", exc)
 
-    # Classify intent: question → chat, otherwise → feature pipeline
-    if not _is_question(prompt):
+    # Classify intent: explicit feature request → pipeline, otherwise → chat
+    if _is_feature_request(prompt):
         # Include recent chat history so pipeline LLM understands context
         history = _chat_history.get(dev_id, [])
         context_desc = prompt
@@ -170,7 +188,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         })
         return
 
-    # Chat mode — answer directly with graph context
+    # Chat mode (default) — answer directly with graph context
     history = _chat_history.setdefault(dev_id, [])
     history.append({"role": "user", "content": prompt})
     if len(history) > 40:
@@ -345,6 +363,14 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
         await _handle_cli_chat(dev_id, msg)
     elif msg_type == "cli-init":
         await _handle_cli_init(dev_id, msg)
+    elif msg_type == "pty-start":
+        await _handle_pty_start(dev_id, msg)
+    elif msg_type == "pty-input":
+        await _handle_pty_input(dev_id, msg)
+    elif msg_type == "pty-resize":
+        await _handle_pty_resize(dev_id, msg)
+    elif msg_type == "pty-stop":
+        await _handle_pty_stop(dev_id)
     else:
         await _send_dev(dev_id, {"type": "error", "message": f"Unknown message type: {msg_type}"})
 
@@ -510,8 +536,10 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
                         mg = MatrixoneGraph.get(local_path)
                         s = mg.status()
                         graph_status = "connected" if s.get("indexed") else "disconnected"
-                    except Exception:
+                        log.info("Graph status for %s: %s", local_path, graph_status)
+                    except Exception as exc:
                         graph_status = "disconnected"
+                        log.warning("Graph status check failed for %s: %s", local_path, exc)
                 else:
                     graph_status = "not_indexed"
 
@@ -526,60 +554,186 @@ async def _handle_cli_init(dev_id: str, msg: dict) -> None:
     })
 
 
-async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
-    """Handle claude-chat / codebuddy-chat — orchestrated pipeline.
+_CLI_SYSTEM = {
+    "claude": """You are Claude Code, an AI coding assistant by Anthropic. You help developers understand code, debug issues, and answer technical questions.
+Answer concisely and professionally. Use the project context provided when relevant.""",
+    "codebuddy": """你是 CodeBuddy，一个 AI 编程助手。帮助开发者理解代码、调试问题、回答技术问题。
+回答简洁、专业，用中文。""",
+}
 
-    Flow: LoomGraph query → task decomposition → agent execution → review.
+
+async def _handle_cli_chat(dev_id: str, msg: dict) -> None:
+    """Handle claude-chat / codebuddy-chat.
+
+    Questions → streaming LLM chat (same UX as Manon).
+    Feature requests → native CLI subprocess.
     """
+    import time
     from datetime import datetime
     from matrixone_graph import MatrixoneGraph
-    from .cli_orchestrator import orchestrate_cli_request
+    from ..services.llm import llm_chat_stream
 
     cli = "claude" if msg.get("type") == "claude-chat" else "codebuddy"
-    prompt = msg.get("content", "")
+    prompt = msg.get("content", "").strip()
     if not prompt:
         return
 
-    # Resolve project cwd + workspace
+    # Resolve project cwd
     cwd = None
-    workspace = None
     project_id = msg.get("projectId", "")
     if project_id:
         from ..db import db_pool
         async with db_pool() as db:
             row = await db.execute_fetchone(
-                "SELECT local_path, workspace FROM projects WHERE id = ?", (project_id,),
+                "SELECT local_path FROM projects WHERE id = ?", (project_id,),
             )
             if row:
                 cwd = row["local_path"]
-                workspace = row["workspace"]
 
-    # ── Mandatory MatrixoneGraph query ──
+    # Graph context query
     graph_context = ""
+    context_tokens = 0
     if cwd:
         try:
             await _send_thinking(dev_id, True, "查询知识图谱...")
+            t0 = time.monotonic()
             mg = MatrixoneGraph.get(cwd)
             result = await mg.query(prompt, top_k=10, depth=1)
+            graph_ms = int((time.monotonic() - t0) * 1000)
             if result.context:
-                graph_context = f"\n\n## 项目知识图谱上下文 (MatrixoneGraph)\n\n{result.context}\n"
+                graph_context = result.context
+                context_tokens = len(graph_context) // 2
+                await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens/1000:.1f}k tokens ({graph_ms}ms)")
                 await _send_dev(dev_id, {
-                    "type": "llm-query",
-                    "caller": f"{cli}-chat",
+                    "type": "llm-query", "caller": f"{cli}-chat",
                     "command": "matrixone_graph.query(hybrid)",
-                    "query": prompt[:120],
-                    "ts": datetime.now().isoformat(),
+                    "query": prompt[:120], "ts": datetime.now().isoformat(),
+                    "duration_ms": graph_ms, "context_tokens": context_tokens,
                 })
             await _send_thinking(dev_id, False)
         except Exception as exc:
             await _send_thinking(dev_id, False)
             log.warning("MatrixoneGraph query failed for %s chat: %s", cli, exc)
 
-    # ── Orchestrated pipeline ──
-    state = _ensure_session(dev_id)
-    state.feature_id = state.feature_id or str(uuid.uuid4())[:8]
-    state.project_id = project_id
-    state.status = Status.EXECUTING
+    # ── Default: chat → streaming LLM ──
+    if not _is_feature_request(prompt):
+        # Default: question / chat → streaming LLM chat (same as Manon)
+        history = _chat_history.setdefault(dev_id, [])
+        history.append({"role": "user", "content": prompt})
+        if len(history) > 40:
+            history[:] = history[-40:]
 
-    await orchestrate_cli_request(state, prompt, graph_context, cwd, workspace)
-    state.status = Status.IDLE
+        system = _CLI_SYSTEM.get(cli, _MANON_SYSTEM)
+        if graph_context:
+            system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
+
+        messages = [{"role": "system", "content": system}] + history
+
+        await _send_thinking(dev_id, True, f"调用 LLM (~{context_tokens/1000:.1f}k tokens 上下文)...")
+        try:
+            t0 = time.monotonic()
+            await _send_dev(dev_id, {"type": "coach-stream-start"})
+            full_reasoning = ""
+            full_content = ""
+            async for chunk in llm_chat_stream(messages, max_tokens=4096):
+                if chunk["type"] == "reasoning":
+                    full_reasoning += chunk["delta"]
+                    await _send_dev(dev_id, {"type": "coach-reasoning-delta", "delta": chunk["delta"]})
+                else:
+                    full_content += chunk["delta"]
+                    await _send_dev(dev_id, {"type": "coach-content-delta", "delta": chunk["delta"]})
+                await asyncio.sleep(0)
+            llm_ms = int((time.monotonic() - t0) * 1000)
+            history.append({"role": "assistant", "content": full_content})
+            await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
+            await _send_thinking(dev_id, False)
+            await _send_dev(dev_id, {"type": "coach-stream-end"})
+        except Exception as exc:
+            await _send_thinking(dev_id, False)
+            await _send_dev(dev_id, {"type": "coach-stream-end"})
+            await _send_chat(dev_id, f"LLM 调用失败：{exc}", role="system")
+        return
+
+    # ── Feature request → native CLI subprocess ──
+    from ..services.claude_cli import run_cli_chat
+
+    full_prompt = prompt
+    if graph_context:
+        full_prompt = f"## 项目知识图谱上下文\n\n{graph_context}\n\n## 用户需求\n{prompt}"
+
+    await _send_thinking(dev_id, True, f"调用 {cli} CLI...")
+
+    async def on_output(line: str) -> None:
+        await _send_dev(dev_id, {"type": "cli-stream", "content": line, "cli": cli})
+
+    try:
+        result = await run_cli_chat(cli, full_prompt, cwd=cwd, on_output=on_output)
+        await _send_thinking(dev_id, False)
+        if not result.strip():
+            await _send_chat(dev_id, f"{cli} 未返回内容。", role="system")
+    except Exception as exc:
+        await _send_thinking(dev_id, False)
+        log.error("%s CLI failed: %s", cli, exc)
+        await _send_chat(dev_id, f"{cli} 执行失败：{exc}", role="system")
+
+
+# ---- PTY handlers (native CLI terminal) ----
+
+async def _handle_pty_start(dev_id: str, msg: dict) -> None:
+    """Spawn an interactive CLI in a PTY and stream output to the frontend."""
+    from ..services.pty_manager import pty_mgr
+
+    cli = msg.get("cli", "claude")
+    cols = msg.get("cols", 120)
+    rows = msg.get("rows", 40)
+
+    # Resolve project cwd
+    cwd = None
+    project_id = msg.get("projectId", "")
+    if project_id:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone(
+                "SELECT local_path FROM projects WHERE id = ?", (project_id,),
+            )
+            if row:
+                cwd = row["local_path"]
+
+    async def on_output(data: str) -> None:
+        await _send_dev(dev_id, {"type": "pty-output", "data": data})
+
+    try:
+        await pty_mgr.spawn(dev_id, cli, cwd=cwd, cols=cols, rows=rows, on_output=on_output)
+        await _send_dev(dev_id, {"type": "pty-started", "cli": cli})
+        log.info("PTY started for %s: cli=%s cwd=%s", dev_id, cli, cwd)
+    except FileNotFoundError:
+        await _send_dev(dev_id, {"type": "pty-error", "message": f"CLI not found: {cli}"})
+    except Exception as exc:
+        log.error("PTY spawn failed: %s", exc)
+        await _send_dev(dev_id, {"type": "pty-error", "message": str(exc)})
+
+
+async def _handle_pty_input(dev_id: str, msg: dict) -> None:
+    """Forward user keystrokes to the PTY."""
+    from ..services.pty_manager import pty_mgr
+
+    session = pty_mgr.get(dev_id)
+    if session:
+        session.write(msg.get("data", ""))
+
+
+async def _handle_pty_resize(dev_id: str, msg: dict) -> None:
+    """Resize the PTY to match the frontend terminal dimensions."""
+    from ..services.pty_manager import pty_mgr
+
+    session = pty_mgr.get(dev_id)
+    if session:
+        session.resize(msg.get("cols", 120), msg.get("rows", 40))
+
+
+async def _handle_pty_stop(dev_id: str) -> None:
+    """Kill the PTY session."""
+    from ..services.pty_manager import pty_mgr
+
+    await pty_mgr.kill(dev_id)
+    await _send_dev(dev_id, {"type": "pty-stopped"})

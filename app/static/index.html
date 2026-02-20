@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0e0;--text2:#888;--accent:#4a90e2;--green:#34c759;--red:#ff3b30;--yellow:#f5a623;--blue:#4a90e2;--purple:#af52de;--cyan:#5eead4}
@@ -150,6 +153,17 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
 .rpt-badge.done{background:var(--green)}.rpt-badge.failed{background:var(--red)}
 .empty-hint{color:var(--text2);font-size:12px;text-align:center;padding:30px 10px}
 
+/* ── xterm.js Terminal ── */
+#termContainer{display:none;flex:1;overflow:hidden;background:#0a0a0f;padding:4px}
+#termContainer .xterm{height:100%}
+#termContainer .xterm-viewport{overflow-y:auto}
+.chat-area.term-mode .messages,
+.chat-area.term-mode .thinking-bar,
+.chat-area.term-mode .confirm-bar,
+.chat-area.term-mode .input-area,
+.chat-area.term-mode .cli-welcome{display:none!important}
+.chat-area.term-mode #termContainer{display:flex}
+
 /* ── Settings Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:420px;max-height:80vh;overflow-y:auto;padding:24px}
@@ -258,12 +272,13 @@ select.proj{padding:4px 8px;background:var(--card);border:1px solid var(--border
     <div class="side-scroll" id="queryList"><div class="empty-hint">暂无查询记录</div></div>
   </div>
   <!-- Center: Chat -->
-  <div class="chat-area">
+  <div class="chat-area" id="chatArea">
+    <div id="termContainer"></div>
     <div class="messages" id="messages">
       <div class="cli-welcome" id="cliWelcome">
         <div class="cli-logo">╭─ Manon 马浓 · AI 架构师 ─╮</div>
         <div>项目: <span id="welcomeProj">—</span> · <span id="welcomeStats">—</span></div>
-        <div class="cli-hint">直接描述需求开始开发 · 也可以问任何代码问题 · <kbd>Shift+Enter</kbd> 换行</div>
+        <div class="cli-hint">直接提问进行交互 · 描述代码修改需求自动进入开发流程 · <kbd>Shift+Enter</kbd> 换行</div>
       </div>
     </div>
     <div class="thinking-bar" id="thinking" style="display:none"><div class="spinner"></div><span id="thinkingLabel">思考中...</span></div>
@@ -347,6 +362,7 @@ let ws=null,projectId='',currentStage='idle',chatMode='manon';
 let queries=[],reports=[];
 let _streamEl=null,_streamReasoning='',_streamContent='',_streamReasoningPre=null,_streamMdBody=null,_streamRenderT=null,_streamReasonT=null;
 let stats={entities:0,relations:0,files:0,chunks:0,lastUpdate:null,score:null,entityTypes:{}};
+let _xterm=null,_xtermFit=null;
 
 function $(id){return document.getElementById(id)}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
@@ -382,6 +398,10 @@ function handleMsg(msg){
   else if(t==='coach-content-delta')appendStreamContent(msg.delta);
   else if(t==='coach-stream-end')endStream();
   else if(t==='error')addMessage(msg.message,'system');
+  else if(t==='pty-output'&&_xterm)_xterm.write(msg.data);
+  else if(t==='pty-started')addMessage(`── ${msg.cli||'CLI'} terminal ready ──`,'system');
+  else if(t==='pty-stopped'){/* terminal closed */}
+  else if(t==='pty-error')addMessage('PTY: '+msg.message,'system');
 }
 
 // ── Stats ──
@@ -539,8 +559,14 @@ function sendMessage(){
 function setMode(mode){
   chatMode=mode;
   document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===mode));
-  const placeholder={manon:'输入问题或命令...',claude:'Ask Claude anything...',codebuddy:'Ask CodeBuddy anything...'};
+  const placeholder={manon:'输入问题或命令...',claude:'Ask Claude Code anything...',codebuddy:'Ask CodeBuddy anything...'};
   $('input').placeholder=placeholder[mode]||'';
+  const area=$('chatArea');
+  // Always use chat mode — kill PTY if switching away from terminal
+  if(ws&&ws.readyState===1&&_xterm) ws.send(JSON.stringify({type:'pty-stop'}));
+  area.classList.remove('term-mode');
+  destroyTerminal();
+  // Send cli-init to check CLI availability when switching to claude/codebuddy
   if((mode==='claude'||mode==='codebuddy')&&ws&&ws.readyState===1){
     ws.send(JSON.stringify({type:'cli-init',cli:mode,projectId}));
   }
@@ -558,6 +584,35 @@ function showCliReady(msg){
   else lines.push('知识图谱: 请先选择项目');
   if(cliOk&&gs==='connected') lines.push('\n每次对话将自动注入 MatrixoneGraph 上下文。');
   addMessage(lines.join('\n'),'system');
+}
+
+function initTerminal(){
+  if(_xterm)return;
+  const container=$('termContainer');
+  _xterm=new Terminal({
+    cursorBlink:true,
+    fontSize:13,
+    fontFamily:"'SF Mono',Monaco,'Cascadia Code',Consolas,monospace",
+    theme:{background:'#0a0a0f',foreground:'#e0e0e0',cursor:'#4a90e2',selectionBackground:'rgba(74,144,226,0.3)'},
+    allowProposedApi:true,
+  });
+  _xtermFit=new FitAddon.FitAddon();
+  _xterm.loadAddon(_xtermFit);
+  _xterm.open(container);
+  _xtermFit.fit();
+  // Forward keystrokes to PTY
+  _xterm.onData(data=>{
+    if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:'pty-input',data}));
+  });
+  // Resize observer
+  _xtermResizeObs=new ResizeObserver(()=>{if(_xtermFit){_xtermFit.fit();if(ws&&ws.readyState===1&&_xterm)ws.send(JSON.stringify({type:'pty-resize',cols:_xterm.cols,rows:_xterm.rows}))}});
+  _xtermResizeObs.observe(container);
+}
+let _xtermResizeObs=null;
+function destroyTerminal(){
+  if(_xtermResizeObs){_xtermResizeObs.disconnect();_xtermResizeObs=null}
+  if(_xterm){_xterm.dispose();_xterm=null;_xtermFit=null}
+  $('termContainer').innerHTML='';
 }
 
 function appendCliStream(content,cli){
