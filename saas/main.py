@@ -20,8 +20,8 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 
 from .config import settings
 from .db import init_db, close_db, get_db
-from .models import TenantCreate, TenantOut, RegisterRequest
-from .routers import health, repos, indexing, query, usage, embedding, pipeline, config, account
+from .models import RegisterRequest
+from .routers import health, repos, indexing, query, usage, embedding, pipeline, config, account, admin
 
 
 @asynccontextmanager
@@ -64,6 +64,7 @@ app.include_router(embedding.router)
 app.include_router(pipeline.router)
 app.include_router(config.router)
 app.include_router(account.router)
+app.include_router(admin.router)
 
 # static console
 _static_dir = Path(__file__).parent / "static"
@@ -74,23 +75,9 @@ async def console():
     return FileResponse(_static_dir / "console.html")
 
 
-# ── Admin: seed tenant ─────────────────────────────────
-@app.post("/admin/tenants", status_code=201, tags=["admin"])
-async def create_tenant(body: TenantCreate):
-    db = await get_db()
-    tenant_id = uuid.uuid4().hex[:8]
-    api_key = f"msk_{uuid.uuid4().hex}"
-
-    await db.execute(
-        "INSERT INTO tenants (id, name, tier) VALUES (?, ?, ?)",
-        (tenant_id, body.name, body.tier),
-    )
-    await db.execute(
-        "INSERT INTO api_keys (key, tenant_id, label) VALUES (?, ?, ?)",
-        (api_key, tenant_id, "default"),
-    )
-    await db.commit()
-    return TenantOut(id=tenant_id, name=body.name, tier=body.tier, api_key=api_key)
+@app.get("/admin-console", include_in_schema=False)
+async def admin_console():
+    return FileResponse(_static_dir / "admin.html")
 
 
 # ── Public: self-service registration ─────────────────

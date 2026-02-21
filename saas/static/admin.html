@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Manon Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--cyan:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px}
+header h1{font-size:18px;font-weight:600;color:var(--purple)}
+header .spacer{flex:1}
+#secretInput{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;width:280px;font-size:12px}
+#loginBtn{background:var(--purple);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px}
+#status{font-size:12px;color:var(--text2)}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+th{color:var(--text2);font-size:12px;font-weight:500}
+.btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+.btn:hover{border-color:var(--cyan)}
+.btn-danger{color:var(--red)}.btn-danger:hover{border-color:var(--red)}
+.btn-primary{background:var(--cyan);color:#000;border:none;font-weight:600}
+.btn-sm{padding:3px 8px;font-size:11px}
+.form-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.form-row input,.form-row select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px}
+.form-row input{flex:1}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-free{background:var(--bg3);color:var(--text2)}
+.badge-pro{background:#1a2a3a;color:var(--cyan)}
+.badge-enterprise{background:#2a1a3a;color:var(--purple)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center}
+.stat-card .num{font-size:28px;font-weight:700;color:var(--purple)}
+.stat-card .label{font-size:12px;color:var(--text2);margin-top:4px}
+tr.expandable{cursor:pointer}tr.expandable:hover{background:var(--bg2)}
+.key-row{background:var(--bg2)}
+.key-row td{padding-left:32px;font-size:12px}
+.mono{font-family:monospace;font-size:12px}
+.tier-select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--green);color:#000;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+#content{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Manon Admin</h1>
+  <span class="spacer"></span>
+  <input id="secretInput" type="password" placeholder="Admin Secret">
+  <button id="loginBtn" onclick="login()">登录</button>
+  <span id="status"></span>
+</header>
+<div class="container" id="content">
+  <div class="stat-grid" id="stats"></div>
+  <div class="card">
+    <div class="form-row">
+      <input id="newName" placeholder="租户名称">
+      <select id="newTier"><option value="free">Free</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select>
+      <button class="btn btn-primary" onclick="createTenant()">+ 创建租户</button>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>名称</th><th>Tier</th><th>仓库数</th><th>Key 数</th><th>创建时间</th></tr></thead>
+    <tbody id="tenantTable"></tbody>
+  </table>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let SECRET='';
+const $=id=>document.getElementById(id);
+function hdr(){return {'X-Admin-Secret':SECRET,'Content-Type':'application/json'}}
+async function api(method,path,body){
+  const opts={method,headers:hdr()};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(location.origin+path,opts);
+  if(r.status===204)return null;
+  if(!r.ok){const t=await r.text();throw new Error(t)}
+  return r.json();
+}
+function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000)}
+
+function login(){
+  SECRET=$('secretInput').value.trim();
+  if(!SECRET){alert('请输入 Admin Secret');return}
+  localStorage.setItem('manon_admin_secret',SECRET);
+  $('status').textContent='已连接';$('status').style.color='var(--green)';
+  $('content').style.display='block';
+  loadTenants();
+}
+
+// ── Tenants ──
+let expandedTenant=null;
+async function loadTenants(){
+  try{
+    const tenants=await api('GET','/admin/tenants');
+    $('stats').innerHTML=`
+      <div class="stat-card"><div class="num">${tenants.length}</div><div class="label">租户总数</div></div>
+      <div class="stat-card"><div class="num">${tenants.reduce((s,t)=>s+t.repo_count,0)}</div><div class="label">仓库总数</div></div>
+      <div class="stat-card"><div class="num">${tenants.reduce((s,t)=>s+t.key_count,0)}</div><div class="label">活跃 Key</div></div>`;
+    const tb=$('tenantTable');tb.innerHTML='';
+    tenants.forEach(t=>{
+      const bc={free:'badge-free',pro:'badge-pro',enterprise:'badge-enterprise'}[t.tier]||'badge-free';
+      tb.innerHTML+=`<tr class="expandable" onclick="toggleKeys('${t.id}')">
+        <td class="mono">${t.id}</td>
+        <td>${t.name}</td>
+        <td><select class="tier-select" onclick="event.stopPropagation()" onchange="changeTier('${t.id}',this.value)">
+          <option value="free"${t.tier==='free'?' selected':''}>Free</option>
+          <option value="pro"${t.tier==='pro'?' selected':''}>Pro</option>
+          <option value="enterprise"${t.tier==='enterprise'?' selected':''}>Enterprise</option>
+        </select></td>
+        <td>${t.repo_count}</td><td>${t.key_count}</td>
+        <td style="color:var(--text2);font-size:12px">${t.created_at||'-'}</td>
+      </tr>`;
+      if(expandedTenant===t.id)tb.innerHTML+=`<tr class="key-row"><td colspan="6" id="keys_${t.id}"><em style="color:var(--text2)">加载中...</em></td></tr>`;
+    });
+    if(expandedTenant)loadKeys(expandedTenant);
+  }catch(e){$('status').textContent='错误: '+e.message;$('status').style.color='var(--red)'}
+}
+async function createTenant(){
+  const name=$('newName').value.trim();
+  if(!name){alert('请输入租户名称');return}
+  const tier=$('newTier').value;
+  try{
+    const res=await api('POST','/admin/tenants',{name,tier});
+    toast('租户已创建，Key: '+res.api_key);
+    $('newName').value='';
+    loadTenants();
+  }catch(e){alert('创建失败: '+e.message)}
+}
+
+async function changeTier(id,tier){
+  try{await api('PATCH',`/admin/tenants/${id}?tier=${tier}`);toast('Tier 已更新')}catch(e){alert('更新失败: '+e.message)}
+}
+
+async function toggleKeys(id){
+  expandedTenant=expandedTenant===id?null:id;
+  loadTenants();
+}
+
+async function loadKeys(tenantId){
+  const el=$('keys_'+tenantId);if(!el)return;
+  try{
+    const keys=await api('GET',`/admin/tenants/${tenantId}/keys`);
+    let html=`<div class="form-row" style="margin-top:8px"><input id="newKeyLabel_${tenantId}" placeholder="Key 标签" style="max-width:200px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();createKey('${tenantId}')">+ 新建 Key</button></div>`;
+    html+='<table style="margin-top:4px"><thead><tr><th>Key</th><th>标签</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+    keys.forEach(k=>{
+      const masked=k.key.slice(0,8)+'...'+k.key.slice(-4);
+      const active=k.active?'<span style="color:var(--green)">活跃</span>':'<span style="color:var(--red)">已吊销</span>';
+      html+=`<tr><td class="mono">${masked} <button class="btn btn-sm" onclick="event.stopPropagation();copyKey('${k.key}')">复制</button></td><td>${k.label}</td><td>${active}</td><td style="color:var(--text2)">${k.created_at||'-'}</td>`;
+      html+=k.active?`<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();revokeKey('${tenantId}','${k.key}')">吊销</button></td>`:'<td></td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<em style="color:var(--red)">加载失败</em>'}
+}
+
+async function createKey(tenantId){
+  const label=document.getElementById('newKeyLabel_'+tenantId).value.trim()||'admin-created';
+  try{
+    const res=await api('POST',`/admin/tenants/${tenantId}/keys?label=${encodeURIComponent(label)}`);
+    toast('Key 已创建');
+    await navigator.clipboard.writeText(res.key);
+    toast('Key 已创建并复制到剪贴板');
+    loadTenants();
+  }catch(e){alert('创建失败: '+e.message)}
+}
+
+async function revokeKey(tenantId,key){
+  if(!confirm('确认吊销此 Key？吊销后无法恢复。'))return;
+  try{await api('DELETE',`/admin/tenants/${tenantId}/keys/${key}`);toast('Key 已吊销');loadTenants()}catch(e){alert('吊销失败: '+e.message)}
+}
+
+function copyKey(key){
+  navigator.clipboard.writeText(key).then(()=>toast('已复制到剪贴板'));
+}
+
+// auto-login from localStorage
+const saved=localStorage.getItem('manon_admin_secret');
+if(saved){$('secretInput').value=saved;login()}
+</script>
+</body>
+</html>

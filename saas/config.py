@@ -19,6 +19,9 @@ class SaasSettings(BaseSettings):
     llm_model: str = "glm-4.7-fp8"
     llm_api_key: str = ""
 
+    # admin
+    admin_secret: str = ""  # set SAAS_ADMIN_SECRET env var
+
     # rate limits (requests / minute)
     rate_free: int = 30
     rate_pro: int = 300
