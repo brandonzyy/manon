@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 # ensure project root importable
 _project_root = str(Path(__file__).resolve().parents[1])
@@ -19,7 +21,7 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 from .config import settings
 from .db import init_db, close_db, get_db
 from .models import TenantCreate, TenantOut
-from .routers import health, repos, indexing, query, usage
+from .routers import health, repos, indexing, query, usage, embedding
 
 
 @asynccontextmanager
@@ -32,6 +34,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     await MatrixoneGraph.shutdown_all()
+    from .routers.embedding import close_embedding_client
+    await close_embedding_client()
     await close_db()
 
 
@@ -54,6 +58,15 @@ app.include_router(repos.router)
 app.include_router(indexing.router)
 app.include_router(query.router)
 app.include_router(usage.router)
+app.include_router(embedding.router)
+
+# static console
+_static_dir = Path(__file__).parent / "static"
+
+
+@app.get("/console", include_in_schema=False)
+async def console():
+    return FileResponse(_static_dir / "console.html")
 
 
 # ── Admin: seed tenant ─────────────────────────────────
