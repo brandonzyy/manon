@@ -6,6 +6,7 @@ Mirrors donnie/agent/lib/coach-feature.js but in async Python.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -79,6 +80,45 @@ async def _send_chat(dev_id: str, content: str, role: str = "manon") -> None:
 # Manon chat history per dev (separate from pipeline state)
 _chat_history: dict[str, list[dict]] = {}
 
+
+async def _load_chat_history(dev_id: str) -> list[dict]:
+    """Load chat history from DB, cache in memory."""
+    if dev_id in _chat_history:
+        return _chat_history[dev_id]
+    try:
+        from ..db import db_pool
+        async with db_pool() as db:
+            row = await db.execute_fetchone(
+                "SELECT messages FROM conversations WHERE id = ?", (dev_id,),
+            )
+        if row and row["messages"]:
+            msgs = json.loads(row["messages"])
+            _chat_history[dev_id] = msgs
+            return msgs
+    except Exception as exc:
+        log.debug("Failed to load chat history for %s: %s", dev_id, exc)
+    _chat_history[dev_id] = []
+    return _chat_history[dev_id]
+
+
+async def _save_chat_history(dev_id: str, project_id: str = "") -> None:
+    """Persist chat history to DB."""
+    history = _chat_history.get(dev_id, [])
+    try:
+        from ..db import db_pool
+        async with db_pool() as db:
+            await db.execute(
+                "INSERT INTO conversations (id, project_id, messages, updated_at) "
+                "VALUES (?, ?, ?, datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET messages=excluded.messages, "
+                "project_id=COALESCE(NULLIF(excluded.project_id,''), project_id), "
+                "updated_at=datetime('now')",
+                (dev_id, project_id or "default", json.dumps(history, ensure_ascii=False)),
+            )
+            await db.commit()
+    except Exception as exc:
+        log.debug("Failed to save chat history for %s: %s", dev_id, exc)
+
 _MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可以：
 - 回答关于项目代码的问题（基于知识图谱上下文）
 - 分析代码结构、依赖关系、技术债务
@@ -136,52 +176,148 @@ _DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的
 {"sub_questions": [...], "covered": [...], "missing": [], "queries": [], "reason": "上下文已完整覆盖所有子问题"}
 ```"""
 
-_COMPRESS_PROMPT = """请将以下对话历史压缩为一段简洁的摘要（500字以内），保留：
-1. 用户问了什么关键问题
-2. 得到了什么重要结论
-3. 讨论过的核心技术点
+_COMPACT_PROMPT = """请将以下对话历史压缩为结构化摘要（800字以内），严格按以下格式输出：
+
+## 讨论主题
+- 列出讨论过的主要话题（每个一行）
+
+## 关键结论
+- 已达成的结论和决策
+
+## 提到的代码
+- 文件名、函数名、类名（原样保留，不要改写或翻译）
+
+## 待处理
+- 未完成的事项或用户提出但未解决的问题
 
 对话历史：
 """
 
+# Compact model — always use glm-4.7-fp8 regardless of coach model config
+_COMPACT_MODEL = "glm-4.7-fp8"
 
-async def _compress_history(dev_id: str, history: list[dict]) -> None:
-    """Compress chat history when it exceeds 20 messages.
+# Thresholds (characters)
+_COMPACT_TRIGGER = 100_000   # auto-compact check threshold
+_COMPACT_TARGET = 80_000     # if still above this after microcompact → LLM summarize
+_MICRO_KEEP_RECENT = 5       # assistant messages in hot tail (full)
+_MICRO_TRUNCATE_AT = 2000    # truncate older assistant msgs longer than this
+_MICRO_KEEP_CHARS = 1500     # keep first N chars when truncating
+_AUTO_KEEP_RECENT = 10       # messages kept intact during LLM compaction
+_AUTO_FALLBACK_KEEP = 20     # fallback: keep recent N if LLM fails
 
-    Keeps the latest 10 messages and replaces older ones with an LLM-generated summary.
+
+def _history_chars(history: list[dict]) -> int:
+    """Total character count of all messages in history."""
+    return sum(len(m.get("content", "")) for m in history)
+
+
+def _microcompact(history: list[dict]) -> int:
+    """Layer 1: truncate old long assistant messages, return number truncated."""
+    truncated = 0
+    # Count assistant messages from the end to find the hot-tail boundary
+    assistant_count = 0
+    hot_indices: set[int] = set()
+    for i in range(len(history) - 1, -1, -1):
+        if history[i]["role"] == "assistant":
+            assistant_count += 1
+            if assistant_count <= _MICRO_KEEP_RECENT:
+                hot_indices.add(i)
+
+    for i, m in enumerate(history):
+        if m["role"] != "assistant":
+            continue
+        if i in hot_indices:
+            continue  # hot tail — keep full
+        content = m.get("content", "")
+        if len(content) > _MICRO_TRUNCATE_AT:
+            history[i] = {
+                "role": "assistant",
+                "content": content[:_MICRO_KEEP_CHARS]
+                + f"\n...[已压缩，原文 {len(content)} 字符]",
+            }
+            truncated += 1
+    return truncated
+
+
+async def _auto_compact(
+    dev_id: str,
+    history: list[dict],
+    *,
+    force: bool = False,
+    focus_hint: str = "",
+) -> None:
+    """Layer 2 (+ layer 1): auto-compaction with LLM structured summary.
+
+    Args:
+        force: if True, skip threshold check (used by /compact).
+        focus_hint: optional focus instruction appended to summary prompt.
     """
-    if len(history) <= 20:
+    total = _history_chars(history)
+
+    # Always run microcompact first
+    n_trunc = _microcompact(history)
+    if n_trunc:
+        log.info("Microcompact: truncated %d old assistant messages", n_trunc)
+
+    total = _history_chars(history)
+
+    # Check if LLM compaction is needed
+    if not force and total <= _COMPACT_TRIGGER:
+        return
+    if not force and total <= _COMPACT_TARGET:
+        return
+
+    # Not enough messages to compact
+    if len(history) <= _AUTO_KEEP_RECENT:
         return
 
     from ..services.llm import llm_chat
 
-    old_count = len(history) - 10
-    old_messages = history[:old_count]
+    keep_recent = history[-_AUTO_KEEP_RECENT:]
+    old_messages = history[:-_AUTO_KEEP_RECENT]
 
-    # Build text representation of old messages
+    # Build text for LLM
     lines = []
     for m in old_messages:
-        role = "用户" if m["role"] == "user" else "Manon"
-        lines.append(f"{role}: {m['content'][:500]}")
+        if m["role"] == "system" and m.get("content", "").startswith("[历史摘要]"):
+            lines.append(f"[之前的摘要]: {m['content']}")
+        else:
+            role = "用户" if m["role"] == "user" else "Manon"
+            lines.append(f"{role}: {m['content']}")
     old_text = "\n".join(lines)
+
+    prompt = _COMPACT_PROMPT + old_text
+    if focus_hint:
+        prompt += f"\n\n重点保留以下方面的信息：{focus_hint}"
 
     try:
         await _send_thinking(dev_id, True, "压缩对话历史...")
         result = await llm_chat(
-            [{"role": "user", "content": _COMPRESS_PROMPT + old_text}],
-            max_tokens=800,
+            [{"role": "user", "content": prompt}],
+            model=_COMPACT_MODEL,
+            max_tokens=1200,
             timeout=30.0,
         )
         summary = result.get("content", "").strip()
         if summary:
             history[:] = [
                 {"role": "system", "content": f"[历史摘要] {summary}"},
-            ] + history[-10:]
-            log.info("Chat history compressed: %d messages → summary + 10 recent", old_count)
+            ] + keep_recent
+            old_chars = sum(len(m.get("content", "")) for m in old_messages)
+            new_chars = _history_chars(history)
+            log.info(
+                "Auto-compact: %d msgs → summary + %d recent (chars %d → %d)",
+                len(old_messages), len(keep_recent), old_chars, new_chars,
+            )
+            await _save_chat_history(dev_id)
         await _send_thinking(dev_id, False)
     except Exception as exc:
-        log.warning("Chat history compression failed: %s", exc)
+        log.warning("Auto-compact LLM failed (%s), falling back to truncation", exc)
         await _send_thinking(dev_id, False)
+        # Fallback: microcompact already done, just keep recent N
+        if len(history) > _AUTO_FALLBACK_KEEP:
+            history[:] = history[-_AUTO_FALLBACK_KEEP:]
+            log.info("Fallback: kept last %d messages", _AUTO_FALLBACK_KEEP)
 
 
 async def _iterative_graph_query(
@@ -331,14 +467,14 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     # /do — manual pipeline trigger from chat context
     if prompt.lower().startswith("/do"):
         extra = prompt[3:].strip()
-        history = _chat_history.get(dev_id, [])
+        history = await _load_chat_history(dev_id)
         context_desc = extra if extra else ""
         if history:
-            recent = history[-6:]
+            recent = history[-10:]
             lines = []
             for h in recent:
                 role = "用户" if h["role"] == "user" else "Manon"
-                lines.append(f"{role}: {h['content'][:300]}")
+                lines.append(f"{role}: {h['content']}")
             history_block = "\n".join(lines)
             if context_desc:
                 context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n{context_desc}"
@@ -352,6 +488,28 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
             "projectId": project_id,
             "prompt": extra or None,
         })
+        return
+
+    # /compact — manual compaction (layer 3)
+    if prompt.lower().startswith("/compact"):
+        hint = prompt[8:].strip()
+        history = await _load_chat_history(dev_id)
+        if not history:
+            await _send_chat(dev_id, "当前没有对话历史。", role="system")
+            return
+        before_chars = _history_chars(history)
+        before_msgs = len(history)
+        await _auto_compact(dev_id, history, force=True, focus_hint=hint)
+        after_chars = _history_chars(history)
+        after_msgs = len(history)
+        await _save_chat_history(dev_id, project_id)
+        await _send_chat(
+            dev_id,
+            f"对话历史已压缩：{before_msgs} 条消息 ({before_chars:,} 字符) → "
+            f"{after_msgs} 条 ({after_chars:,} 字符)"
+            + (f"\n重点保留：{hint}" if hint else ""),
+            role="system",
+        )
         return
 
     # If pipeline is active, route as user-response
@@ -412,14 +570,14 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     # Classify intent: explicit task request → pipeline, otherwise → chat
     if _is_feature_request(prompt):
         # Include recent chat history so pipeline LLM understands context
-        history = _chat_history.get(dev_id, [])
+        history = await _load_chat_history(dev_id)
         context_desc = prompt
         if history:
-            recent = history[-6:]  # last 3 turns
+            recent = history[-10:]
             lines = []
             for h in recent:
                 role = "用户" if h["role"] == "user" else "Manon"
-                lines.append(f"{role}: {h['content'][:300]}")
+                lines.append(f"{role}: {h['content']}")
             context_desc = "## 对话上下文\n" + "\n".join(lines) + f"\n\n## 当前需求\n{prompt}"
         await _start_feature(dev_id, {
             "description": context_desc,
@@ -429,15 +587,12 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         return
 
     # Chat mode (default) — answer directly with graph context
-    history = _chat_history.setdefault(dev_id, [])
+    history = await _load_chat_history(dev_id)
     history.append({"role": "user", "content": prompt})
+    await _save_chat_history(dev_id, project_id)
 
-    # Compress old history if it exceeds 20 messages
-    await _compress_history(dev_id, history)
-
-    # Hard truncation as safety net
-    if len(history) > 40:
-        history[:] = history[-40:]
+    # Three-layer compaction: auto-compact before LLM call
+    await _auto_compact(dev_id, history)
 
     system = _MANON_SYSTEM
     if project_name or project_path:
@@ -470,6 +625,8 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         await _send_dev(dev_id, {"type": "coach-content-delta", "delta": time_suffix})
         full_content += time_suffix
         history.append({"role": "assistant", "content": full_content})
+        _microcompact(history)  # Layer 1: truncate old long assistant replies
+        await _save_chat_history(dev_id, project_id)
         await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
         await _send_thinking(dev_id, False)
         await _send_dev(dev_id, {"type": "coach-stream-end"})
