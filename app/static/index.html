@@ -812,24 +812,31 @@ function rejectSpec(){
 let _queryGroups=[];  // [{userMsg, queries:[], response:'', el:DOM}]
 let _currentGroup=null;
 function addQuery(q){
-  q._userMsg=_lastUserMsg||'';
+  q._userMsg=q.groupKey||_lastUserMsg||'';
   q._response='';
   queries.unshift(q);if(queries.length>200)queries.length=200;
   _pendingQueryIdx=0;
   $('queryCount').textContent=queries.length;
   const list=$('queryList');
   if(queries.length===1)list.innerHTML='';
-  // Find or create group for this user message
-  if(!_currentGroup||_currentGroup.userMsg!==q._userMsg){
-    const grp={userMsg:q._userMsg,queries:[],response:'',el:null};
-    const gel=document.createElement('div');gel.className='query-group';
-    gel.innerHTML=`<div class="qg-header"><span class="qg-arrow">▶</span><span class="qg-text">${esc(q._userMsg||q.query||'查询')}</span><span class="qg-count">0</span><span class="qg-meta"></span><button class="q-del-btn" onclick="event.stopPropagation();deleteGroup(this)" title="删除">&times;</button></div><div class="qg-body"></div>`;
-    gel.querySelector('.qg-header').onclick=function(e){if(e.target.classList.contains('q-del-btn'))return;gel.classList.toggle('expanded')};
-    gel._groupRef=grp;grp.el=gel;
-    list.insertBefore(gel,list.firstChild);
-    _queryGroups.unshift(grp);
-    _currentGroup=grp;
-    gel.classList.add('expanded'); // expand while querying
+  // Find or create group for this user message / groupKey
+  const gk=q._userMsg;
+  if(!_currentGroup||_currentGroup.userMsg!==gk){
+    // Check if an existing group matches this groupKey (for task queries arriving later)
+    let existing=q.groupKey?_queryGroups.find(g=>g.userMsg===gk):null;
+    if(existing){
+      _currentGroup=existing;
+    }else{
+      const grp={userMsg:gk,queries:[],response:'',el:null};
+      const gel=document.createElement('div');gel.className='query-group';
+      gel.innerHTML=`<div class="qg-header"><span class="qg-arrow">▶</span><span class="qg-text">${esc(q._userMsg||q.query||'查询')}</span><span class="qg-count">0</span><span class="qg-meta"></span><button class="q-del-btn" onclick="event.stopPropagation();deleteGroup(this)" title="删除">&times;</button></div><div class="qg-body"></div>`;
+      gel.querySelector('.qg-header').onclick=function(e){if(e.target.classList.contains('q-del-btn'))return;gel.classList.toggle('expanded')};
+      gel._groupRef=grp;grp.el=gel;
+      list.insertBefore(gel,list.firstChild);
+      _queryGroups.unshift(grp);
+      _currentGroup=grp;
+      gel.classList.add('expanded');
+    }
   }
   // Add query item to group
   _currentGroup.queries.push(q);
@@ -847,7 +854,7 @@ function addQuery(q){
   const durStr=q.duration_ms?`${q.duration_ms}ms`:'';
   const tokStr=q.context_tokens?`~${(q.context_tokens/1000).toFixed(1)}k tok`:'';
   const metaStr=[durStr,tokStr].filter(Boolean).join(' · ');
-  const callerLabel=q.caller==='manon.deep'?'补充检索':'初始检索';
+  const callerLabel=q.caller==='manon.deep'?'补充检索':q.caller==='manon.task'?'任务上下文':q.caller==='worker'?'Worker 检索':q.caller==='worker.tool'?'Worker 工具':'初始检索';
   el.innerHTML=`<div class="q-head"><span class="q-caller">${esc(callerLabel)}</span><span class="q-ts">${fmtTime(q.ts)}</span></div><span class="q-cmd">${esc(q.command||'')}</span><div class="q-text">${esc(q.query||q.text||'')}</div>${metaStr?`<div class="q-dur">${metaStr}</div>`:''}`;
   el._queryRef=q;
   el.onclick=function(e){e.stopPropagation();showQueryDetail(queries.indexOf(q))};

@@ -292,12 +292,47 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
                 workspace = row["workspace"] or ""
                 test_command = row["test_command"] or ""
 
+    # Query knowledge graph for task-specific context
+    graph_context = ""
+    if repo_path:
+        try:
+            import time as _time
+            from datetime import datetime as _dt
+            from matrixone_graph import MatrixoneGraph
+            mg = MatrixoneGraph.get(repo_path)
+            instruction = task.get("instruction") or task.get("title", "")
+            scoped_files = task.get("files", [])
+
+            # Primary query: instruction + file hints
+            query_text = instruction
+            if scoped_files:
+                query_text += "\n涉及文件: " + ", ".join(scoped_files[:10])
+            t0 = _time.monotonic()
+            result = await mg.query(query_text, top_k=10, depth=1)
+            q_ms = int((_time.monotonic() - t0) * 1000)
+            if result.context:
+                graph_context = result.context
+                ctx_tok = len(graph_context) // 2
+                log.info("Graph context for task %s: %d chars (%dms)", task.get("id"), len(graph_context), q_ms)
+                task_group_key = f"Task #{task.get('id')}: {task.get('title', '')}"
+                await _send_dev(state.dev_id, {
+                    "type": "llm-query", "caller": "manon.task",
+                    "groupKey": task_group_key,
+                    "command": f"任务上下文检索 (Task #{task.get('id')})",
+                    "query": query_text[:120], "ts": _dt.now().isoformat(),
+                    "duration_ms": q_ms,
+                    "context_tokens": ctx_tok,
+                })
+        except Exception as exc:
+            log.warning("Graph query for task %s failed: %s", task.get("id"), exc)
+
     task_config = {
         "featureId": state.feature_id,
         "taskId": task["id"],
         "instruction": task.get("instruction") or task.get("title", ""),
         "scopedFiles": task.get("files", []),
         "context": context,
+        "graphContext": graph_context,
         "repoPath": repo_path,
         "workspace": workspace,
         "testCommand": test_command,
@@ -315,6 +350,19 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
             await _send_thinking(state.dev_id, False)
 
         result = await worker_pool.submit(task_config)
+
+        # Forward worker's graph queries to frontend (grouped by task)
+        task_group_key = f"Task #{task.get('id')}: {task.get('title', '')}"
+        for wq in result.get("queries") or []:
+            from datetime import datetime as _dt
+            await _send_dev(state.dev_id, {
+                "type": "llm-query", "caller": wq.get("caller", "worker"),
+                "groupKey": task_group_key,
+                "command": wq.get("command", "search_code"),
+                "query": wq.get("query", ""), "ts": _dt.now().isoformat(),
+                "duration_ms": wq.get("duration_ms", 0),
+                "context_tokens": wq.get("context_tokens", 0),
+            })
 
         if result.get("type") == "feature-task-done":
             task["output"] = result.get("output", "")

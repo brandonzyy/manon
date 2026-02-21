@@ -105,6 +105,7 @@ async def execute_task(config: dict) -> dict:
     instruction = config.get("instruction") or "(no instruction)"
     scoped_files: list[str] = config.get("scopedFiles") or []
     context = config.get("context", "")
+    pre_graph_context = config.get("graphContext", "")
     repo_root = config.get("repoPath", "")
     workspace = config.get("workspace") or ""
     test_command = config.get("testCommand", "")
@@ -124,17 +125,27 @@ async def execute_task(config: dict) -> dict:
         except Exception:
             baseline = set()
 
-        # 2. Query knowledge graph for context
-        graph_context = ""
-        try:
-            from matrixone_graph import MatrixoneGraph
-            mg = MatrixoneGraph.get(repo_root)
-            result = await mg.query(instruction, top_k=5, depth=1)
-            if result.context:
-                graph_context = result.context
-                log.info("Graph context: %d chars", len(graph_context))
-        except Exception as exc:
-            log.warning("Graph query failed: %s", exc)
+        # 2. Knowledge graph context (use pre-fetched from Manon + optional local query)
+        graph_context = pre_graph_context
+        queries_log: list[dict] = []
+        if not graph_context:
+            try:
+                import time as _time
+                from matrixone_graph import MatrixoneGraph
+                mg = MatrixoneGraph.get(repo_root)
+                t0 = _time.monotonic()
+                result = await mg.query(instruction, top_k=5, depth=1)
+                q_ms = int((_time.monotonic() - t0) * 1000)
+                if result.context:
+                    graph_context = result.context
+                    log.info("Graph context: %d chars (%dms)", len(graph_context), q_ms)
+                    queries_log.append({
+                        "caller": "worker", "command": f"Worker 上下文检索 (Task #{task_id})",
+                        "query": instruction[:120], "duration_ms": q_ms,
+                        "context_tokens": len(graph_context) // 2,
+                    })
+            except Exception as exc:
+                log.warning("Graph query failed: %s", exc)
 
         # 3. Build prompt
         from .prompts import build_system_prompt
@@ -192,6 +203,8 @@ async def execute_task(config: dict) -> dict:
                 fb_model, fb_url, fb_key, fb_fmt,
             )
             log.info("Agent completed in %d turns", agent_result.get("turns", 0))
+            # Collect queries from agent tool calls
+            queries_log.extend(agent_result.get("queries", []))
             # Initialize token usage from agent result
             agent_tokens = agent_result.get("token_usage", {})
             token_usage = {
@@ -343,6 +356,7 @@ async def execute_task(config: dict) -> dict:
             "diffs": diffs,
             "selfTest": self_test,
             "tokenUsage": token_usage,
+            "queries": queries_log,
         }
 
     except Exception as exc:

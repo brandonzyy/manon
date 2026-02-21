@@ -219,11 +219,19 @@ async def exec_search_code(repo_root: str, args: dict) -> dict:
     if not query:
         return {"error": "Empty query"}
     try:
+        import time as _time
         from matrixone_graph import MatrixoneGraph
         mg = MatrixoneGraph.get(repo_root)
+        t0 = _time.monotonic()
         result = await mg.query(query, top_k=5, depth=1)
+        q_ms = int((_time.monotonic() - t0) * 1000)
         if result.context:
-            return {"context": result.context}
+            return {
+                "context": result.context,
+                "_query_log": {"caller": "worker.tool", "command": "search_code",
+                               "query": query[:120], "duration_ms": q_ms,
+                               "context_tokens": len(result.context) // 2},
+            }
         return {"context": "(no results)"}
     except Exception as exc:
         log.warning("search_code failed: %s", exc)

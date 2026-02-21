@@ -88,6 +88,7 @@ async def call_agent(
     turn = 0
     total_prompt_tokens = 0
     total_completion_tokens = 0
+    collected_queries: list[dict] = []
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         for turn in range(MAX_AGENT_TURNS):
@@ -176,6 +177,9 @@ async def call_agent(
                     log.info("  Tool: %s(...)", fn_name)
 
                 result = await execute_tool(fn_name, args, repo_root)
+                # Collect query logs from search_code tool
+                if result.get("_query_log"):
+                    collected_queries.append(result.pop("_query_log"))
                 if result.get("error"):
                     log.info("  -> Error: %s", result["error"])
                 elif result.get("success"):
@@ -200,4 +204,5 @@ async def call_agent(
             "completion": total_completion_tokens,
             "total": total_prompt_tokens + total_completion_tokens,
         },
+        "queries": collected_queries,
     }
