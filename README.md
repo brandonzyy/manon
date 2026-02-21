@@ -1,50 +1,116 @@
-# Manon — AI Code Intelligence Server
+<div align="center">
 
-Manon is a code knowledge graph service that provides semantic search, call-graph traversal, and impact analysis for codebases. It works as an MCP (Model Context Protocol) server for AI coding assistants like Claude Code and Cursor.
+# Manon
 
-## Architecture
+### Context Management for AI Coding
+
+**The knowledge graph + structured pipeline that keeps LLMs focused, grounded, and transparent.**
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
+[![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJ3aGl0ZSI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiLz48L3N2Zz4=)](https://modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+
+[Quick Start](#-quick-start) · [How It Works](#-how-it-works) · [MCP Tools](#-mcp-tools) · [Web Interface](#-web-interface) · [API Reference](#-api-reference)
+
+</div>
+
+---
+
+## The Problem
+
+LLMs are powerful coders, but they have two structural flaws that degrade output quality:
+
+| Flaw | What happens | Result |
+|------|-------------|--------|
+| **Insufficient context** | The model can't see your project's call graphs, dependencies, or module boundaries | It **hallucinates** — guesses relationships, misses side effects, suggests changes that break things elsewhere |
+| **Unstructured execution** | Given a vague request, the model dives straight into writing code with no plan | It **goes black-box** — attention decays across a long generation, requirements drift, architecture falls apart |
+
+Every AI coding tool today suffers from this. They see one file at a time. They have no process discipline. The smarter the model gets, the more these context problems matter — because a powerful model with bad context just produces confident garbage faster.
+
+## The Solution
+
+Manon is a **context management system for LLMs**. Two mechanisms, one goal:
 
 ```
-┌─────────────────────┐       ┌──────────────────────┐
-│  Claude Code/Cursor  │       │   Manon SaaS Server  │
-│  (AI Assistant)      │       │   (FastAPI :3700)     │
-│         │            │       │                      │
-│   ┌─────▼──────┐     │  HTTP │  ┌────────────────┐  │
-│   │ Manon MCP  │─────┼──────┼─▶│ Repos/Indexing  │  │
-│   │ (server.py)│     │      │  │ Search/Graph    │  │
-│   └────────────┘     │      │  │ Impact/Pipeline │  │
-│     Local AST        │      │  └───────┬────────┘  │
-│     Extraction       │      │          │           │
-└─────────────────────┘       │  ┌───────▼────────┐  │
-                              │  │ MatrixoneGraph  │  │
-                              │  │ (Knowledge Graph│  │
-                              │  │  + Vectors)     │  │
-                              │  └────────────────┘  │
-                              └──────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     MANON                                   │
+│                                                             │
+│  ┌─────────────────────┐    ┌────────────────────────────┐  │
+│  │  Knowledge Graph     │    │  Structured Pipeline       │  │
+│  │                      │    │                            │  │
+│  │  Solves: what the    │    │  Solves: how the model     │  │
+│  │  model sees          │    │  works                     │  │
+│  │                      │    │                            │  │
+│  │  • Entities, calls,  │    │  • Clarify → Spec →        │  │
+│  │    imports, deps   │    │    Design → Decompose →  │  │
+│  │  • Vector + graph   │    │    Execute → Review      │  │
+│  │    hybrid search    │    │  • Each step: bounded    │  │
+│  │  • Precise, minimal │    │    scope, clear I/O      │  │
+│  │    sufficient       │    │  • Every output visible  │  │
+│  │    context          │    │    to the user            │  │
+│  └─────────────────────┘    └────────────────────────────┘  │
+│                                                             │
+│  Graph = what to look at    Pipeline = what to do           │
+│  No hallucination           No black box                    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-- **Manon SaaS Server** (`saas/`) — Cloud API: repo management, indexing, search, graph queries
-- **Manon MCP Client** (`manon-mcp/`) — MCP server for Claude Code/Cursor, handles local AST extraction
-- **MatrixoneGraph** (`matrixone_graph/`) — Code knowledge graph engine (NetworkX + vector index)
+**Knowledge Graph** — Indexes every function, class, call relationship, import chain, and module boundary in your codebase. When the model needs context, it gets precisely the relevant entities and code — not too much, not too little.
 
-### Skill vs MCP
+**Structured Pipeline** — Forces a deterministic workflow: `clarify → spec → design → decompose → execute → review`. The model handles one bounded step at a time, with clear inputs and outputs. No attention decay. No requirement drift. Every step is visible and interruptible.
 
-Manon has two layers that work together:
+## Two Interfaces, Two Audiences
 
-| Layer | What it is | What it does |
-|-------|-----------|--------------|
-| **MCP Server** | `mcpServers` config in `settings.json` | Provides 16 tools (`manon_search`, `manon_graph`, etc.). Claude Code auto-starts the `server.py` process. Works without the skill. |
-| **Skill** | `/manon` slash command (`~/.claude/skills/manon/SKILL.md`) | Orchestrates the MCP tools: auto-initializes your project, sets session rules (deep query by default, knowledge-graph-first). |
+<table>
+<tr>
+<td width="50%" valign="top">
 
-The MCP server provides the **capabilities**. The skill defines the **behavior**. Users install both for the full experience, but the MCP tools work standalone too.
+### 🖥️ MCP — For Developers
 
-## Quick Start
+Plugs into your IDE. Your AI assistant gets project-wide intelligence without changing your workflow.
 
-### 1. Install the SaaS Server
+**Who it's for:**
+- Developers using Claude Code, Cursor, or Windsurf
+- Engineers onboarding onto unfamiliar codebases
+- Tech leads reviewing change impact
+- Anyone tired of AI that only sees one file
+
+**What changes:**
+- AI answers grounded in actual call graphs
+- Refactoring with full impact visibility
+- Feature development follows a structured pipeline — no more "just write it and hope"
+
+</td>
+<td width="50%" valign="top">
+
+### 🌐 Web — For Everyone
+
+Browser-based. No IDE, no terminal, no coding experience required.
+
+**Who it's for:**
+- Product managers turning specs into working prototypes
+- Project managers understanding technical breakdowns
+- Learners experiencing AI-powered development firsthand
+- Founders building MVPs from plain-language descriptions
+
+**What changes:**
+- Describe what you want in natural language
+- Watch the full pipeline execute step by step
+- See every decision the AI makes — no black box
+
+</td>
+</tr>
+</table>
+
+---
+
+## ⚡ Quick Start
+
+### 1. Clone & Install
 
 ```bash
-git clone https://github.com/brandonzyy/manon-server.git
-cd manon-server
+git clone https://github.com/brandonzyy/manon.git
+cd manon
 python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
@@ -54,182 +120,147 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Start the Server
+### 2. Get an API Key
 
 ```bash
-# Set admin secret (required for admin operations)
-export SAAS_ADMIN_SECRET="your-secret-here"
-
-# Start on port 3700 (default)
-python -m saas
-```
-
-Or with Docker:
-
-```bash
-docker compose up -d
-```
-
-### 3. Register & Get API Key
-
-```bash
-curl -X POST http://localhost:3700/api/v1/register \
+curl -X POST https://your-server:3700/api/v1/register \
   -H "Content-Type: application/json" \
   -d '{"name": "my-team"}'
-# Returns: {"api_key": "msk_xxx", "tenant_id": "xxx", "tier": "free"}
+# Returns: {"api_key": "msk_xxx", "tenant_id": "xxx"}
 ```
 
-### 4. Set Up the MCP Client (Claude Code)
+### 3a. MCP Setup (Claude Code)
 
-Install MCP client dependencies:
-
-```bash
-cd manon-mcp
-pip install -r requirements.txt
-```
-
-Add the MCP server to your Claude Code config (`~/.claude/settings.json`):
+Add to `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "manon": {
       "command": "python",
-      "args": ["/path/to/manon-mcp/server.py"],
+      "args": ["/path/to/manon/mcp/server.py"],
       "env": {
         "MANON_API_KEY": "msk_xxx",
-        "MANON_API_URL": "http://your-server:3700"
+        "MANON_API_URL": "https://your-server:3700"
       }
     }
   }
 }
 ```
 
-### 5. Install the `/manon` Skill (Recommended)
+<details>
+<summary>Cursor / Windsurf config</summary>
 
-The `/manon` slash command provides one-step project initialization and activates Manon mode with deep query defaults.
-
-Create the skill directory and file:
-
-```bash
-mkdir -p ~/.claude/skills/manon
-```
-
-Write `~/.claude/skills/manon/SKILL.md`:
-
-```markdown
----
-name: manon
-description: /manon — Enter Manon mode, initialize project knowledge graph
-user_invocable: true
----
-
-# Manon Mode
-
-## Initialization
-
-1. Call `manon_init` with the current working directory
-2. If repo exists and indexed → show graph stats
-3. If repo exists but not indexed → poll `manon_index_status` until done
-4. If repo doesn't exist → auto-create and trigger indexing
-5. Call `manon_config` to show current config
-6. Announce Manon mode is active
-
-## Rules (active for entire session)
-
-- All code understanding queries use `manon_deep_query` (not `manon_search`)
-- Call graph / dependency queries use `manon_graph`
-- Impact analysis uses `manon_impact`
-- Always query the knowledge graph before using Grep/Glob
-```
-
-Then in Claude Code, type `/manon` to activate — it auto-registers your project and enables knowledge-graph-first querying.
-
-### For Cursor
-
-Add to Cursor's MCP settings (Settings → MCP Servers):
-
+**Cursor** — add to `~/.cursor/mcp.json`:
 ```json
 {
-  "manon": {
-    "command": "python",
-    "args": ["/path/to/manon-mcp/server.py"],
-    "env": {
-      "MANON_API_KEY": "msk_xxx",
-      "MANON_API_URL": "http://your-server:3700"
+  "mcpServers": {
+    "manon": {
+      "command": "python",
+      "args": ["/path/to/manon/mcp/server.py"],
+      "env": {
+        "MANON_API_KEY": "msk_xxx",
+        "MANON_API_URL": "https://your-server:3700"
+      }
     }
   }
 }
 ```
 
-## How It Works
+**Windsurf** — add to `~/.codeium/windsurf/mcp_config.json` with the same structure.
 
-### `/manon` Workflow
+</details>
 
-```
-You type: /manon
-    │
-    ▼
-manon_init(project_path=".")
-    │
-    ├─ Project not registered → create repo + scan + index
-    ├─ Registered but not indexed → poll until ready
-    └─ Registered and indexed → show stats, enter Manon mode
-    │
-    ▼
-Manon mode active — all code queries go through the knowledge graph
+### 3b. Web Setup
+
+```bash
+# Set your config
+export MANON_SAAS_URL="https://your-server:3700"
+export MANON_API_KEY="msk_xxx"
+
+# Start the web interface
+python -m web
+# Open http://localhost:3600
 ```
 
-### Local Project Sync (Edge-Cloud)
+---
 
-For local projects (not hosted on GitHub), Manon performs client-side AST extraction:
+## 🔬 How It Works
 
-1. MCP client scans your local files using `codeindex`
-2. Parses AST (functions, classes, imports, calls) locally
-3. Computes file hashes for incremental detection
-4. Uploads only changed files' AST + source to the server
-5. Server builds knowledge graph (entities, relations, vectors)
+### Knowledge Graph (Edge-Cloud Architecture)
 
-This means your unpushed code is always visible to the knowledge graph.
+```
+Your Machine                              Cloud
+────────────                              ─────
+① Scan project files
+② Parse AST locally
+   (functions, classes, calls, imports)
+③ Hash files, send only changes ────────→ ④ Build knowledge graph
+                                          ⑤ Generate vector index
+                                          ⑥ Store entities & relations
+                                              ↓
+⑧ AI gets precise context ←──────────── ⑦ Respond to queries
+```
 
-## Configuration
+- **Local parsing, cloud storage** — code never needs to be pushed to GitHub
+- **Incremental sync** — only changed files are uploaded
+- **Hybrid search** — graph traversal for precise relationships + vector search for semantic queries
 
-### Server Environment Variables
+### Structured Pipeline
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SAAS_PORT` | `3700` | Server port |
-| `SAAS_DB_PATH` | `./saas.db` | SQLite database path |
-| `SAAS_REPOS_DIR` | `./saas_repos` | Git clone directory |
-| `SAAS_INDEX_DIR` | `./saas_indexes` | Knowledge graph index directory |
-| `SAAS_EMBEDDING_URL` | `http://117.131.45.179:3002` | Embedding service URL |
-| `SAAS_LLM_API_URL` | `https://api.matrixone.online/v1/chat/completions` | LLM API endpoint |
-| `SAAS_LLM_MODEL` | `glm-4.7-fp8` | LLM model name |
-| `SAAS_LLM_API_KEY` | — | LLM API key |
-| `SAAS_ADMIN_SECRET` | — | Admin console password |
+```
+User: "Add WebSocket notifications"
+         │
+         ▼
+┌─ Clarify ──────────────────────────────────────────┐
+│  "What events should trigger notifications?         │
+│   Should they be per-user or broadcast?"            │
+└─────────────────────────┬──────────────────────────┘
+                          ▼
+┌─ Spec ─────────────────────────────────────────────┐
+│  [MUST] WebSocket endpoint at /ws/notifications     │
+│  [MUST] Event types: order_created, payment_failed  │
+│  [SHOULD] Per-user filtering by subscription        │
+└─────────────────────────┬──────────────────────────┘
+                          ▼
+┌─ Design ───────────────────────────────────────────┐
+│  Query knowledge graph → find existing WS hub       │
+│  Extend ws_hub.py, add notification router          │
+│  Reuse existing auth middleware                     │
+└─────────────────────────┬──────────────────────────┘
+                          ▼
+┌─ Decompose ────────────────────────────────────────┐
+│  Task 1: Add notification event types               │
+│  Task 2: Create /ws/notifications endpoint          │
+│  Task 3: Wire event emitters in order service       │
+└─────────────────────────┬──────────────────────────┘
+                          ▼
+┌─ Execute ──────────────────────────────────────────┐
+│  ✓ Task 1/3 — Modified models/events.py            │
+│  ✓ Task 2/3 — Created routers/notifications.py     │
+│  ✓ Task 3/3 — Updated services/order.py            │
+└─────────────────────────┬──────────────────────────┘
+                          ▼
+┌─ Review ───────────────────────────────────────────┐
+│  All tasks pass. 3 files modified, 1 file created.  │
+└────────────────────────────────────────────────────┘
+```
 
-### MCP Client Environment Variables
+Every step queries the knowledge graph for relevant context. Every step's output is visible. The user can intervene at any point.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MANON_API_KEY` | — | API key (from registration) |
-| `MANON_API_URL` | — | Override server URL (skip geo-routing) |
-| `MANON_API_URL_CN` | `http://117.131.45.179:3700` | China endpoint |
-| `MANON_API_URL_INTL` | — | International endpoint |
+---
 
-## MCP Tools
-
-Once configured, the following tools are available in your AI assistant:
+## 🛠️ MCP Tools
 
 ### Repository Management
 
 | Tool | Description |
 |------|-------------|
+| `manon_init` | Auto-detect and register current project |
 | `manon_repos_list` | List all repos and their index status |
 | `manon_repos_create` | Add a repo (by git URL or local path) |
 | `manon_repos_get` | Get repo details |
 | `manon_repos_delete` | Delete a repo |
-| `manon_init` | Auto-detect and register current project |
 
 ### Indexing
 
@@ -244,7 +275,7 @@ Once configured, the following tools are available in your AI assistant:
 | Tool | Description |
 |------|-------------|
 | `manon_search` | Semantic code search — find code by natural language |
-| `manon_graph` | Query call graphs and dependencies for a symbol |
+| `manon_graph` | Query call graphs and dependencies for any symbol |
 | `manon_impact` | Analyze impact of recent commits |
 | `manon_deep_query` | Multi-round deep analysis with LLM reasoning |
 
@@ -255,63 +286,28 @@ Once configured, the following tools are available in your AI assistant:
 | `manon_config` | Show current configuration |
 | `manon_account` | Show account info and quota |
 | `manon_usage` | View API usage statistics |
-| `manon_embedding` | Generate text embeddings |
 
-## Usage Examples
+---
 
-### Quick Start with `/manon` (Claude Code)
+## 🌐 Web Interface
 
-```
-> /manon
-Manon mode activated. Project "my-project" indexed: 142 entities, 89 relations, 256 chunks.
+The web interface at `http://localhost:3600` provides:
 
-> How does the authentication work?
-(Manon automatically uses deep_query to search the knowledge graph)
+- **Chat** — natural language interaction with knowledge-graph-backed responses
+- **Pipeline** — visual step-by-step feature development (clarify → spec → design → decompose → execute → review)
+- **Project management** — add local or git projects, monitor indexing status
+- **Real-time updates** — WebSocket-powered live progress for all operations
 
-> What would break if I refactor UserService?
-(Manon uses impact analysis to find all callers and dependents)
-```
+No IDE required. No terminal. Just a browser.
 
-### Index a Git Repository
+---
 
-```
-> manon_repos_create(name="my-project", git_url="https://github.com/user/repo.git")
-> manon_index(repo_id="abc123")
-```
+## 📡 API Reference
 
-### Index a Local Project
+Base URL: `http://your-server:3700/api/v1` — All endpoints require `X-API-Key` header.
 
-```
-> manon_init(project_path="/path/to/my-project")
-# Automatically scans, parses AST, and uploads to server
-```
-
-### Search Code
-
-```
-> manon_search(repo_id="abc123", query="user authentication flow")
-> manon_search(repo_id="abc123", query="database connection handling")
-```
-
-### Analyze Dependencies
-
-```
-> manon_graph(repo_id="abc123", symbol="UserService", depth=2)
-```
-
-### Check Impact of Changes
-
-```
-> manon_impact(repo_id="abc123", commit="HEAD")
-```
-
-## API Reference
-
-Base URL: `http://localhost:3700/api/v1`
-
-All endpoints require `X-API-Key` header.
-
-### Repos
+<details>
+<summary>Repos</summary>
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -320,7 +316,10 @@ All endpoints require `X-API-Key` header.
 | `GET` | `/repos/{id}` | Get repo |
 | `DELETE` | `/repos/{id}` | Delete repo |
 
-### Indexing
+</details>
+
+<details>
+<summary>Indexing</summary>
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -329,16 +328,22 @@ All endpoints require `X-API-Key` header.
 | `POST` | `/repos/{id}/push-update` | Incremental update |
 | `POST` | `/repos/{id}/sync-ast` | Upload local AST data |
 
-### Query
+</details>
+
+<details>
+<summary>Query</summary>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/repos/{id}/search` | Semantic search (`?q=...&top_k=10`) |
-| `GET` | `/repos/{id}/graph` | Graph traversal (`?symbol=...&depth=1`) |
-| `GET` | `/repos/{id}/impact` | Impact analysis (`?commit=HEAD`) |
+| `GET` | `/repos/{id}/search` | Semantic search |
+| `GET` | `/repos/{id}/graph` | Graph traversal |
+| `GET` | `/repos/{id}/impact` | Impact analysis |
 | `POST` | `/repos/{id}/deep-query` | Multi-round deep query |
 
-### Account
+</details>
+
+<details>
+<summary>Account</summary>
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -346,26 +351,34 @@ All endpoints require `X-API-Key` header.
 | `GET` | `/account` | Account info |
 | `GET` | `/usage` | Usage statistics |
 
-## Tier Limits
+</details>
 
-| Feature | Free | Pro | Enterprise |
-|---------|------|-----|------------|
-| Repos | 2 | 20 | Unlimited |
-| API rate (req/min) | 30 | 300 | 3000 |
-| Deep queries/day | 10 | Unlimited | Unlimited |
+---
 
-## Development
+## ⚙️ Configuration
 
-```bash
-# Run server in development
-python -m saas
+### MCP Client
 
-# Run with auto-reload (not recommended for production)
-uvicorn saas.main:app --host 0.0.0.0 --port 3700 --reload
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MANON_API_KEY` | — | API key from registration |
+| `MANON_API_URL` | — | Server URL (overrides geo-routing) |
 
-# Admin console
-open http://localhost:3700/admin-console
-```
+### Web Client
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MANON_SAAS_URL` | `http://localhost:3700` | Backend server URL |
+| `MANON_API_KEY` | — | API key from registration |
+
+---
+
+## Requirements
+
+- Python 3.10+
+- For MCP: Claude Code, Cursor, or Windsurf
+- For Web: any modern browser
+- Network connection to Manon server
 
 ## License
 
