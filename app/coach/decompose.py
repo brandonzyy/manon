@@ -60,10 +60,13 @@ async def decompose_to_tasks(state: FeatureState) -> None:
     except Exception as exc:
         await _send_thinking(state.dev_id, False)
         log.error("Task decomposition failed: %s", exc)
-        state.status = Status.FAILED
-        await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": str(exc)})
-        await generate_report(state)
-        state.status = Status.IDLE
+        state.status = Status.EXECUTING
+        state._failed_phase = "decompose"
+        await _send_chat(
+            state.dev_id,
+            f"任务拆解失败：{exc}\n回复\"重试\"重新执行 / \"取消\"取消整个任务",
+            role="system",
+        )
 
 
 def _group_tasks_by_order(tasks: list[dict]) -> dict[int, list[dict]]:

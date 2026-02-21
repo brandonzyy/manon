@@ -46,6 +46,7 @@ class FeatureState:
     current_task_idx: int = -1
     failed_attempts: int = 0
     evaluation: dict | None = None
+    _failed_phase: str | None = None  # "spec" | "decompose" — retryable phase
     _task_result_future: asyncio.Future | None = None
 
 
@@ -812,7 +813,7 @@ async def _start_feature(dev_id: str, msg: dict) -> None:
     await _send_dev(dev_id, {"type": "coach-stage", "stage": "clarifying"})
     user_prompt = msg.get("prompt")
     if user_prompt:
-        await _send_chat(dev_id, f"收到需求：「{user_prompt}」，进入工作流程...")
+        await _send_chat(dev_id, "收到需求，进入工作流程。")
     else:
         await _send_chat(dev_id, "已根据对话上下文进入工作流程...")
     await clarify_intent(state)
@@ -833,16 +834,22 @@ async def _handle_user_response(dev_id: str, msg: dict) -> None:
         await clarify_intent(state)
 
     elif state.status == Status.EXECUTING:
-        # User guidance for failed task
+        # User guidance for failed task or failed phase
         content = msg.get("content", "").strip()
         if content == "重试":
-            await _retry_failed_tasks(state)
+            if state._failed_phase:
+                await _retry_failed_phase(state)
+            else:
+                await _retry_failed_tasks(state)
         elif content == "跳过":
             await _skip_failed_tasks(state)
         elif content == "取消":
             await _cancel_feature(state)
         else:
-            await _retry_with_guidance(state, content)
+            if state._failed_phase:
+                await _retry_failed_phase(state)
+            else:
+                await _retry_with_guidance(state, content)
 
     elif state.status == Status.REVIEWING:
         # User can type feedback during review
@@ -892,11 +899,27 @@ async def _skip_failed_tasks(state: FeatureState) -> None:
 
 
 async def _cancel_feature(state: FeatureState) -> None:
+    state._failed_phase = None
     state.status = Status.FAILED
     await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": "User cancelled"})
     await _send_chat(state.dev_id, "任务已取消。", role="system")
     await generate_report(state)
     state.status = Status.IDLE
+
+
+async def _retry_failed_phase(state: FeatureState) -> None:
+    """Retry a failed pipeline phase (spec or decompose)."""
+    phase = state._failed_phase
+    state._failed_phase = None
+    await _send_chat(state.dev_id, f"正在重试 {phase} 阶段...", role="system")
+    if phase == "spec":
+        from .spec import finalize_spec
+        await finalize_spec(state)
+    elif phase == "decompose":
+        from .decompose import decompose_to_tasks
+        await decompose_to_tasks(state)
+    else:
+        log.warning("Unknown failed phase: %s", phase)
 
 
 async def _retry_failed_tasks(state: FeatureState) -> None:

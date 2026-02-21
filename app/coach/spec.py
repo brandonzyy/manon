@@ -42,9 +42,13 @@ async def finalize_spec(state: FeatureState) -> None:
     except Exception as exc:
         await _send_thinking(state.dev_id, False)
         log.error("Spec generation failed: %s", exc)
-        await _send_chat(state.dev_id, f"任务规格生成失败：{exc}。请重新描述需求。", role="system")
-        await _send_dev(state.dev_id, {"type": "feature-failed", "featureId": state.feature_id, "reason": str(exc)})
-        state.status = Status.IDLE
+        state.status = Status.EXECUTING
+        state._failed_phase = "spec"
+        await _send_chat(
+            state.dev_id,
+            f"任务规格生成失败：{exc}\n回复\"重试\"重新执行 / \"取消\"取消整个任务",
+            role="system",
+        )
 
 
 async def _present_plan(state: FeatureState) -> None:
