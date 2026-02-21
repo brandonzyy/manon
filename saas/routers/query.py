@@ -1,13 +1,18 @@
-"""Query endpoints — search, graph, impact."""
+"""Query endpoints — search, graph, impact, deep-query."""
 from __future__ import annotations
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import TenantContext, require_tenant
 from ..db import get_db
 from ..metering import record_usage
-from ..models import SearchResult, ImpactResult
+from ..models import SearchResult, ImpactResult, DeepQueryRequest
 from ..services.graph import get_graph
+from ..services.llm import llm_chat, parse_json
+
+log = logging.getLogger("saas.query")
 
 router = APIRouter(prefix="/api/v1/repos/{repo_id}", tags=["query"])
 
@@ -76,3 +81,90 @@ async def impact_analysis(
     result = mg.impact_commit(commit=commit, max_depth=max_depth)
     await record_usage(ctx.tenant_id, "query.impact", repo_id)
     return result
+
+
+# ── Deep Query ────────────────────────────────────────
+
+_DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的任务是确保收集到的上下文能够完整回答用户的问题。
+
+## 分析步骤
+
+1. **拆解问题**：把用户的问题拆成具体的子问题/信息需求。
+2. **逐项检查**：对每个子问题，检查已有上下文是否包含足够的代码细节（函数实现、调用链、参数、配置）。仅仅出现函数名不算覆盖，必须有实际的代码逻辑或实现细节。
+3. **生成补充查询**：对未覆盖的子问题，提取最精确的查询词（函数名、类名、文件名、模块名）。优先使用已有上下文中出现但未展开的标识符。
+
+## 关键规则
+
+- **有 missing 就必须有 queries**：只要 missing 不为空，queries 也不能为空。
+- **不要假设查不到**：即使你觉得知识图谱可能没有某个信息，也要尝试查询。
+- **从上下文提取线索**：如果上下文中提到了某个类名/函数名但没有展开实现，用它作为查询词。
+
+## 输出格式
+
+只返回 JSON：
+```json
+{
+  "sub_questions": ["子问题1", "子问题2"],
+  "covered": ["已覆盖的子问题"],
+  "missing": ["未覆盖的子问题"],
+  "queries": ["查询词1", "查询词2"],
+  "reason": "简要说明"
+}
+```
+
+如果所有子问题都已覆盖：
+```json
+{"sub_questions": [...], "covered": [...], "missing": [], "queries": [], "reason": "上下文已完整覆盖所有子问题"}
+```"""
+
+
+@router.post("/deep-query")
+async def deep_query(
+    repo_id: str,
+    body: DeepQueryRequest,
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """多轮迭代查询，确保上下文完整覆盖用户问题。"""
+    row = await _require_indexed_repo(repo_id, ctx.tenant_id)
+    mg = get_graph(ctx.tenant_id, row["local_path"])
+
+    # initial query
+    result = await mg.query(body.question, top_k=10, depth=1)
+    accumulated = result.context or ""
+    rounds = [{"round": 0, "query": body.question, "context_chars": len(accumulated)}]
+    parsed: dict = {}
+
+    # iterative refinement
+    for i in range(body.max_rounds):
+        try:
+            analysis = await llm_chat([
+                {"role": "system", "content": _DEEPQUERY_SYSTEM},
+                {"role": "user", "content": f"## 用户问题\n{body.question}\n\n## 已有上下文\n{accumulated[:12000]}"},
+            ])
+            parsed = parse_json(analysis)
+        except Exception:
+            log.warning("deep-query LLM round %d failed, stopping iteration", i + 1)
+            break
+
+        follow_ups = parsed.get("queries", [])
+        if not follow_ups:
+            break  # all covered
+
+        for q in follow_ups[:3]:
+            r = await mg.query(q, top_k=5, depth=1)
+            if r.context:
+                accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
+
+        rounds.append({
+            "round": i + 1,
+            "queries": follow_ups,
+            "context_chars": len(accumulated),
+        })
+
+    await record_usage(ctx.tenant_id, "query.deep_query", repo_id)
+    return {
+        "context": accumulated,
+        "rounds": rounds,
+        "sub_questions": parsed.get("sub_questions", []),
+        "covered": parsed.get("covered", []),
+    }

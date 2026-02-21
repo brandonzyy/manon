@@ -14,6 +14,11 @@ class SaasSettings(BaseSettings):
     index_dir: str = "./saas_indexes"
     embedding_url: str = "http://117.131.45.179:3002"
 
+    # LLM (OpenAI-compatible)
+    llm_api_url: str = "https://api.matrixone.online/v1/chat/completions"
+    llm_model: str = "glm-4.7-fp8"
+    llm_api_key: str = ""
+
     # rate limits (requests / minute)
     rate_free: int = 30
     rate_pro: int = 300

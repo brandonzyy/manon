@@ -21,7 +21,7 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 from .config import settings
 from .db import init_db, close_db, get_db
 from .models import TenantCreate, TenantOut
-from .routers import health, repos, indexing, query, usage, embedding
+from .routers import health, repos, indexing, query, usage, embedding, pipeline, config
 
 
 @asynccontextmanager
@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI):
     await MatrixoneGraph.shutdown_all()
     from .routers.embedding import close_embedding_client
     await close_embedding_client()
+    from .services.llm import close_llm_client
+    await close_llm_client()
     await close_db()
 
 
@@ -59,6 +61,8 @@ app.include_router(indexing.router)
 app.include_router(query.router)
 app.include_router(usage.router)
 app.include_router(embedding.router)
+app.include_router(pipeline.router)
+app.include_router(config.router)
 
 # static console
 _static_dir = Path(__file__).parent / "static"

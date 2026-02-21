@@ -73,3 +73,31 @@ class TenantOut(BaseModel):
     name: str
     tier: str
     api_key: str = ""
+
+
+# ── Pipeline ──────────────────────────────────────────
+# ── Deep Query ────────────────────────────────────────
+class DeepQueryRequest(BaseModel):
+    question: str
+    max_rounds: int = Field(3, ge=1, le=5)
+
+
+# ── Pipeline ──────────────────────────────────────────
+class PipelineStart(BaseModel):
+    description: str
+    auto_execute: bool = False  # if True, skip user confirmations
+
+
+class PipelineRespond(BaseModel):
+    content: str  # user answer / "confirm" / "reject" / feedback
+
+
+class PipelineStatusOut(BaseModel):
+    pipeline_id: str
+    stage: str
+    messages: list[dict] = []
+    pending_action: str | None = None  # "answer" | "confirm_plan" | "confirm_review" | None
+    spec: dict | None = None
+    design: dict | None = None
+    tasks: list[dict] = []
+    report_url: str = ""
