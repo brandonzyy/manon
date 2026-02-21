@@ -51,6 +51,7 @@ tr.expandable{cursor:pointer}tr.expandable:hover{background:var(--bg2)}
   <span class="spacer"></span>
   <input id="secretInput" type="password" placeholder="Admin Secret">
   <button id="loginBtn" onclick="login()">登录</button>
+  <button id="logoutBtn" style="display:none" class="btn btn-sm" onclick="logout()">登出</button>
   <span id="status"></span>
 </header>
 <div class="container" id="content">
@@ -85,10 +86,23 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show')
 function login(){
   SECRET=$('secretInput').value.trim();
   if(!SECRET){alert('请输入 Admin Secret');return}
-  localStorage.setItem('manon_admin_secret',SECRET);
+  document.cookie='manon_admin_secret='+encodeURIComponent(SECRET)+';path=/;max-age=604800;SameSite=Strict';
+  $('secretInput').style.display='none';
+  $('loginBtn').style.display='none';
+  $('logoutBtn').style.display='';
   $('status').textContent='已连接';$('status').style.color='var(--green)';
   $('content').style.display='block';
   loadTenants();
+}
+
+function logout(){
+  SECRET='';
+  document.cookie='manon_admin_secret=;path=/;max-age=0';
+  $('secretInput').style.display='';$('secretInput').value='';
+  $('loginBtn').style.display='';
+  $('logoutBtn').style.display='none';
+  $('status').textContent='';
+  $('content').style.display='none';
 }
 
 // ── Tenants ──
@@ -178,9 +192,9 @@ function copyKey(key){
   navigator.clipboard.writeText(key).then(()=>toast('已复制到剪贴板'));
 }
 
-// auto-login from localStorage
-const saved=localStorage.getItem('manon_admin_secret');
-if(saved){$('secretInput').value=saved;login()}
+// auto-login from cookie
+const saved=(document.cookie.match(/(?:^|;\s*)manon_admin_secret=([^;]*)/)||[])[1];
+if(saved){$('secretInput').value=decodeURIComponent(saved);login()}
 </script>
 </body>
 </html>
