@@ -19,6 +19,7 @@ manon_server.log
 saas_repos/
 saas_indexes/
 app/static/reports/
+app/static/test-results/
 
 # internal docs (business plans, etc.)
 docs/
