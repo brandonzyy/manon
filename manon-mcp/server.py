@@ -15,7 +15,7 @@ log = logging.getLogger("manon-mcp")
 # If MANON_API_URL is set explicitly, use it directly (no auto-detect).
 # Otherwise, detect user's IP country and pick CN or INTL endpoint.
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
-API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "https://consider-buddy-threshold-stock.trycloudflare.com")
+API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "")  # resolved dynamically
 API_KEY = os.environ.get("MANON_API_KEY", "")
 
 _explicit_url = os.environ.get("MANON_API_URL", "")
@@ -37,11 +37,28 @@ def _detect_region() -> str:
     return "CN"  # fallback to domestic
 
 
+def _fetch_tunnel_url() -> str:
+    """Fetch current Cloudflare Tunnel URL from the CN server."""
+    try:
+        r = httpx.get(f"{API_URL_CN}/tunnel-url", timeout=5)
+        if r.status_code == 200:
+            url = r.json().get("url", "")
+            if url:
+                return url
+    except Exception:
+        pass
+    return ""
+
+
 def _resolve_api_url() -> str:
     if _explicit_url:
         return _explicit_url
     region = _detect_region()
-    url = API_URL_CN if region == "CN" else API_URL_INTL
+    if region == "CN":
+        url = API_URL_CN
+    else:
+        # try dynamic tunnel URL, fallback to env or CN
+        url = API_URL_INTL or _fetch_tunnel_url() or API_URL_CN
     log.info("Geo-routing: region=%s, api_url=%s", region, url)
     return url
 
