@@ -11,6 +11,7 @@ from ..metering import record_usage
 from ..models import SearchResult, ImpactResult, DeepQueryRequest
 from ..services.graph import get_graph
 from ..services.llm import llm_chat, parse_json
+from ..quota import check_deep_query_quota
 
 log = logging.getLogger("saas.query")
 
@@ -125,6 +126,7 @@ async def deep_query(
     ctx: TenantContext = Depends(require_tenant),
 ):
     """多轮迭代查询，确保上下文完整覆盖用户问题。"""
+    await check_deep_query_quota(ctx)
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"])
 

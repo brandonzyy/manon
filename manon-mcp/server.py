@@ -276,6 +276,24 @@ def manon_config() -> str:
 
 
 @mcp.tool()
+def manon_account() -> str:
+    """查看账户信息：套餐、配额使用情况、近 30 天用量。"""
+    try:
+        acc = _get("/api/v1/account")
+    except Exception as e:
+        return f"获取账户信息失败: {e}"
+    q = acc["quotas"]
+    lines = [
+        f"租户: {acc['tenant_id']} ({acc['tier']})",
+        f"速率限制: {acc['rate_limit']} req/min",
+        f"仓库: {q['repos']['used']}/{q['repos']['limit']}",
+        f"深度查询 (今日): {q['deep_query_daily']['used']}/{q['deep_query_daily']['limit']}",
+        f"30 天总调用: {acc['usage_30d']}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def manon_deep_query(repo_id: str, question: str, max_rounds: int = 3) -> str:
     """深度查询代码知识图谱。自动多轮迭代，确保覆盖问题的所有子方面。
 

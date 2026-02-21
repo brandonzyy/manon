@@ -14,6 +14,7 @@ from ..metering import record_usage
 from ..models import RepoCreate, RepoOut
 from ..services.git import clone_or_pull
 from ..config import settings
+from ..quota import check_repo_quota
 
 router = APIRouter(prefix="/api/v1/repos", tags=["repos"])
 
@@ -30,6 +31,7 @@ def _row_to_repo(row) -> RepoOut:
 
 @router.post("", status_code=201)
 async def create_repo(body: RepoCreate, ctx: TenantContext = Depends(require_tenant)):
+    await check_repo_quota(ctx)
     db = await get_db()
     repo_id = uuid.uuid4().hex[:8]
     local_path = body.local_path
