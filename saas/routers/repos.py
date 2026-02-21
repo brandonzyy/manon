@@ -1,0 +1,89 @@
+"""Repo CRUD — POST / GET / DELETE /api/v1/repos."""
+from __future__ import annotations
+
+import json
+import uuid
+import shutil
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from ..auth import TenantContext, require_tenant
+from ..db import get_db
+from ..metering import record_usage
+from ..models import RepoCreate, RepoOut
+from ..services.git import clone_or_pull
+from ..config import settings
+
+router = APIRouter(prefix="/api/v1/repos", tags=["repos"])
+
+
+def _row_to_repo(row) -> RepoOut:
+    stats = json.loads(row["index_stats"]) if row["index_stats"] else None
+    return RepoOut(
+        id=row["id"], name=row["name"], git_url=row["git_url"],
+        branch=row["branch"], local_path=row["local_path"],
+        index_status=row["index_status"], index_stats=stats,
+        created_at=row["created_at"], updated_at=row["updated_at"],
+    )
+
+
+@router.post("", status_code=201)
+async def create_repo(body: RepoCreate, ctx: TenantContext = Depends(require_tenant)):
+    db = await get_db()
+    repo_id = uuid.uuid4().hex[:8]
+    local_path = body.local_path
+
+    if body.git_url:
+        local_path = await clone_or_pull(repo_id, body.git_url, body.branch)
+
+    await db.execute(
+        "INSERT INTO repos (id, tenant_id, name, git_url, branch, local_path) VALUES (?,?,?,?,?,?)",
+        (repo_id, ctx.tenant_id, body.name, body.git_url, body.branch, local_path),
+    )
+    await db.commit()
+    await record_usage(ctx.tenant_id, "repos.create", repo_id)
+
+    cur = await db.execute("SELECT * FROM repos WHERE id = ?", (repo_id,))
+    return _row_to_repo(await cur.fetchone())
+
+
+@router.get("")
+async def list_repos(ctx: TenantContext = Depends(require_tenant)):
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM repos WHERE tenant_id = ? ORDER BY created_at DESC", (ctx.tenant_id,))
+    return [_row_to_repo(r) for r in await cur.fetchall()]
+
+
+@router.get("/{repo_id}")
+async def get_repo(repo_id: str, ctx: TenantContext = Depends(require_tenant)):
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM repos WHERE id = ? AND tenant_id = ?", (repo_id, ctx.tenant_id))
+    row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "repo not found")
+    return _row_to_repo(row)
+
+
+@router.delete("/{repo_id}", status_code=204)
+async def delete_repo(repo_id: str, ctx: TenantContext = Depends(require_tenant)):
+    db = await get_db()
+    cur = await db.execute("SELECT * FROM repos WHERE id = ? AND tenant_id = ?", (repo_id, ctx.tenant_id))
+    row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "repo not found")
+
+    # cleanup local clone
+    if row["local_path"] and row["git_url"]:
+        p = Path(row["local_path"])
+        if p.exists():
+            shutil.rmtree(p, ignore_errors=True)
+
+    # cleanup index
+    idx = Path(settings.index_dir) / ctx.tenant_id / row["name"]
+    if idx.exists():
+        shutil.rmtree(idx, ignore_errors=True)
+
+    await db.execute("DELETE FROM repos WHERE id = ?", (repo_id,))
+    await db.commit()
+    await record_usage(ctx.tenant_id, "repos.delete", repo_id)
