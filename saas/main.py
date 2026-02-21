@@ -21,7 +21,7 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 from .config import settings
 from .db import init_db, close_db, get_db
 from .models import RegisterRequest
-from .routers import health, repos, indexing, query, usage, embedding, pipeline, config, account, admin
+from .routers import health, repos, indexing, query, usage, embedding, config, account, admin
 
 
 @asynccontextmanager
@@ -61,7 +61,6 @@ app.include_router(indexing.router)
 app.include_router(query.router)
 app.include_router(usage.router)
 app.include_router(embedding.router)
-app.include_router(pipeline.router)
 app.include_router(config.router)
 app.include_router(account.router)
 app.include_router(admin.router)
