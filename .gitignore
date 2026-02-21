@@ -11,3 +11,14 @@ build/
 app/settings.json
 indexes/
 manon.log
+
+# runtime artifacts
+node_modules/
+*.db
+manon_server.log
+saas_repos/
+saas_indexes/
+app/static/reports/
+
+# internal docs (business plans, etc.)
+docs/

@@ -53,8 +53,8 @@ def cmd_repos(args):
             print("No repos.")
             return
         for r in repos:
-            status_icon = {"done": "✓", "indexing": "⟳", "error": "✗"}.get(r["index_status"], "·")
-            print(f"  {status_icon} {r['id']}  {r['name']:<20s}  {r['index_status']}")
+            icon = {"done": "+", "indexing": "~", "error": "x"}.get(r["index_status"], "-")
+            print(f"  {icon} {r['id']}  {r['name']:<20s}  {r['index_status']}")
     elif args.sub == "create":
         result = c.create_repo(args.name, git_url=args.git_url or "", branch=args.branch, local_path=args.local_path)
         print(f"Created repo {result['id']} ({result['name']})")
