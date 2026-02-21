@@ -75,6 +75,10 @@ class TenantOut(BaseModel):
     api_key: str = ""
 
 
+class RegisterRequest(BaseModel):
+    name: str = "anonymous"
+
+
 # ── Pipeline ──────────────────────────────────────────
 # ── Deep Query ────────────────────────────────────────
 class DeepQueryRequest(BaseModel):

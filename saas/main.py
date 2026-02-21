@@ -20,7 +20,7 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 
 from .config import settings
 from .db import init_db, close_db, get_db
-from .models import TenantCreate, TenantOut
+from .models import TenantCreate, TenantOut, RegisterRequest
 from .routers import health, repos, indexing, query, usage, embedding, pipeline, config
 
 
@@ -90,3 +90,23 @@ async def create_tenant(body: TenantCreate):
     )
     await db.commit()
     return TenantOut(id=tenant_id, name=body.name, tier=body.tier, api_key=api_key)
+
+
+# ── Public: self-service registration ─────────────────
+@app.post("/api/v1/register", status_code=201, tags=["public"])
+async def register(body: RegisterRequest):
+    """Public registration — creates a free-tier tenant and returns an API key."""
+    db = await get_db()
+    tenant_id = uuid.uuid4().hex[:8]
+    api_key = f"msk_{uuid.uuid4().hex}"
+
+    await db.execute(
+        "INSERT INTO tenants (id, name, tier) VALUES (?, ?, ?)",
+        (tenant_id, body.name, "free"),
+    )
+    await db.execute(
+        "INSERT INTO api_keys (key, tenant_id, label) VALUES (?, ?, ?)",
+        (api_key, tenant_id, "auto-register"),
+    )
+    await db.commit()
+    return {"api_key": api_key, "tenant_id": tenant_id, "tier": "free"}

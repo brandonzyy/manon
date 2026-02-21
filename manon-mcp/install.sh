@@ -196,8 +196,7 @@ info "Detected: ${PLATFORMS[*]}"
 head1 "Configuration"
 read -rp "  Manon API URL [$DEFAULT_API_URL]: " API_URL
 API_URL="${API_URL:-$DEFAULT_API_URL}"
-read -rp "  Manon API Key (msk_...): " API_KEY
-[ -z "$API_KEY" ] && warn "No API key — set it later in each platform's config"
+read -rp "  Manon API Key (msk_..., leave empty to auto-register): " API_KEY
 
 # ── Venv + deps ───────────────────────────────────────
 head1 "Dependencies"
@@ -213,6 +212,30 @@ else
 fi
 "$VENV_PYTHON" -m pip install -q -r "$SCRIPT_DIR/requirements.txt"
 info "Dependencies installed"
+
+# ── Auto-register if no key ───────────────────────────
+if [ -z "$API_KEY" ]; then
+    head1 "Auto-register"
+    REG_RESULT=$("$VENV_PYTHON" -c "
+import httpx, json, sys
+try:
+    r = httpx.post('${API_URL}/api/v1/register', json={'name': '$(whoami)'}, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    print(data['api_key'])
+except Exception as e:
+    print(f'FAIL:{e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1) || true
+
+    if [[ "$REG_RESULT" == msk_* ]]; then
+        API_KEY="$REG_RESULT"
+        info "Auto-registered, API key: ${API_KEY:0:12}..."
+    else
+        warn "Auto-register failed ($REG_RESULT) — you can set the key manually later"
+        API_KEY=""
+    fi
+fi
 
 # normalize paths for JSON
 SERVER_PY_NORM=$(echo "$SERVER_PY" | sed 's|\\|/|g')
