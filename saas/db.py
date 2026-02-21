@@ -46,6 +46,21 @@ CREATE TABLE IF NOT EXISTS usage_log (
 """
 
 
+_MIGRATIONS = [
+    # Add source_type column for local AST sync repos
+    "ALTER TABLE repos ADD COLUMN source_type TEXT NOT NULL DEFAULT ''",
+]
+
+
+async def _run_migrations(conn: aiosqlite.Connection) -> None:
+    for sql in _MIGRATIONS:
+        try:
+            await conn.execute(sql)
+        except Exception:
+            pass  # column already exists
+    await conn.commit()
+
+
 async def init_db(db_path: str) -> None:
     global _db_path, _conn
     _db_path = db_path
@@ -53,6 +68,7 @@ async def init_db(db_path: str) -> None:
     _conn.row_factory = aiosqlite.Row
     await _conn.executescript(SCHEMA)
     await _conn.commit()
+    await _run_migrations(_conn)
 
 
 async def get_db() -> aiosqlite.Connection:

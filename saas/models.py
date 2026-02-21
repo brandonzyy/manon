@@ -10,6 +10,7 @@ class RepoCreate(BaseModel):
     git_url: str = ""
     branch: str = "main"
     local_path: str | None = None
+    source_type: str = ""  # "" = git (default), "local" = client-side AST sync
 
 
 class RepoOut(BaseModel):
@@ -18,6 +19,7 @@ class RepoOut(BaseModel):
     git_url: str
     branch: str
     local_path: str | None
+    source_type: str = ""
     index_status: str
     index_stats: dict | None = None
     created_at: str
@@ -33,6 +35,19 @@ class IndexStatus(BaseModel):
     repo_id: str
     status: str
     stats: dict | None = None
+
+
+class FileSyncData(BaseModel):
+    rel_path: str           # relative path within repo
+    hash: str               # sha256 of file content
+    source: str             # file content (for chunking)
+    parse_result: dict      # ParseResult.to_dict()
+
+
+class SyncAstRequest(BaseModel):
+    files: list[FileSyncData] = []
+    deleted_files: list[str] = []
+    full_reindex: bool = False
 
 
 # ── Query ──────────────────────────────────────────────

@@ -24,6 +24,7 @@ def _row_to_repo(row) -> RepoOut:
     return RepoOut(
         id=row["id"], name=row["name"], git_url=row["git_url"],
         branch=row["branch"], local_path=row["local_path"],
+        source_type=row["source_type"] if "source_type" in row.keys() else "",
         index_status=row["index_status"], index_stats=stats,
         created_at=row["created_at"], updated_at=row["updated_at"],
     )
@@ -35,13 +36,17 @@ async def create_repo(body: RepoCreate, ctx: TenantContext = Depends(require_ten
     db = await get_db()
     repo_id = uuid.uuid4().hex[:8]
     local_path = body.local_path
+    source_type = body.source_type or ""
 
-    if body.git_url:
+    if source_type == "local":
+        # Client-side AST sync — no clone, no local_path on server
+        local_path = None
+    elif body.git_url:
         local_path = await clone_or_pull(repo_id, body.git_url, body.branch)
 
     await db.execute(
-        "INSERT INTO repos (id, tenant_id, name, git_url, branch, local_path) VALUES (?,?,?,?,?,?)",
-        (repo_id, ctx.tenant_id, body.name, body.git_url, body.branch, local_path),
+        "INSERT INTO repos (id, tenant_id, name, git_url, branch, local_path, source_type) VALUES (?,?,?,?,?,?,?)",
+        (repo_id, ctx.tenant_id, body.name, body.git_url, body.branch, local_path, source_type),
     )
     await db.commit()
     await record_usage(ctx.tenant_id, "repos.create", repo_id)
