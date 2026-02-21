@@ -15,7 +15,7 @@ log = logging.getLogger("manon-mcp")
 # If MANON_API_URL is set explicitly, use it directly (no auto-detect).
 # Otherwise, detect user's IP country and pick CN or INTL endpoint.
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
-API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://117.131.45.179:3700")  # TODO: deploy overseas
+API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "https://consider-buddy-threshold-stock.trycloudflare.com")
 API_KEY = os.environ.get("MANON_API_KEY", "")
 
 _explicit_url = os.environ.get("MANON_API_URL", "")
