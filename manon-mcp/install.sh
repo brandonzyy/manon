@@ -89,10 +89,13 @@ if os.path.exists(target):
     with open(target, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 cfg.setdefault("mcpServers", {})
+env = {"MANON_API_KEY": key}
+if url != "auto":
+    env["MANON_API_URL"] = url
 cfg["mcpServers"]["manon"] = {
     "command": venv_py,
     "args": [server],
-    "env": {"MANON_API_URL": url, "MANON_API_KEY": key},
+    "env": env,
 }
 os.makedirs(os.path.dirname(target), exist_ok=True)
 with open(target, "w", encoding="utf-8") as f:
@@ -194,8 +197,10 @@ info "Detected: ${PLATFORMS[*]}"
 
 # ── Collect config ────────────────────────────────────
 head1 "Configuration"
-read -rp "  Manon API URL [$DEFAULT_API_URL]: " API_URL
-API_URL="${API_URL:-$DEFAULT_API_URL}"
+echo "  API URL: leave empty for auto geo-routing (CN/INTL)"
+echo "           or enter a specific URL to override"
+read -rp "  Manon API URL [auto]: " API_URL
+API_URL="${API_URL:-auto}"
 read -rp "  Manon API Key (msk_..., leave empty to auto-register): " API_KEY
 
 # ── Venv + deps ───────────────────────────────────────
@@ -216,10 +221,13 @@ info "Dependencies installed"
 # ── Auto-register if no key ───────────────────────────
 if [ -z "$API_KEY" ]; then
     head1 "Auto-register"
+    # use CN endpoint for registration (always reachable from both regions)
+    REG_URL="$API_URL"
+    [ "$REG_URL" = "auto" ] && REG_URL="$DEFAULT_API_URL"
     REG_RESULT=$("$VENV_PYTHON" -c "
 import httpx, json, sys
 try:
-    r = httpx.post('${API_URL}/api/v1/register', json={'name': '$(whoami)'}, timeout=10)
+    r = httpx.post('${REG_URL}/api/v1/register', json={'name': '$(whoami)'}, timeout=10)
     r.raise_for_status()
     data = r.json()
     print(data['api_key'])

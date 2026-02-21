@@ -2,14 +2,51 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("manon", instructions="Manon 代码智能工具 — 语义搜索、图遍历、影响分析")
 
-API_URL = os.environ.get("MANON_API_URL", "http://localhost:3700")
+log = logging.getLogger("manon-mcp")
+
+# ── Geo-routing ───────────────────────────────────────
+# If MANON_API_URL is set explicitly, use it directly (no auto-detect).
+# Otherwise, detect user's IP country and pick CN or INTL endpoint.
+API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
+API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://117.131.45.179:3700")  # TODO: deploy overseas
 API_KEY = os.environ.get("MANON_API_KEY", "")
+
+_explicit_url = os.environ.get("MANON_API_URL", "")
+
+
+def _detect_region() -> str:
+    """Detect user region via public IP lookup. Returns 'CN' or 'INTL'."""
+    for endpoint in ["http://ip-api.com/json/?fields=countryCode", "https://ipinfo.io/json"]:
+        try:
+            r = httpx.get(endpoint, timeout=5)
+            data = r.json()
+            country = data.get("countryCode") or data.get("country", "")
+            if country.upper() == "CN":
+                return "CN"
+            if country:
+                return "INTL"
+        except Exception:
+            continue
+    return "CN"  # fallback to domestic
+
+
+def _resolve_api_url() -> str:
+    if _explicit_url:
+        return _explicit_url
+    region = _detect_region()
+    url = API_URL_CN if region == "CN" else API_URL_INTL
+    log.info("Geo-routing: region=%s, api_url=%s", region, url)
+    return url
+
+
+API_URL = _resolve_api_url()
 
 
 def _headers():
@@ -206,6 +243,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         return f"Manon API 不可达 ({API_URL}): {e}\n请确认 saas 服务已启动。"
 
     lines = [f"Manon API 连接成功 — {health.get('status', 'ok')}"]
+    lines.append(f"  服务器: {API_URL} ({'国内' if API_URL == API_URL_CN else '海外'})")
     lines.append(f"  模型: {health.get('llm_model', '?')}")
     lines.append(f"  Embedding: {health.get('embedding_url', '?')}")
 
