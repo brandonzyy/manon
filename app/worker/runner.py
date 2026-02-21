@@ -201,6 +201,8 @@ async def execute_task(config: dict) -> dict:
             }
         except Exception as exc:
             log.error("Agent failed: %s", exc)
+            return {"type": "feature-task-failed", "featureId": feature_id, "taskId": task_id,
+                    "reason": f"Agent error: {exc}"}
 
         # 7. Detect changes
         try:
@@ -337,7 +339,7 @@ async def execute_task(config: dict) -> dict:
             "featureId": feature_id,
             "taskId": task_id,
             "changes": changes_preview,
-            "output": agent_result.get("output", "") if 'agent_result' in dir() else "",
+            "output": agent_result.get("output", ""),
             "diffs": diffs,
             "selfTest": self_test,
             "tokenUsage": token_usage,

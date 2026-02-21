@@ -14,10 +14,10 @@ log = logging.getLogger("manon.coach.spec")
 
 SYSTEM_PROMPT = """你是 Manon 的产品经理。根据需求描述和用户确认，生成结构化的任务规格。
 输出严格 JSON 格式（不要 markdown 代码块包裹）：
-{"title":"任务标题","scope":"任务范围描述","requirements":[{"id":"R1","title":"需求标题","priority":"MUST","scenarios":[{"title":"场景名","given":"前置条件","when":"触发动作","then":"预期结果"}]}]}
+{"title":"任务标题","scope":"任务范围描述","requirements":[{"id":"R1","title":"需求标题","priority":"MUST","scenarios":[{"title":"场景名","condition":"在什么条件或操作下","expected":"预期结果是什么"}]}]}
 
 priority 取值：MUST | SHOULD | MAY
-每个 requirement 至少包含一个 scenario，scenario 用 Given/When/Then 格式描述验收条件。"""
+每个 requirement 至少包含一个 scenario，用自然语言描述验收条件。"""
 
 
 async def finalize_spec(state: FeatureState) -> None:
@@ -52,20 +52,30 @@ async def _present_plan(state: FeatureState) -> None:
     spec = state.spec
     state.status = Status.USER_CONFIRMING
 
-    req_lines = []
-    for r in spec.get("requirements", []):
-        scenarios = "\n".join(
-            f"   - {s['title']}: Given {s['given']}, When {s['when']}, Then {s['then']}"
-            for s in r.get("scenarios", [])
-        )
-        req_lines.append(f"**{r['id']}. {r['title']}** [{r.get('priority', 'MUST')}]\n{scenarios}")
+    priority_label = {"MUST": "必须", "SHOULD": "建议", "MAY": "可选"}
 
-    content = (
-        f"## 执行计划确认\n\n"
-        f"**任务：** {spec.get('title', '')}\n"
-        f"**范围：** {spec.get('scope', '')}\n\n"
-        f"**需求与场景：**\n" + "\n\n".join(req_lines) +
-        "\n\n请确认是否开始执行？回复\"确认\"开始，或提出修改意见。"
-    )
-    await _send_chat(state.dev_id, content)
+    lines = [
+        f"## 📋 执行计划确认\n",
+        f"**{spec.get('title', '')}**\n",
+        f"> {spec.get('scope', '')}\n",
+        "---\n",
+    ]
+
+    for r in spec.get("requirements", []):
+        tag = priority_label.get(r.get("priority", "MUST"), r.get("priority", ""))
+        lines.append(f"### {r['id']}. {r['title']}  `{tag}`\n")
+        for s in r.get("scenarios", []):
+            # Support both old (given/when/then) and new (condition/expected) formats
+            if s.get("condition"):
+                lines.append(f"- **{s.get('title', '场景')}**：{s['condition']} → {s.get('expected', '')}")
+            elif s.get("given"):
+                lines.append(f"- **{s.get('title', '场景')}**：{s['given']}，{s.get('when', '')} → {s.get('then', '')}")
+            else:
+                lines.append(f"- **{s.get('title', '场景')}**")
+        lines.append("")
+
+    lines.append("---\n")
+    lines.append("确认无误请回复 **确认**，或直接提出修改意见。")
+
+    await _send_chat(state.dev_id, "\n".join(lines))
     await _send_dev(state.dev_id, {"type": "feature-spec-ready", "featureId": state.feature_id, "spec": spec})

@@ -36,7 +36,7 @@ async def decompose_to_tasks(state: FeatureState) -> None:
     spec = state.spec or {}
     req_text = "\n".join(
         f"{r['id']}. [{r.get('priority','MUST')}] {r['title']}\n" +
-        "\n".join(f"  - {s['title']}: Given {s['given']} / When {s['when']} / Then {s['then']}" for s in r.get("scenarios", []))
+        "\n".join(f"  - {s.get('title','')}: {s.get('condition', s.get('given',''))} → {s.get('expected', s.get('then',''))}" for s in r.get("scenarios", []))
         for r in spec.get("requirements", [])
     )
     design_ctx = ""
@@ -84,7 +84,7 @@ async def execute_task_loop(state: FeatureState) -> None:
     groups = _group_tasks_by_order(state.tasks)
 
     for order in sorted(groups.keys()):
-        group = [t for t in groups[order] if t.get("status") != "skipped"]
+        group = [t for t in groups[order] if t.get("status") not in ("skipped", "completed")]
         if not group:
             continue
 
@@ -113,7 +113,7 @@ async def execute_task_loop(state: FeatureState) -> None:
                 await _send_chat(
                     state.dev_id,
                     f"任务「{task.get('title','')}」执行失败，需要人工介入。\n"
-                    "回复\"跳过\"跳过此任务 / \"取消\"取消整个任务 / 或提供额外指导",
+                    "回复\"重试\"重新执行 / \"跳过\"跳过此任务 / \"取消\"取消整个任务 / 或提供额外指导",
                     role="system",
                 )
                 return
@@ -150,7 +150,7 @@ async def execute_task_loop(state: FeatureState) -> None:
                 await _send_chat(
                     state.dev_id,
                     f"并行任务组中有失败：「{failed_names}」，需要人工介入。\n"
-                    "回复\"跳过\"跳过失败任务继续 / \"取消\"取消整个任务 / 或提供额外指导",
+                    "回复\"重试\"重新执行失败任务 / \"跳过\"跳过失败任务继续 / \"取消\"取消整个任务 / 或提供额外指导",
                     role="system",
                 )
                 return

@@ -28,7 +28,7 @@ async def generate_design(state: FeatureState) -> None:
     spec = state.spec or {}
     req_summary = "\n".join(
         f"{r['id']}. [{r.get('priority','MUST')}] {r['title']}\n" +
-        "\n".join(f"  Given {s['given']} / When {s['when']} / Then {s['then']}" for s in r.get("scenarios", []))
+        "\n".join(f"  {s.get('title','')}: {s.get('condition', s.get('given',''))} → {s.get('expected', s.get('then',''))}" for s in r.get("scenarios", []))
         for r in spec.get("requirements", [])
     )
     user_prompt = f"## 任务规格\n标题：{spec.get('title','')}\n范围：{spec.get('scope','')}\n\n## 需求\n{req_summary}"

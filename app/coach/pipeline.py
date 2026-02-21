@@ -835,8 +835,10 @@ async def _handle_user_response(dev_id: str, msg: dict) -> None:
     elif state.status == Status.EXECUTING:
         # User guidance for failed task
         content = msg.get("content", "").strip()
-        if content == "跳过":
-            await _skip_current_task(state)
+        if content == "重试":
+            await _retry_failed_tasks(state)
+        elif content == "跳过":
+            await _skip_failed_tasks(state)
         elif content == "取消":
             await _cancel_feature(state)
         else:
@@ -873,18 +875,19 @@ async def _handle_plan_rejected(dev_id: str, msg: dict) -> None:
     await finalize_spec(state)
 
 
-async def _skip_current_task(state: FeatureState) -> None:
+async def _skip_failed_tasks(state: FeatureState) -> None:
+    """Skip all failed tasks and continue the execution loop."""
     from .decompose import execute_task_loop
 
-    idx = state.current_task_idx
-    if 0 <= idx < len(state.tasks):
-        state.tasks[idx]["status"] = "skipped"
-        await _send_dev(state.dev_id, {
-            "type": "feature-task-status",
-            "featureId": state.feature_id,
-            "taskId": state.tasks[idx]["id"],
-            "status": "skipped",
-        })
+    for task in state.tasks:
+        if task.get("status") == "failed":
+            task["status"] = "skipped"
+            await _send_dev(state.dev_id, {
+                "type": "feature-task-status",
+                "featureId": state.feature_id,
+                "taskId": task["id"],
+                "status": "skipped",
+            })
     await execute_task_loop(state)
 
 
@@ -896,13 +899,39 @@ async def _cancel_feature(state: FeatureState) -> None:
     state.status = Status.IDLE
 
 
-async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
-    from .decompose import assign_task
+async def _retry_failed_tasks(state: FeatureState) -> None:
+    """Reset all failed tasks to pending and re-enter the execution loop."""
+    from .decompose import execute_task_loop
 
-    idx = state.current_task_idx
-    if 0 <= idx < len(state.tasks):
-        task = state.tasks[idx]
-        task["instruction"] = f"{task.get('instruction', '')}\n\n## 用户补充指导\n{guidance}"
-        state.failed_attempts = 0
-        await assign_task(state, task)
+    for task in state.tasks:
+        if task.get("status") == "failed":
+            task["status"] = "pending"
+            await _send_dev(state.dev_id, {
+                "type": "feature-task-status",
+                "featureId": state.feature_id,
+                "taskId": task["id"],
+                "status": "pending",
+            })
+    state.failed_attempts = 0
+    await _send_chat(state.dev_id, "正在重试失败的任务...", role="system")
+    await execute_task_loop(state)
+
+
+async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
+    """Inject user guidance into all failed tasks, then re-enter the execution loop."""
+    from .decompose import execute_task_loop
+
+    for task in state.tasks:
+        if task.get("status") == "failed":
+            task["instruction"] = f"{task.get('instruction', '')}\n\n## 用户补充指导\n{guidance}"
+            task["status"] = "pending"
+            await _send_dev(state.dev_id, {
+                "type": "feature-task-status",
+                "featureId": state.feature_id,
+                "taskId": task["id"],
+                "status": "pending",
+            })
+    state.failed_attempts = 0
+    await _send_chat(state.dev_id, "收到指导，正在重试...", role="system")
+    await execute_task_loop(state)
 
