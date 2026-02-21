@@ -8,7 +8,7 @@ repos/
 *.egg-info/
 dist/
 build/
-app/settings.json
+web/settings.json
 indexes/
 manon.log
 
@@ -18,8 +18,8 @@ node_modules/
 manon_server.log
 saas_repos/
 saas_indexes/
-app/static/reports/
-app/static/test-results/
+web/static/reports/
+web/static/test-results/
 
 # internal docs (business plans, etc.)
 docs/

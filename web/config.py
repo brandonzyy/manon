@@ -21,7 +21,7 @@ class ManonSettings(BaseSettings):
     repos_dir: str = "./repos"
     index_dir: str = "./indexes"
 
-    # MatrixoneGraph / CodeIndex
+    # CodeIndex (local AST parsing)
     codeindex_bin: str = str(_VENV_BIN / "codeindex")
     embedding_url: str = "http://117.131.45.179:3002"
 
@@ -33,6 +33,10 @@ class ManonSettings(BaseSettings):
     llm_model: str = "glm-4.7-fp8"
     llm_model_fallback: str = "GLM-5"
     llm_api_key: str = "sk-f05sj8cb25syBlnH3pUFN9TuczxgwtEtIEwQ5PEtD22sxeH1"
+
+    # SaaS backend
+    saas_url: str = "http://localhost:3700"
+    saas_api_key: str = ""
 
     # Auth
     api_keys: list[str] = []

@@ -321,11 +321,12 @@ async def _auto_compact(
 
 
 async def _iterative_graph_query(
-    dev_id: str, prompt: str, mg, initial_context: str, max_rounds: int = 3,
+    dev_id: str, prompt: str, repo_id: str, initial_context: str, max_rounds: int = 3,
 ) -> str:
-    """Perform iterative graph queries — LLM analyzes gaps and triggers follow-up searches."""
+    """Perform iterative graph queries via saas/ — LLM analyzes gaps and triggers follow-up searches."""
     import json as _json
     from ..services.llm import llm_chat
+    from shared import saas_client
 
     accumulated = initial_context
     for round_idx in range(max_rounds):
@@ -364,16 +365,17 @@ async def _iterative_graph_query(
             log.warning("Deep query planning failed: %s", exc)
             break
 
-        # Execute follow-up queries
+        # Execute follow-up queries via saas/
         for q in follow_ups[:3]:
             try:
                 import time as _time
                 t0 = _time.monotonic()
-                r = await mg.query(q, top_k=5, depth=1)
+                r = await saas_client.search(repo_id, q, top_k=5, depth=1)
                 q_ms = int((_time.monotonic() - t0) * 1000)
-                if r.context:
-                    accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
-                    ctx_tok = len(r.context) // 2
+                ctx = r.get("context", "")
+                if ctx:
+                    accumulated += f"\n\n## 补充查询: {q}\n{ctx}"
+                    ctx_tok = len(ctx) // 2
                     await _send_dev(dev_id, {
                         "type": "llm-query", "caller": "manon.deep",
                         "command": f"补充检索 (round {round_idx + 1})",
@@ -444,7 +446,8 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
     """Unified Manon handler — answers questions or auto-starts pipeline."""
     import time
     from datetime import datetime
-    from matrixone_graph import MatrixoneGraph
+    from shared import saas_client
+    from shared.ast_sync import find_project_by_repo_id
     from ..services.llm import llm_chat_stream
 
     prompt = msg.get("content", "").strip()
@@ -518,43 +521,48 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
         await _handle_user_response(dev_id, {"content": prompt})
         return
 
-    # Query graph for context
+    # Query graph for context via saas/
     graph_context = ""
     context_tokens = 0
     project_name = ""
     project_path = ""
+    repo_id = ""
     if project_id:
-        from ..db import db_pool
-        async with db_pool() as db:
-            row = await db.execute_fetchone(
-                "SELECT name, local_path FROM projects WHERE id = ?", (project_id,),
-            )
-        if row:
-            project_name = row["name"] or ""
-            project_path = row["local_path"] or ""
-        if project_path:
+        # Look up repo_id from local project cache or use project_id directly
+        found = find_project_by_repo_id(project_id)
+        if found:
+            project_path, proj_info = found
+            project_name = proj_info.get("name", "")
+            repo_id = project_id
+        else:
+            # project_id might be the repo_id itself
+            repo_id = project_id
+            try:
+                repo = await saas_client.repos_get(repo_id)
+                project_name = repo.get("name", "")
+            except Exception:
+                pass
+        if repo_id:
             try:
                 await _send_thinking(dev_id, True, "查询知识图谱...")
                 t0 = time.monotonic()
-                mg = MatrixoneGraph.get(project_path)
-                result = await mg.query(prompt, top_k=10, depth=1)
+                result = await saas_client.search(repo_id, prompt, top_k=10, depth=1)
                 graph_ms = int((time.monotonic() - t0) * 1000)
-                # Always send query record so user sees graph activity
-                context_tokens = len(result.context) // 2 if result.context else 0
+                ctx = result.get("context", "")
+                context_tokens = len(ctx) // 2 if ctx else 0
                 await _send_dev(dev_id, {
                     "type": "llm-query", "caller": "manon",
-                    "command": "matrixone_graph.query(hybrid)",
+                    "command": "saas_client.search(hybrid)",
                     "query": prompt[:120], "ts": datetime.now().isoformat(),
                     "duration_ms": graph_ms,
                     "context_tokens": context_tokens,
                 })
-                if result.context:
-                    graph_context = result.context
+                if ctx:
+                    graph_context = ctx
                     await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens/1000:.1f}k tokens ({graph_ms}ms)")
-                    # Iterative deep retrieval: LLM analyzes gaps → follow-up queries
                     try:
                         graph_context = await _iterative_graph_query(
-                            dev_id, prompt, mg, graph_context, max_rounds=2,
+                            dev_id, prompt, repo_id, graph_context, max_rounds=2,
                         )
                         context_tokens = len(graph_context) // 2
                     except Exception as exc:
@@ -564,7 +572,7 @@ async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
                 await _send_thinking(dev_id, False)
             except Exception as exc:
                 await _send_thinking(dev_id, False)
-                log.warning("MatrixoneGraph query failed: %s", exc)
+                log.warning("saas_client.search failed: %s", exc)
                 await _send_chat(dev_id, f"⚠ 知识图谱查询失败: {exc}", role="system")
 
     # Classify intent: explicit task request → pipeline, otherwise → chat
@@ -890,11 +898,10 @@ async def handle_feature_approved(dev_id: str) -> None:
     title = (state.spec or {}).get("title", state.description[:40]) or "feature"
     repo_path = ""
     if state.project_id:
-        from ..db import db_pool
-        async with db_pool() as db:
-            row = await db.execute_fetchone("SELECT local_path FROM projects WHERE id = ?", (state.project_id,))
-            if row:
-                repo_path = row["local_path"] or ""
+        from shared.ast_sync import find_project_by_repo_id
+        found = find_project_by_repo_id(state.project_id)
+        if found:
+            repo_path = found[0]
 
     if repo_path:
         import asyncio as _asyncio

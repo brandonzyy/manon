@@ -1,7 +1,7 @@
-"""CLI Orchestrator — MatrixoneGraph → task decomposition → auto-fix agent → review.
+"""CLI Orchestrator — saas/ graph queries → task decomposition → auto-fix agent → review.
 
 Replaces the simple CLI subprocess approach with an intelligent pipeline:
-1. MatrixoneGraph hybrid query (already done by caller)
+1. saas/ hybrid query (already done by caller)
 2. LLM decomposes user request into sub-tasks
 3. For each task: query graph → build context → assign to agent → review
 4. Report results back to user
@@ -14,7 +14,6 @@ import logging
 from datetime import datetime
 
 from ..services.llm import call_glm5, parse_json_from_llm
-from matrixone_graph import MatrixoneGraph
 from ..ws_hub import hub
 from .pipeline import FeatureState, Status, _send_chat, _send_dev, _send_thinking
 
@@ -167,18 +166,25 @@ async def _query_graph_for_task(
     task: dict,
     repo_path: str | None,
 ) -> str:
-    """Query MatrixoneGraph for task-specific context using graph_queries."""
+    """Query saas/ for task-specific context using graph_queries."""
     queries = task.get("graph_queries", [])
     if not queries or not repo_path:
         return ""
 
+    from shared import saas_client
+    from shared.ast_sync import get_project
+    proj = get_project(repo_path) if repo_path else None
+    repo_id = proj.get("repo_id", "") if proj else ""
+    if not repo_id:
+        return ""
+
     parts: list[str] = []
-    for q in queries[:5]:  # limit to 5 queries per task
+    for q in queries[:5]:
         try:
-            mg = MatrixoneGraph.get(repo_path)
-            result = await mg.query(q, top_k=10, depth=1)
-            if result.context:
-                parts.append(f"### {q}\n{result.context}")
+            result = await saas_client.search(repo_id, q, top_k=10, depth=1)
+            ctx = result.get("context", "")
+            if ctx:
+                parts.append(f"### {q}\n{ctx}")
         except Exception as exc:
             log.debug("Graph query '%s' failed: %s", q, exc)
 
@@ -243,15 +249,16 @@ async def _assign_and_review(
     repo_path = ""
     test_command = ""
     if state.project_id:
-        from ..db import db_pool
-        async with db_pool() as db:
-            row = await db.execute_fetchone(
-                "SELECT local_path, test_command FROM projects WHERE id = ?",
-                (state.project_id,),
-            )
-            if row:
-                repo_path = row["local_path"] or ""
-                test_command = row["test_command"] or ""
+        from shared.ast_sync import find_project_by_repo_id
+        found = find_project_by_repo_id(state.project_id)
+        if found:
+            repo_path = found[0]
+        try:
+            from shared import saas_client as _sc
+            repo_info = await _sc.repos_get(state.project_id)
+            test_command = repo_info.get("test_command", "") or ""
+        except Exception:
+            pass
 
     assign_msg = {
         "type": "feature-task-assign",

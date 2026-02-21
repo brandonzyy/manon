@@ -5,9 +5,18 @@
 Manon (马浓) 是 AI 架构师工具，FastAPI 后端 + 单页 HTML 前端 + WebSocket 实时通信。
 运行端口: `http://localhost:3600`
 
+## 项目结构
+
+```
+web/       — Web 客户端 (FastAPI + 前端 + coach pipeline + worker)
+mcp/       — MCP 服务端 (IDE 集成, Claude Code 等)
+shared/    — 共享模块 (saas_client, ast_sync)
+saas/      — 数据服务后端 (port 3700)
+```
+
 ## 浏览器验证流程（MUST）
 
-**每次修改 `app/` 下的文件后，必须用 `--live` 模式打开真实浏览器，模拟用户操作流程，让用户亲眼观察验证。**
+**每次修改 `web/` 下的文件后，必须用 `--live` 模式打开真实浏览器，模拟用户操作流程，让用户亲眼观察验证。**
 
 ### 流程
 
@@ -19,7 +28,7 @@ Manon (马浓) 是 AI 架构师工具，FastAPI 后端 + 单页 HTML 前端 + We
 
 2. **读取结果 JSON** 检查是否有报错：
    ```bash
-   cat app/static/test-results/latest-interact.json
+   cat web/static/test-results/latest-interact.json
    ```
 
 3. **如果有 console 错误或网络失败**：直接修复代码，然后重新跑 `--live`

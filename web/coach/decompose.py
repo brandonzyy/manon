@@ -166,12 +166,21 @@ async def execute_task_loop(state: FeatureState) -> None:
     # 1. Project-level test
     test_result_text = ""
     if state.project_id:
-        from ..db import db_pool
-        async with db_pool() as db:
-            row = await db.execute_fetchone("SELECT test_command, local_path, workspace FROM projects WHERE id = ?", (state.project_id,))
-        if row and row["test_command"]:
-            test_cmd = row["test_command"]
-            test_cwd = row["workspace"] or row["local_path"] or ""
+        from shared.ast_sync import find_project_by_repo_id
+        found = find_project_by_repo_id(state.project_id)
+        test_cmd = ""
+        test_cwd = ""
+        if found:
+            test_cwd = found[0]
+        try:
+            from shared import saas_client as _sc
+            repo_info = await _sc.repos_get(state.project_id)
+            test_cmd = repo_info.get("test_command", "") or ""
+            if not test_cwd:
+                test_cwd = repo_info.get("workspace", "") or repo_info.get("local_path", "") or ""
+        except Exception:
+            pass
+        if test_cmd and test_cwd:
             try:
                 await _send_thinking(state.dev_id, True, f"运行项目测试: {test_cmd}")
                 proc = await asyncio.create_subprocess_shell(
@@ -286,35 +295,41 @@ async def assign_task(state: FeatureState, task: dict) -> bool:
     repo_path = ""
     workspace = ""
     test_command = ""
+    repo_id = ""
     if state.project_id:
-        from ..db import db_pool
-        async with db_pool() as db:
-            row = await db.execute_fetchone("SELECT local_path, workspace, test_command FROM projects WHERE id = ?", (state.project_id,))
-            if row:
-                repo_path = row["local_path"] or ""
-                workspace = row["workspace"] or ""
-                test_command = row["test_command"] or ""
+        from shared.ast_sync import find_project_by_repo_id
+        found = find_project_by_repo_id(state.project_id)
+        if found:
+            repo_path = found[0]
+            repo_id = state.project_id
+        # Try to get workspace/test_command from saas/ repo metadata
+        try:
+            from shared import saas_client as _sc
+            repo_info = await _sc.repos_get(state.project_id)
+            workspace = repo_info.get("workspace", "") or ""
+            test_command = repo_info.get("test_command", "") or ""
+        except Exception:
+            pass
 
-    # Query knowledge graph for task-specific context
+    # Query knowledge graph for task-specific context via saas/
     graph_context = ""
-    if repo_path:
+    if repo_id:
         try:
             import time as _time
             from datetime import datetime as _dt
-            from matrixone_graph import MatrixoneGraph
-            mg = MatrixoneGraph.get(repo_path)
+            from shared import saas_client as _sc
             instruction = task.get("instruction") or task.get("title", "")
             scoped_files = task.get("files", [])
 
-            # Primary query: instruction + file hints
             query_text = instruction
             if scoped_files:
                 query_text += "\n涉及文件: " + ", ".join(scoped_files[:10])
             t0 = _time.monotonic()
-            result = await mg.query(query_text, top_k=10, depth=1)
+            result = await _sc.search(repo_id, query_text, top_k=10, depth=1)
             q_ms = int((_time.monotonic() - t0) * 1000)
-            if result.context:
-                graph_context = result.context
+            ctx = result.get("context", "")
+            if ctx:
+                graph_context = ctx
                 ctx_tok = len(graph_context) // 2
                 log.info("Graph context for task %s: %d chars (%dms)", task.get("id"), len(graph_context), q_ms)
                 task_group_key = f"Task #{task.get('id')}: {task.get('title', '')}"

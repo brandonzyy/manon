@@ -220,17 +220,23 @@ async def exec_search_code(repo_root: str, args: dict) -> dict:
         return {"error": "Empty query"}
     try:
         import time as _time
-        from matrixone_graph import MatrixoneGraph
-        mg = MatrixoneGraph.get(repo_root)
+        from shared import saas_client
+        from shared.ast_sync import get_project
+        # Resolve repo_id from repo_root
+        proj = get_project(repo_root) if repo_root else None
+        repo_id = proj.get("repo_id", "") if proj else ""
+        if not repo_id:
+            return {"error": "Project not registered — cannot search graph"}
         t0 = _time.monotonic()
-        result = await mg.query(query, top_k=5, depth=1)
+        result = await saas_client.search(repo_id, query, top_k=5, depth=1)
         q_ms = int((_time.monotonic() - t0) * 1000)
-        if result.context:
+        ctx = result.get("context", "")
+        if ctx:
             return {
-                "context": result.context,
+                "context": ctx,
                 "_query_log": {"caller": "worker.tool", "command": "search_code",
                                "query": query[:120], "duration_ms": q_ms,
-                               "context_tokens": len(result.context) // 2},
+                               "context_tokens": len(ctx) // 2},
             }
         return {"context": "(no results)"}
     except Exception as exc:

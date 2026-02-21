@@ -2,10 +2,12 @@
 
 Supports both git-based repos (server-side clone) and local repos
 (client-side AST extraction + cloud sync).
+
+Uses shared.ast_sync for project registry and AST scanning.
+Keeps sync HTTP helpers for MCP tool compatibility.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -14,17 +16,20 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from shared.ast_sync import (
+    load_projects, save_projects, get_project, set_project,
+    find_project_by_repo_id, scan_and_parse, count_scannable_files,
+    SYNC_BATCH_SIZE,
+)
+
 mcp = FastMCP("manon", instructions="Manon 代码智能工具 — 语义搜索、图遍历、影响分析")
 
 log = logging.getLogger("manon-mcp")
 
 # ── Config ────────────────────────────────────────────
-SYNC_BATCH_SIZE = 50
-MAX_RESPONSE_CHARS = 8000  # hard cap for MCP tool responses to protect LLM context
-HTTP_TIMEOUT = 45  # seconds — must be < MCP client timeout (typically 60s)
-INLINE_SCAN_LIMIT = 200  # max files to scan inline; larger projects use async flow
-PROJECTS_DIR = Path.home() / ".manon"
-PROJECTS_FILE = PROJECTS_DIR / "projects.json"
+MAX_RESPONSE_CHARS = 8000
+HTTP_TIMEOUT = 45
+INLINE_SCAN_LIMIT = 200
 
 # ── Geo-routing ───────────────────────────────────────
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
@@ -110,112 +115,6 @@ def _delete(path: str) -> None:
         r = c.delete(path)
         r.raise_for_status()
 
-
-# ── Local project registry ────────────────────────────
-
-def _load_projects() -> dict:
-    if PROJECTS_FILE.exists():
-        return json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
-    return {"projects": {}}
-
-
-def _save_projects(data: dict) -> None:
-    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    PROJECTS_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def _get_project(local_path: str) -> dict | None:
-    norm = str(Path(local_path).resolve()).replace("\\", "/")
-    return _load_projects()["projects"].get(norm)
-
-
-def _set_project(local_path: str, info: dict) -> None:
-    norm = str(Path(local_path).resolve()).replace("\\", "/")
-    data = _load_projects()
-    data["projects"][norm] = info
-    _save_projects(data)
-
-
-def _find_project_by_repo_id(repo_id: str) -> tuple[str, dict] | None:
-    for path, info in _load_projects()["projects"].items():
-        if info.get("repo_id") == repo_id:
-            return path, info
-    return None
-
-
-# ── File scanning + AST extraction ────────────────────
-
-def _file_hash(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return h.hexdigest()
-
-
-def _scan_and_parse(local_path: str, old_hashes: dict[str, str], *, max_files: int = 0):
-    """Scan directory, parse changed files, return sync payload.
-
-    Returns (file_results, deleted_files, new_hashes) where:
-    - file_results: list of dicts ready for SyncAstRequest.files
-    - deleted_files: list of relative paths that were removed
-    - new_hashes: updated hash map
-
-    If max_files > 0, stops parsing after that many changed files (but still
-    computes all hashes for accurate deleted_files detection).
-    """
-    from codeindex.scanner import scan_directory
-    from codeindex.parser import parse_file
-    from codeindex.config import Config
-
-    root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
-    scan_result = scan_directory(root, config, root)
-
-    new_hashes: dict[str, str] = {}
-    file_results = []
-    hit_limit = False
-
-    for f in scan_result.files:
-        rel = str(f.relative_to(root)).replace("\\", "/")
-        h = _file_hash(f)
-        new_hashes[rel] = h
-        if old_hashes.get(rel) == h:
-            continue  # unchanged
-        if max_files > 0 and len(file_results) >= max_files:
-            hit_limit = True
-            continue  # still hash remaining files, just skip parsing
-        # Parse AST
-        pr = parse_file(f)
-        if pr.error:
-            log.warning("Parse error %s: %s", rel, pr.error)
-            continue
-        try:
-            source = f.read_text(encoding="utf-8", errors="replace")
-        except Exception as e:
-            log.warning("Failed to read %s: %s", rel, e)
-            source = ""
-        file_results.append({
-            "rel_path": rel,
-            "hash": h,
-            "source": source,
-            "parse_result": pr.to_dict(),
-        })
-
-    # Detect deleted files
-    old_files = set(old_hashes.keys())
-    new_files = set(new_hashes.keys())
-    deleted_files = list(old_files - new_files)
-
-    return file_results, deleted_files, new_hashes
-
-
-def _count_scannable_files(local_path: str) -> int:
-    """Quick count of scannable files without parsing."""
-    from codeindex.scanner import scan_directory
-    from codeindex.config import Config
-    root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
-    scan_result = scan_directory(root, config, root)
-    return len(scan_result.files)
 
 
 def _sync_to_server(repo_id: str, file_results: list, deleted_files: list, full_reindex: bool = False) -> dict:
@@ -432,18 +331,18 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
         incremental: 增量索引（默认 True），设为 False 全量重建
     """
     # For local repos, do a local scan + sync (with limit to avoid timeout)
-    found = _find_project_by_repo_id(repo_id)
+    found = find_project_by_repo_id(repo_id)
     if found:
         local_path, info = found
         old_hashes = {} if not incremental else info.get("file_hashes", {})
-        file_results, deleted, new_hashes = _scan_and_parse(
+        file_results, deleted, new_hashes = scan_and_parse(
             local_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
         )
         if file_results or deleted:
             _sync_to_server(repo_id, file_results, deleted, full_reindex=not incremental)
         info["file_hashes"] = new_hashes
         info["last_sync"] = __import__("datetime").datetime.now().isoformat()
-        _set_project(local_path, info)
+        set_project(local_path, info)
 
         # Check if there are remaining unsynced files
         synced_set = {f["rel_path"] for f in file_results}
@@ -503,9 +402,9 @@ def manon_repos_create(name: str, git_url: str = "", branch: str = "main", local
         repo_id = result["id"]
 
         # Check project size — large projects defer to async index
-        file_count = _count_scannable_files(resolved)
+        file_count = count_scannable_files(resolved)
         if file_count > INLINE_SCAN_LIMIT:
-            _set_project(resolved, {
+            set_project(resolved, {
                 "repo_id": repo_id, "name": name,
                 "last_sync": "", "file_hashes": {},
             })
@@ -517,12 +416,12 @@ def manon_repos_create(name: str, git_url: str = "", branch: str = "main", local
             )
 
         # Small project — scan + parse + upload inline
-        file_results, deleted, new_hashes = _scan_and_parse(resolved, {})
+        file_results, deleted, new_hashes = scan_and_parse(resolved, {})
         if file_results:
             _sync_to_server(repo_id, file_results, deleted, full_reindex=True)
 
         # Save local project mapping
-        _set_project(resolved, {
+        set_project(resolved, {
             "repo_id": repo_id,
             "name": name,
             "last_sync": __import__("datetime").datetime.now().isoformat(),
@@ -564,12 +463,12 @@ def manon_repos_delete(repo_id: str) -> str:
         repo_id: 仓库 ID
     """
     # Also clean up local project mapping
-    found = _find_project_by_repo_id(repo_id)
+    found = find_project_by_repo_id(repo_id)
     if found:
         local_path, _ = found
-        data = _load_projects()
+        data = load_projects()
         data["projects"].pop(local_path, None)
-        _save_projects(data)
+        save_projects(data)
 
     _delete(f"/api/v1/repos/{repo_id}")
     return f"仓库 {repo_id} 已删除。"
@@ -583,11 +482,11 @@ def manon_push_update(repo_id: str) -> str:
         repo_id: 仓库 ID
     """
     # Check if this is a local project
-    found = _find_project_by_repo_id(repo_id)
+    found = find_project_by_repo_id(repo_id)
     if found:
         local_path, info = found
         old_hashes = info.get("file_hashes", {})
-        file_results, deleted, new_hashes = _scan_and_parse(
+        file_results, deleted, new_hashes = scan_and_parse(
             local_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
         )
         if not file_results and not deleted:
@@ -595,7 +494,7 @@ def manon_push_update(repo_id: str) -> str:
         _sync_to_server(repo_id, file_results, deleted)
         info["file_hashes"] = new_hashes
         info["last_sync"] = __import__("datetime").datetime.now().isoformat()
-        _set_project(local_path, info)
+        set_project(local_path, info)
 
         synced_set = {f["rel_path"] for f in file_results}
         unsynced = [k for k, v in new_hashes.items()
@@ -634,7 +533,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     lines.append(f"  Embedding: {health.get('embedding_url', '?')}")
 
     # 2. Check local project registry first
-    proj = _get_project(project_path)
+    proj = get_project(project_path)
     if proj:
         rid = proj["repo_id"]
         lines.append(f"\n本地项目已注册: {proj['name']} (id={rid})")
@@ -671,7 +570,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         lines.append(f"  索引状态: {matched['index_status']}")
         # Register locally if it's a local source_type
         if matched.get("source_type") == "local":
-            _set_project(project_path, {
+            set_project(project_path, {
                 "repo_id": rid, "name": matched["name"],
                 "last_sync": "", "file_hashes": {},
             })
@@ -686,19 +585,19 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"\n仓库已创建: {name} (id={rid})")
 
             # Scan + sync (with limit for large projects)
-            file_count = _count_scannable_files(project_path)
+            file_count = count_scannable_files(project_path)
             if file_count > INLINE_SCAN_LIMIT:
-                _set_project(project_path, {
+                set_project(project_path, {
                     "repo_id": rid, "name": name,
                     "last_sync": "", "file_hashes": {},
                 })
                 lines.append(f"检测到 {file_count} 个文件，请调用 manon_index {rid} 异步索引。")
             else:
-                file_results, deleted, new_hashes = _scan_and_parse(project_path, {})
+                file_results, deleted, new_hashes = scan_and_parse(project_path, {})
                 if file_results:
                     _sync_to_server(rid, file_results, deleted, full_reindex=True)
                     lines.append(f"已扫描 {len(new_hashes)} 文件, {len(file_results)} 文件已上传 AST。")
-                _set_project(project_path, {
+                set_project(project_path, {
                     "repo_id": rid, "name": name,
                     "last_sync": __import__("datetime").datetime.now().isoformat(),
                     "file_hashes": new_hashes if file_count <= INLINE_SCAN_LIMIT else {},

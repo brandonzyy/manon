@@ -10,19 +10,6 @@ import aiosqlite
 _db_path: str = ""
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS projects (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    git_url     TEXT NOT NULL DEFAULT '',
-    branch      TEXT NOT NULL DEFAULT 'main',
-    workspace   TEXT,
-    local_path  TEXT,
-    test_command TEXT,
-    index_stats  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS api_keys (
     key         TEXT PRIMARY KEY,
     label       TEXT,
@@ -30,20 +17,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS jobs (
-    id          TEXT PRIMARY KEY,
-    project_id  TEXT NOT NULL REFERENCES projects(id),
-    type        TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'pending',
-    payload     TEXT,
-    result      TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS conversations (
     id          TEXT PRIMARY KEY,
-    project_id  TEXT NOT NULL REFERENCES projects(id),
+    project_id  TEXT NOT NULL DEFAULT '',
     feature_id  TEXT,
     messages    TEXT NOT NULL DEFAULT '[]',
     state       TEXT NOT NULL DEFAULT 'idle',

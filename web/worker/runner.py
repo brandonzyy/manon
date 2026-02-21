@@ -125,25 +125,36 @@ async def execute_task(config: dict) -> dict:
         except Exception:
             baseline = set()
 
-        # 2. Knowledge graph context (use pre-fetched from Manon + optional local query)
+        # 2. Knowledge graph context (use pre-fetched from Manon + optional saas/ query)
         graph_context = pre_graph_context
         queries_log: list[dict] = []
         if not graph_context:
             try:
                 import time as _time
-                from matrixone_graph import MatrixoneGraph
-                mg = MatrixoneGraph.get(repo_root)
-                t0 = _time.monotonic()
-                result = await mg.query(instruction, top_k=5, depth=1)
-                q_ms = int((_time.monotonic() - t0) * 1000)
-                if result.context:
-                    graph_context = result.context
-                    log.info("Graph context: %d chars (%dms)", len(graph_context), q_ms)
-                    queries_log.append({
-                        "caller": "worker", "command": f"Worker 上下文检索 (Task #{task_id})",
-                        "query": instruction[:120], "duration_ms": q_ms,
-                        "context_tokens": len(graph_context) // 2,
-                    })
+                from shared import saas_client
+                from shared.ast_sync import find_project_by_repo_id
+                # Resolve repo_id from repo_root
+                _repo_id = config.get("repoId", "")
+                if not _repo_id:
+                    found = find_project_by_repo_id(repo_root) if repo_root else None
+                    # Try matching by path
+                    from shared.ast_sync import get_project
+                    proj = get_project(repo_root) if repo_root else None
+                    if proj:
+                        _repo_id = proj.get("repo_id", "")
+                if _repo_id:
+                    t0 = _time.monotonic()
+                    result = await saas_client.search(_repo_id, instruction, top_k=5, depth=1)
+                    q_ms = int((_time.monotonic() - t0) * 1000)
+                    ctx = result.get("context", "")
+                    if ctx:
+                        graph_context = ctx
+                        log.info("Graph context: %d chars (%dms)", len(graph_context), q_ms)
+                        queries_log.append({
+                            "caller": "worker", "command": f"Worker 上下文检索 (Task #{task_id})",
+                            "query": instruction[:120], "duration_ms": q_ms,
+                            "context_tokens": len(graph_context) // 2,
+                        })
             except Exception as exc:
                 log.warning("Graph query failed: %s", exc)
 
