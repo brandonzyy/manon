@@ -8,6 +8,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 log = logging.getLogger("manon.ast_sync")
@@ -49,6 +51,116 @@ def find_project_by_repo_id(repo_id: str) -> tuple[str, dict] | None:
     return None
 
 
+# ── Auto-detect languages + install parsers ──────────
+
+# Extension → language (mirrors codeindex.parser.FILE_EXTENSIONS)
+_EXT_TO_LANG: dict[str, str] = {
+    ".py": "python", ".php": "php", ".phtml": "php",
+    ".java": "java", ".ts": "typescript", ".tsx": "tsx",
+    ".js": "javascript", ".jsx": "javascript",
+}
+
+# Language → pip package name
+_LANG_TO_PKG: dict[str, str] = {
+    "python": "tree-sitter-python",
+    "php": "tree-sitter-php",
+    "java": "tree-sitter-java",
+    "typescript": "tree-sitter-typescript",
+    "tsx": "tree-sitter-typescript",  # same package
+    "javascript": "tree-sitter-javascript",
+}
+
+
+def detect_languages(local_path: str) -> set[str]:
+    """Scan project directory and return set of detected languages."""
+    from codeindex.scanner import scan_directory
+    from codeindex.config import Config
+
+    root = Path(local_path).resolve()
+    config = Config.load(root / ".codeindex.yaml")
+    scan_result = scan_directory(root, config, root)
+
+    langs: set[str] = set()
+    for f in scan_result.files:
+        ext = f.suffix.lower()
+        lang = _EXT_TO_LANG.get(ext)
+        if lang:
+            langs.add(lang)
+    return langs
+
+
+def _check_parser_installed(language: str) -> bool:
+    """Check if tree-sitter parser for a language is importable."""
+    try:
+        if language in ("typescript", "tsx"):
+            __import__("tree_sitter_typescript")
+        elif language == "javascript":
+            __import__("tree_sitter_javascript")
+        elif language == "python":
+            __import__("tree_sitter_python")
+        elif language == "php":
+            __import__("tree_sitter_php")
+        elif language == "java":
+            __import__("tree_sitter_java")
+        else:
+            return False
+        return True
+    except ImportError:
+        return False
+
+
+def ensure_parsers(local_path: str) -> dict[str, str]:
+    """Auto-detect project languages and install missing tree-sitter parsers.
+
+    Returns dict mapping language → status ("already_installed" | "installed" | "failed").
+    """
+    langs = detect_languages(local_path)
+    if not langs:
+        log.info("No supported languages detected in %s", local_path)
+        return {}
+
+    # Deduplicate packages (tsx and typescript share the same package)
+    needed_pkgs: dict[str, list[str]] = {}  # pkg → [languages]
+    for lang in langs:
+        pkg = _LANG_TO_PKG.get(lang)
+        if pkg:
+            needed_pkgs.setdefault(pkg, []).append(lang)
+
+    results: dict[str, str] = {}
+    to_install: list[str] = []
+
+    for pkg, pkg_langs in needed_pkgs.items():
+        if all(_check_parser_installed(l) for l in pkg_langs):
+            for l in pkg_langs:
+                results[l] = "already_installed"
+        else:
+            to_install.append(pkg)
+            for l in pkg_langs:
+                results[l] = "pending"
+
+    if not to_install:
+        log.info("All parsers already installed for: %s", ", ".join(langs))
+        return results
+
+    log.info("Installing missing parsers: %s", ", ".join(to_install))
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet"] + to_install,
+            timeout=120,
+        )
+        for pkg in to_install:
+            for l in needed_pkgs[pkg]:
+                results[l] = "installed"
+        log.info("Parsers installed successfully: %s", ", ".join(to_install))
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        log.error("Failed to install parsers: %s", e)
+        for pkg in to_install:
+            for l in needed_pkgs[pkg]:
+                results[l] = "failed"
+
+    return results
+
+
 # ── File scanning + AST extraction ───────────────────
 
 def _file_hash(path: Path) -> str:
@@ -65,8 +177,13 @@ def scan_and_parse(
 ) -> tuple[list[dict], list[str], dict[str, str]]:
     """Scan directory, parse changed files, return sync payload.
 
+    Auto-detects project languages and installs missing parsers before scanning.
+
     Returns (file_results, deleted_files, new_hashes).
     """
+    # Auto-install missing tree-sitter parsers
+    ensure_parsers(local_path)
+
     from codeindex.scanner import scan_directory
     from codeindex.parser import parse_file
     from codeindex.config import Config

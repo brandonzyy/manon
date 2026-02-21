@@ -296,6 +296,10 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             "entities_added": entities_added,
             "relations_added": relations_added,
             "chunks_added": len(new_chunks),
+            "total_entities": graph.entity_count,
+            "total_relations": graph.relation_count,
+            "total_chunks": len(all_chunks),
+            "total_files": len(new_hashes),
         }
         await db.execute(
             "UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
@@ -313,15 +317,19 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         await db.commit()
 
 
-@router.post("/sync-ast", status_code=202)
+@router.post("/sync-ast", status_code=200)
 async def sync_ast(
     repo_id: str,
     body: SyncAstRequest,
     ctx: TenantContext = Depends(require_tenant),
 ):
-    """Receive pre-parsed AST from MCP client and rebuild graph/vectors."""
+    """Receive pre-parsed AST from MCP client and rebuild graph/vectors.
+
+    Runs synchronously so batched uploads process sequentially —
+    each batch sees the previous batch's saved state.
+    """
     row = await _get_repo_row(repo_id, ctx.tenant_id)
     repo_name = row["name"]
-    asyncio.create_task(_run_ast_sync(repo_id, ctx.tenant_id, repo_name, body))
+    await _run_ast_sync(repo_id, ctx.tenant_id, repo_name, body)
     await record_usage(ctx.tenant_id, "indexing.sync_ast", repo_id)
-    return {"repo_id": repo_id, "status": "syncing"}
+    return {"repo_id": repo_id, "status": "done"}

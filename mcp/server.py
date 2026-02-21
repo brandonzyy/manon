@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from shared.ast_sync import (
     load_projects, save_projects, get_project, set_project,
     find_project_by_repo_id, scan_and_parse, count_scannable_files,
+    ensure_parsers, detect_languages,
     SYNC_BATCH_SIZE,
 )
 
@@ -371,10 +372,11 @@ def manon_index_status(repo_id: str) -> str:
     stats = result.get("stats")
     msg = f"状态: {s}"
     if stats:
-        msg += f"\n文件扫描: {stats.get('files_scanned', stats.get('files_synced', 0))}"
+        msg += f"\n文件扫描: {stats.get('total_files', stats.get('files_scanned', stats.get('files_synced', 0)))}"
         msg += f", 索引: {stats.get('files_indexed', 0)}"
-        msg += f"\n实体: {stats.get('entities_added', 0)}, 关系: {stats.get('relations_added', 0)}"
-        msg += f", 块: {stats.get('chunks_added', 0)}"
+        msg += f"\n实体: {stats.get('total_entities', stats.get('entities_added', 0))}"
+        msg += f", 关系: {stats.get('total_relations', stats.get('relations_added', 0))}"
+        msg += f", 块: {stats.get('total_chunks', stats.get('chunks_added', 0))}"
     return msg
 
 
@@ -544,7 +546,10 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"  索引状态: {repo['index_status']}")
             if repo.get("index_stats"):
                 s = repo["index_stats"]
-                lines.append(f"  实体: {s.get('entities_added', 0)}, 关系: {s.get('relations_added', 0)}, 块: {s.get('chunks_added', 0)}")
+                ent = s.get("total_entities", s.get("entities_added", 0))
+                rel = s.get("total_relations", s.get("relations_added", 0))
+                chk = s.get("total_chunks", s.get("chunks_added", 0))
+                lines.append(f"  实体: {ent}, 关系: {rel}, 块: {chk}")
         except Exception as e:
             lines.append(f"  [!] 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
@@ -578,6 +583,18 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     else:
         # 4. Create new local repo
         try:
+            # Auto-detect languages and install parsers
+            parser_status = ensure_parsers(project_path)
+            if parser_status:
+                installed = [l for l, s in parser_status.items() if s == "installed"]
+                failed = [l for l, s in parser_status.items() if s == "failed"]
+                all_langs = sorted(parser_status.keys())
+                lines.append(f"\n检测到语言: {', '.join(all_langs)}")
+                if installed:
+                    lines.append(f"  自动安装解析器: {', '.join(installed)}")
+                if failed:
+                    lines.append(f"  [!] 安装失败: {', '.join(failed)}")
+
             result = _post("/api/v1/repos", {
                 "name": name, "source_type": "local",
             })

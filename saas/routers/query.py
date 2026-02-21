@@ -40,7 +40,7 @@ async def search(
     ctx: TenantContext = Depends(require_tenant),
 ):
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
-    mg = get_graph(ctx.tenant_id, row["local_path"])
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     result = await mg.query(q, top_k=top_k, depth=depth)
     await record_usage(ctx.tenant_id, "query.search", repo_id)
     return SearchResult(
@@ -59,7 +59,7 @@ async def graph_traverse(
     ctx: TenantContext = Depends(require_tenant),
 ):
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
-    mg = get_graph(ctx.tenant_id, row["local_path"])
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     result = await mg.query(symbol, top_k=5, depth=depth)
     await record_usage(ctx.tenant_id, "query.graph", repo_id)
     return SearchResult(
@@ -78,7 +78,10 @@ async def impact_analysis(
     ctx: TenantContext = Depends(require_tenant),
 ):
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
-    mg = get_graph(ctx.tenant_id, row["local_path"])
+    if not row["local_path"] and not row["git_url"]:
+        # Local-sync repos have no git history on server
+        return ImpactResult(commit=commit, risk={"level": "unknown", "reason": "本地同步仓库无服务端 git 历史，无法分析影响"})
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     result = mg.impact_commit(commit=commit, max_depth=max_depth)
     await record_usage(ctx.tenant_id, "query.impact", repo_id)
     return result
@@ -128,7 +131,7 @@ async def deep_query(
     """多轮迭代查询，确保上下文完整覆盖用户问题。"""
     await check_deep_query_quota(ctx)
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
-    mg = get_graph(ctx.tenant_id, row["local_path"])
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
 
     # initial query
     result = await mg.query(body.question, top_k=10, depth=1)
