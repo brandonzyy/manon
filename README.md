@@ -106,82 +106,47 @@ Browser-based. No IDE, no terminal, no coding experience required.
 
 ## ⚡ Quick Start
 
-### 1. Clone & Install
+### MCP Setup (Claude Code / Cursor / Windsurf)
 
 ```bash
 git clone https://github.com/brandonzyy/manon.git
 cd manon
-python -m venv .venv
-# Linux/macOS
-source .venv/bin/activate
-# Windows
-.venv\Scripts\activate
-
-pip install -r requirements.txt
+bash install.sh
 ```
 
-### 2. Get an API Key
+That's it. The install script auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. Restart your editor and you're ready.
 
-```bash
-curl -X POST https://your-server:3700/api/v1/register \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-team"}'
-# Returns: {"api_key": "msk_xxx", "tenant_id": "xxx"}
-```
-
-### 3a. MCP Setup (Claude Code)
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "manon": {
-      "command": "python",
-      "args": ["/path/to/manon/mcp/server.py"],
-      "env": {
-        "MANON_API_KEY": "msk_xxx",
-        "MANON_API_URL": "https://your-server:3700"
-      }
-    }
-  }
-}
-```
+> **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, the tools appear automatically.
 
 <details>
-<summary>Cursor / Windsurf config</summary>
+<summary>Manual MCP config (if you prefer)</summary>
 
-**Cursor** — add to `~/.cursor/mcp.json`:
+Add to your editor's MCP config (`~/.claude/settings.json` for Claude Code, `~/.cursor/mcp.json` for Cursor):
+
 ```json
 {
   "mcpServers": {
     "manon": {
       "command": "python",
       "args": ["/path/to/manon/mcp/server.py"],
-      "env": {
-        "MANON_API_KEY": "msk_xxx",
-        "MANON_API_URL": "https://your-server:3700"
-      }
+      "env": {}
     }
   }
 }
 ```
 
-**Windsurf** — add to `~/.codeium/windsurf/mcp_config.json` with the same structure.
+The API key is managed automatically in `~/.manon/config.json`. No manual key setup needed.
 
 </details>
 
-### 3b. Web Setup
+### Web Setup
 
 ```bash
-# Set your config
-export MANON_SAAS_URL="https://your-server:3700"
-export MANON_API_KEY="msk_xxx"
-
-# Start the web interface
 python -m web
 # Open http://localhost:3600
 ```
+
+Browser-based, no coding experience required. Projects and API keys are managed through the UI.
 
 ---
 
@@ -357,19 +322,15 @@ Base URL: `http://your-server:3700/api/v1` — All endpoints require `X-API-Key`
 
 ## ⚙️ Configuration
 
-### MCP Client
+All configuration is stored in `~/.manon/config.json`, created automatically on first run.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MANON_API_KEY` | — | API key from registration |
-| `MANON_API_URL` | — | Server URL (overrides geo-routing) |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `api_key` | auto-generated | Free-tier key, obtained on first use |
+| `api_url` | geo-routed | Server endpoint (auto-selected by region) |
+| `projects` | `{}` | Local project registry and file hashes |
 
-### Web Client
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MANON_SAAS_URL` | `http://localhost:3700` | Backend server URL |
-| `MANON_API_KEY` | — | API key from registration |
+Override via environment variables if needed: `MANON_API_KEY`, `MANON_API_URL`.
 
 ---
 
