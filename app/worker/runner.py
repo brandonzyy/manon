@@ -203,6 +203,13 @@ async def execute_task(config: dict) -> dict:
                 fb_model, fb_url, fb_key, fb_fmt,
             )
             log.info("Agent completed in %d turns", agent_result.get("turns", 0))
+            # Broadcast active worker model (may have degraded to fallback)
+            used_model = agent_result.get("active_model", model_name)
+            try:
+                from ..services.llm import _broadcast_model_status
+                await _broadcast_model_status("worker", used_model)
+            except Exception:
+                pass
             # Collect queries from agent tool calls
             queries_log.extend(agent_result.get("queries", []))
             # Initialize token usage from agent result

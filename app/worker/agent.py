@@ -199,6 +199,7 @@ async def call_agent(
     return {
         "output": final_output,
         "turns": turn + 1,
+        "active_model": active_model,
         "token_usage": {
             "prompt": total_prompt_tokens,
             "completion": total_completion_tokens,

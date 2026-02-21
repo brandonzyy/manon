@@ -321,6 +321,7 @@ body.pipeline-active .pipeline-mini-banner{display:flex}
   <div style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:5px"><span style="color:var(--green);font-size:8px">●</span> 正在 <select class="proj" id="projectSelect"><option value="">加载中...</option></select> 项目上工作</div>
   <button class="add-proj-btn" onclick="openSetupModal()" title="新建项目">+</button>
   <button class="settings-btn" onclick="openSettings()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型</button>
+  <span id="modelIndicator" style="font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px"></span>
   <div class="ws-status"><div class="ws-dot" id="wsDot"></div><span id="wsLabel">未连接</span></div>
 
 </header>
@@ -559,6 +560,7 @@ function handleMsg(msg){
   else if(t==='coach-content-delta')appendStreamContent(msg.delta);
   else if(t==='coach-stream-end')endStream();
   else if(t==='coach-stage'){updateStage(msg.stage)}
+  else if(t==='model-active'){updateModelIndicator(msg)}
   else if(t==='error')addMessage(msg.message,'system');
 }
 
@@ -1058,9 +1060,32 @@ async function loadStats(){
     if(r.ok){const data=await r.json();updateGraphStats(data);updateWelcome()}
   }catch{}
 }
-updateStage('idle');loadProjects();connectWS();connectMonitorWS();
+updateStage('idle');loadProjects();connectWS();connectMonitorWS();refreshModelIndicator();
 
 // ── Settings ──
+let _cfgCoach='',_cfgWorker='',_modelMap={};
+async function refreshModelIndicator(){
+  try{
+    const r=await fetch('/api/v1/settings');const data=await r.json();
+    const models=data.models||[];const cfg=data.config||{};
+    _modelMap={};models.forEach(m=>_modelMap[m.id]=m.name);
+    _cfgCoach=cfg.coach_model||'';_cfgWorker=cfg.worker_model||'';
+    _renderModelIndicator(_cfgCoach,_cfgWorker);
+  }catch{}
+}
+function _renderModelIndicator(cid,wid){
+  const cn=_modelMap[cid]||cid;const wn=_modelMap[wid]||wid;
+  const cd=cid!==_cfgCoach;const wd=wid!==_cfgWorker;
+  const cs=cd?'color:var(--yellow);font-weight:700':'color:var(--cyan)';
+  const ws=wd?'color:var(--yellow);font-weight:700':'color:var(--green)';
+  const ct=cd?`${esc(cn)} ⚠`:`${esc(cn)}`;
+  const wt=wd?`${esc(wn)} ⚠`:`${esc(wn)}`;
+  $('modelIndicator').innerHTML=`<span style="${cs}">Manon</span> ${ct} · <span style="${ws}">Worker</span> ${wt}`;
+}
+function updateModelIndicator(msg){
+  const c=msg.coach||_cfgCoach;const w=msg.worker||_cfgWorker;
+  _renderModelIndicator(c,w);
+}
 let availableModels=[];
 async function openSettings(){
   try{
@@ -1092,7 +1117,7 @@ async function addCustomModel(){
     if(data.status==='ok'){
       $('cmName').value='';$('cmModelId').value='';$('cmUrl').value='';$('cmKey').value='';$('cmFormat').value='openai';
       addMessage(`模型 "${name}" 已添加 (${fmt})`,'system');
-      await openSettings(); // refresh
+      await openSettings();refreshModelIndicator(); // refresh
     }else addMessage('添加失败','system');
   }catch(e){addMessage('添加失败：'+e.message,'system')}
 }
@@ -1116,7 +1141,7 @@ async function saveSettings(){
     const data=await r.json();
     if(data.status==='ok'){
       addMessage(`模型配置已更新：${data.updated.join(', ')||'无变更'}`,'system');
-      closeSettings();
+      closeSettings();refreshModelIndicator();
     }else addMessage('保存失败','system');
   }catch(e){addMessage('保存失败：'+e.message,'system')}
 }

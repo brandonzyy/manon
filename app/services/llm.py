@@ -14,6 +14,32 @@ log = logging.getLogger("manon.llm")
 
 _client: httpx.AsyncClient | None = None
 
+# Real-time active model tracking (updated on each call / fallback)
+_coach_active: str = ""
+_worker_active: str = ""
+
+
+async def _broadcast_model_status(role: str, model_id: str) -> None:
+    """Push model-active event to all connected devs."""
+    global _coach_active, _worker_active
+    changed = False
+    if role == "coach" and model_id != _coach_active:
+        _coach_active = model_id
+        changed = True
+    elif role == "worker" and model_id != _worker_active:
+        _worker_active = model_id
+        changed = True
+    if changed:
+        try:
+            from ..ws_hub import hub
+            await hub.broadcast_to_devs({
+                "type": "model-active",
+                "coach": _coach_active,
+                "worker": _worker_active,
+            })
+        except Exception:
+            pass
+
 
 def _get_client() -> httpx.AsyncClient:
     global _client
@@ -182,6 +208,7 @@ async def llm_chat_stream(
     Yields {"type": "reasoning"|"content", "delta": str}.
     """
     model = model or _active_model()
+    await _broadcast_model_status("coach", model)
     model_name, api_url, api_key, api_format = _resolve_model(model)
 
     if api_format == "anthropic":
@@ -229,11 +256,13 @@ async def call_glm5(
     ]
     try:
         result = await llm_chat(msgs, model=model, max_tokens=max_tokens, timeout=timeout)
+        await _broadcast_model_status("coach", model)
         return result["content"]
     except Exception as exc:
         fallback = _active_fallback()
         if fallback and fallback != model:
             log.warning("%s failed (%s), falling back to %s", model, exc, fallback)
+            await _broadcast_model_status("coach", fallback)
             result = await llm_chat(msgs, model=fallback, max_tokens=max_tokens, timeout=timeout)
             return result["content"]
         raise
@@ -260,6 +289,7 @@ async def call_glm5_full(
         fallback = _active_fallback()
         if fallback and fallback != model:
             log.warning("%s failed (%s), falling back to %s", model, exc, fallback)
+            await _broadcast_model_status("coach", fallback)
             return await llm_chat(msgs, model=fallback, max_tokens=max_tokens, timeout=timeout)
         raise
 
