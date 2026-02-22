@@ -839,7 +839,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             repo = _get(f"/api/v1/repos/{rid}")
             status = repo['index_status']
             status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
-            lines.append(f"  {status_icon} 状态 {status}  ·  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
+            lines.append(f"  {status_icon} 状态 {status}  ·  🕐 同步 {sync}")
             if repo.get("index_stats"):
                 lines.append(_fmt_stats(repo["index_stats"]))
         except Exception as e:
