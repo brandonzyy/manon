@@ -109,6 +109,14 @@ def _check_parser_installed(language: str) -> bool:
         return False
 
 
+_install_failed_pkgs: set[str] = set()  # cache failed installs to avoid retrying
+_PIP_MIRRORS = [
+    None,  # default PyPI
+    "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "https://mirrors.aliyun.com/pypi/simple",
+]
+
+
 def ensure_parsers(local_path: str) -> dict[str, str]:
     """Auto-detect project languages and install missing tree-sitter parsers.
 
@@ -133,27 +141,42 @@ def ensure_parsers(local_path: str) -> dict[str, str]:
         if all(_check_parser_installed(l) for l in pkg_langs):
             for l in pkg_langs:
                 results[l] = "already_installed"
+        elif pkg in _install_failed_pkgs:
+            for l in pkg_langs:
+                results[l] = "failed"
         else:
             to_install.append(pkg)
             for l in pkg_langs:
                 results[l] = "pending"
 
     if not to_install:
-        log.info("All parsers already installed for: %s", ", ".join(langs))
+        if all(v == "already_installed" for v in results.values()):
+            log.info("All parsers already installed for: %s", ", ".join(langs))
         return results
 
     log.info("Installing missing parsers: %s", ", ".join(to_install))
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet"] + to_install,
-            timeout=120,
-        )
-        for pkg in to_install:
-            for l in needed_pkgs[pkg]:
-                results[l] = "installed"
-        log.info("Parsers installed successfully: %s", ", ".join(to_install))
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        log.error("Failed to install parsers: %s", e)
+    installed = False
+    for mirror in _PIP_MIRRORS:
+        cmd = [sys.executable, "-m", "pip", "install", "--quiet"] + to_install
+        if mirror:
+            cmd += ["-i", mirror, "--trusted-host", mirror.split("//")[1].split("/")[0]]
+        try:
+            subprocess.check_call(cmd, timeout=30)
+            installed = True
+            for pkg in to_install:
+                for l in needed_pkgs[pkg]:
+                    results[l] = "installed"
+            source = mirror or "PyPI"
+            log.info("Parsers installed via %s: %s", source, ", ".join(to_install))
+            break
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            source = mirror or "PyPI"
+            log.warning("pip install via %s failed: %s", source, e)
+            continue
+
+    if not installed:
+        log.error("All pip mirrors failed for: %s", ", ".join(to_install))
+        _install_failed_pkgs.update(to_install)
         for pkg in to_install:
             for l in needed_pkgs[pkg]:
                 results[l] = "failed"
