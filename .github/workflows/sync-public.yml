@@ -20,8 +20,9 @@ jobs:
           rm -rf saas/ matrixone_graph/
           # CI/CD 配置（不暴露给用户）
           rm -rf .github/
-          # 内部脚本
-          rm -f scripts/manon-admin.py scripts/run-saas.py
+          # 内部脚本和 Node 工具
+          rm -f scripts/manon-admin.py scripts/run-saas.py scripts/github-helper.py
+          rm -f package.json package-lock.json
           # 内部测试和评测
           rm -rf tests/
           # 商业文档
