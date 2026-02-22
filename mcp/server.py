@@ -33,7 +33,24 @@ log = logging.getLogger("manon-mcp")
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 45
 INLINE_SCAN_LIMIT = 200
-CLIENT_VERSION = "0.1.0"
+
+def _get_client_version() -> str:
+    """Auto-generate version from git commit count: 0.1.{count}"""
+    try:
+        install_dir = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(install_dir),
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            count = result.stdout.strip()
+            return f"0.1.{count}"
+    except Exception:
+        pass
+    return "0.1.0"
+
+CLIENT_VERSION = _get_client_version()
 
 # ── Geo-routing ───────────────────────────────────────
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")

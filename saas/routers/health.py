@@ -1,4 +1,5 @@
 """GET /health, /tunnel-url, /version — liveness probe, tunnel URL registry, version check."""
+import subprocess
 from pathlib import Path
 from fastapi import APIRouter, Body
 
@@ -6,7 +7,24 @@ from ..config import settings
 
 router = APIRouter(tags=["health"])
 
-LATEST_VERSION = "0.1.0"
+
+def _get_latest_version() -> str:
+    """Auto-generate version from git commit count: 0.1.{count}"""
+    try:
+        repo_dir = Path(__file__).resolve().parent.parent.parent
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(repo_dir),
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            count = result.stdout.strip()
+            return f"0.1.{count}"
+    except Exception:
+        pass
+    return "0.1.0"
+
+LATEST_VERSION = _get_latest_version()
 
 _TUNNEL_URL_FILE = Path("/tmp/manon_tunnel_url.txt")
 
@@ -23,7 +41,7 @@ _tunnel_url: str = _load_tunnel_url()
 async def health():
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": LATEST_VERSION,
         "llm_model": settings.llm_model,
         "embedding_url": settings.embedding_url,
     }
