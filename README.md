@@ -108,13 +108,21 @@ Browser-based. No IDE, no terminal, no coding experience required.
 
 ### MCP Setup (Claude Code / Cursor / Windsurf)
 
+**macOS / Linux**
 ```bash
 git clone https://github.com/brandonzyy/manon.git
 cd manon
 bash install.sh
 ```
 
-That's it. The install script auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. Restart your editor and you're ready.
+**Windows**
+```cmd
+git clone https://github.com/brandonzyy/manon.git
+cd manon
+install.bat
+```
+
+The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to native PowerShell — Python is installed automatically via `winget` if not found. Restart your editor and you're ready.
 
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, the tools appear automatically.
 
@@ -336,8 +344,8 @@ Override via environment variables if needed: `MANON_API_KEY`, `MANON_API_URL`.
 
 ## Requirements
 
-- Python 3.10+
-- For MCP: Claude Code, Cursor, or Windsurf
+- Python 3.10+ (auto-installed on Windows via `winget` if missing)
+- For MCP: Claude Code, Cursor, Windsurf, Zed, Continue, or CodeBuddy
 - For Web: any modern browser
 - Network connection to Manon server
 
