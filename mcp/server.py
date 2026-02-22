@@ -444,7 +444,7 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
 
     # 2. Get changed line ranges to identify affected symbols
     changed_symbols: list[str] = []
-    for cf in changed_files:
+    for cf in changed_files[:15]:  # cap to avoid subprocess storm
         ext = Path(cf).suffix.lower()
         if ext not in (".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php"):
             continue
@@ -506,23 +506,35 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
     for s in changed_symbols:
         parts.append(f"  {s}")
 
-    # 3. Query graph for callers of each changed symbol
+    # 3. Query graph for callers of each changed symbol (parallel, capped)
+    import concurrent.futures
     all_callers: list[str] = []
     affected_modules: set[str] = set()
-    for sym in changed_symbols[:10]:  # limit to avoid too many queries
+    syms_to_query = changed_symbols[:8]
+
+    def _query_sym(sym):
         try:
-            result = _get(f"/api/v1/repos/{repo_id}/graph", symbol=sym, depth=max_depth)
+            return sym, _get(f"/api/v1/repos/{repo_id}/graph", symbol=sym, depth=max_depth, timeout=8)
+        except Exception:
+            return sym, None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_query_sym, s): s for s in syms_to_query}
+        for fut in concurrent.futures.as_completed(futures, timeout=15):
+            try:
+                sym, result = fut.result()
+            except Exception:
+                continue
+            if not result:
+                continue
             for r in result.get("relations", []):
                 src = r.get("src_id", "")
                 tgt = r.get("tgt_id", "")
                 kind = r.get("kind", "")
                 if kind == "calls" and tgt and sym in tgt:
                     all_callers.append(f"  {src} --calls--> {tgt}")
-                    # Extract module from caller
                     mod = ".".join(src.split(".")[:-1]) if "." in src else src
                     affected_modules.add(mod)
-        except Exception as e:
-            log.debug("Graph query for %s failed: %s", sym, e)
 
     if all_callers:
         callers_dedup = list(dict.fromkeys(all_callers))
@@ -625,8 +637,10 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
     if found:
         local_path, info = found
         old_hashes = {} if not incremental else info.get("file_hashes", {})
+        # Full reindex: no file limit (must upload all files before server clears old data)
+        limit = None if not incremental else INLINE_SCAN_LIMIT
         file_results, deleted, new_hashes = scan_and_parse(
-            local_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
+            local_path, old_hashes, max_files=limit,
         )
         if file_results or deleted:
             _sync_to_server(repo_id, file_results, deleted, full_reindex=not incremental)
@@ -1189,7 +1203,19 @@ def manon_code_health(repo_id: str) -> str:
 def _install_hook(project_path: str) -> str | None:
     """Install pre-push hook if .git exists. Returns status message or None."""
     resolved = Path(project_path).resolve()
-    git_dir = resolved / ".git"
+    # Find git root (may differ from project_path, e.g. monorepo)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(resolved), capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            git_root = Path(result.stdout.strip()).resolve()
+        else:
+            return None
+    except Exception:
+        return None
+    git_dir = git_root / ".git"
     if not git_dir.is_dir():
         return None
     hooks_dir = git_dir / "hooks"
