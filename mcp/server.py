@@ -195,8 +195,7 @@ def _check_version() -> str:
                     local_time = datetime.datetime.fromisoformat(result.stdout.strip())
                     if remote_time > local_time + datetime.timedelta(hours=1):
                         _update_notice = (
-                            f"\n⚠️  公开仓库有更新（当前 {CLIENT_VERSION}）\n"
-                            f"   更新: 调用 manon_update 一键更新\n"
+                            f"\n⚠ 有新版本可用（当前 {CLIENT_VERSION}），调用 manon_update 更新"
                         )
     except Exception:
         pass
@@ -812,35 +811,39 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         log.info("Health check OK")
     except Exception as e:
         log.error("Health check failed: %s", e)
-        return f"Manon API 不可达 ({API_URL}): {e}\n请确认 saas 服务已启动。"
+        return f"✗ Manon API 不可达 ({API_URL}): {e}\n  请确认 saas 服务已启动。"
 
-    lines = [f"Manon 连接成功 (v{CLIENT_VERSION})"]
+    lines = [f"── Manon v{CLIENT_VERSION} {'─' * 30}"]
+    lines.append("✓ API 连接成功")
     # Report previous background update result (if any)
     prev = _read_update_status()
     if prev:
         lines.append(prev)
+
+    def _fmt_stats(s: dict) -> str:
+        fil = s.get("total_files", s.get("files_indexed", 0))
+        ent = s.get("total_entities", s.get("entities_added", 0))
+        rel = s.get("total_relations", s.get("relations_added", 0))
+        chk = s.get("total_chunks", s.get("chunks_added", 0))
+        return f"   文件 {fil}  ·  实体 {ent}  ·  关系 {rel}  ·  块 {chk}"
 
     # 2. Check local project registry first
     proj = get_project(project_path)
     if proj:
         rid = proj["repo_id"]
         log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
-        lines.append(f"\n本地项目已注册: {proj['name']} (id={rid})")
-        lines.append(f"  上次同步: {proj.get('last_sync', '未知')}")
-        lines.append(f"  已跟踪文件: {len(proj.get('file_hashes', {}))}")
+        lines.append(f"\n📦 {proj['name']}  ({rid[:8]})")
+        sync = proj.get('last_sync', '') or '—'
+        tracked = len(proj.get('file_hashes', {}))
         try:
             repo = _get(f"/api/v1/repos/{rid}")
-            lines.append(f"  索引状态: {repo['index_status']}")
+            status = repo['index_status']
+            lines.append(f"   状态 {status}  ·  同步 {sync}  ·  跟踪 {tracked} 文件")
             if repo.get("index_stats"):
-                s = repo["index_stats"]
-                log.debug("index_stats: %s", s)
-                fil = s.get("total_files", s.get("files_indexed", 0))
-                ent = s.get("total_entities", s.get("entities_added", 0))
-                rel = s.get("total_relations", s.get("relations_added", 0))
-                chk = s.get("total_chunks", s.get("chunks_added", 0))
-                lines.append(f"  文件: {fil}, 实体: {ent}, 关系: {rel}, 块: {chk}")
+                lines.append(_fmt_stats(repo["index_stats"]))
         except Exception as e:
-            lines.append(f"  [!] 获取服务端状态失败: {e}")
+            lines.append(f"   同步 {sync}  ·  跟踪 {tracked} 文件")
+            lines.append(f"   ⚠ 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
         return "\n".join(lines)
 
@@ -848,7 +851,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     try:
         repos = _get("/api/v1/repos")
     except Exception as e:
-        return "\n".join(lines) + f"\n\n获取仓库列表失败: {e}"
+        return "\n".join(lines) + f"\n\n✗ 获取仓库列表失败: {e}"
 
     norm = project_path.replace("\\", "/").rstrip("/")
     name = project_name or norm.split("/")[-1]
@@ -860,18 +863,13 @@ def manon_init(project_path: str, project_name: str = "") -> str:
 
     if matched:
         rid = matched["id"]
-        lines.append(f"\n服务端仓库匹配: {matched['name']} (id={rid})")
-        lines.append(f"  索引状态: {matched['index_status']}")
+        lines.append(f"\n📦 {matched['name']}  ({rid[:8]})")
+        lines.append(f"   状态 {matched['index_status']}")
         # Fetch detailed stats
         try:
             repo = _get(f"/api/v1/repos/{rid}")
             if repo.get("index_stats"):
-                s = repo["index_stats"]
-                fil = s.get("total_files", s.get("files_indexed", 0))
-                ent = s.get("total_entities", s.get("entities_added", 0))
-                rel = s.get("total_relations", s.get("relations_added", 0))
-                chk = s.get("total_chunks", s.get("chunks_added", 0))
-                lines.append(f"  文件: {fil}, 实体: {ent}, 关系: {rel}, 块: {chk}")
+                lines.append(_fmt_stats(repo["index_stats"]))
         except Exception:
             pass
         # Register locally if it's a local source_type
@@ -880,7 +878,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
                 "repo_id": rid, "name": matched["name"],
                 "last_sync": "", "file_hashes": {},
             })
-            lines.append("  已注册到本地项目表。")
+            lines.append("   ✓ 已注册到本地项目表")
     else:
         # 4. Create new local repo — fast path, no inline scanning
         try:
@@ -894,21 +892,21 @@ def manon_init(project_path: str, project_name: str = "") -> str:
                 "repo_id": rid, "name": name,
                 "last_sync": "", "file_hashes": {},
             })
-            lines.append(f"\n仓库已创建: {name} (id={rid})")
+            lines.append(f"\n📦 {name}  ({rid[:8]})  ← 新建")
 
             # Auto-detect languages and install parsers (best-effort)
             try:
                 parser_status = ensure_parsers(project_path)
                 if parser_status:
                     all_langs = sorted(parser_status.keys())
-                    lines.append(f"检测到语言: {', '.join(all_langs)}")
+                    lines.append(f"   语言 {', '.join(all_langs)}")
             except Exception:
                 pass
 
             file_count = count_scannable_files(project_path)
-            lines.append(f"检测到 {file_count} 个文件，请调用 manon_index {rid} 开始索引。")
+            lines.append(f"   检测到 {file_count} 个文件，调用 manon_index {rid} 开始索引")
         except Exception as e:
-            lines.append(f"\n创建仓库失败: {e}")
+            lines.append(f"\n✗ 创建仓库失败: {e}")
 
     # Auto-install pre-push hook
     hook_msg = _install_hook(project_path)
@@ -921,18 +919,17 @@ def manon_init(project_path: str, project_name: str = "") -> str:
 @mcp.tool()
 def manon_config() -> str:
     """查看当前 Manon 配置和连接状态。"""
-    lines = [
-        f"客户端版本: {CLIENT_VERSION}",
-        f"区域: {REGION}",
-        f"API: {API_URL}",
-    ]
+    lines = [f"── Manon 配置 {'─' * 32}"]
+    lines.append(f"   版本  {CLIENT_VERSION}")
+    lines.append(f"   区域  {REGION}")
+    lines.append(f"   API   {API_URL}")
     # Try fetching server config with short timeout
     try:
         cfg = _get("/api/v1/config", timeout=5)
-        lines.insert(0, f"套餐: {cfg['tier']}")
-        lines.append(f"速率限制: {cfg['rate_limit']} req/min")
+        lines.append(f"   套餐  {cfg['tier']}")
+        lines.append(f"   限速  {cfg['rate_limit']} req/min")
     except Exception:
-        lines.append("服务端: 连接超时，本地配置如上")
+        lines.append("   服务  ⚠ 连接超时")
     # Show cached update notice; trigger background check if not yet done
     if _update_notice:
         lines.append(_update_notice)
@@ -1204,7 +1201,7 @@ exit 0
         hook_file.chmod(0o755)
     except Exception:
         pass
-    return f"pre-push hook 已安装"
+    return "🔗 Push hook 已安装"
 
 
 @mcp.tool()
