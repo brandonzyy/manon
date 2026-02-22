@@ -107,7 +107,16 @@ def main():
             msg = f"已同步 {len(file_results)} 文件, 删除 {len(deleted)} 文件"
             print(f"[manon] {msg}")
             summary_parts.append(msg)
-            info["file_hashes"] = new_hashes
+            # Only record hashes for actually synced files
+            synced_set = {f["rel_path"] for f in file_results}
+            partial_hashes = dict(old_hashes)
+            for f in file_results:
+                rp = f["rel_path"]
+                if rp in new_hashes:
+                    partial_hashes[rp] = new_hashes[rp]
+            for d in deleted:
+                partial_hashes.pop(d, None)
+            info["file_hashes"] = partial_hashes
             info["last_sync"] = datetime.datetime.now().isoformat()
             set_project(project_path, info)
             sync_ok = True

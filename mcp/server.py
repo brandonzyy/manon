@@ -644,14 +644,29 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
         )
         if file_results or deleted:
             _sync_to_server(repo_id, file_results, deleted, full_reindex=not incremental)
-        info["file_hashes"] = new_hashes
+        # Only record hashes for actually synced files; keep old hashes for
+        # unsynced files so the next call picks them up as changed.
+        # Exception: full reindex (non-incremental) writes all hashes since
+        # there's no file limit in that mode.
+        if not incremental:
+            info["file_hashes"] = new_hashes
+        else:
+            synced_set = {f["rel_path"] for f in file_results}
+            partial_hashes = dict(old_hashes)
+            for f in file_results:
+                rp = f["rel_path"]
+                if rp in new_hashes:
+                    partial_hashes[rp] = new_hashes[rp]
+            for d in deleted:
+                partial_hashes.pop(d, None)
+            info["file_hashes"] = partial_hashes
         info["last_sync"] = __import__("datetime").datetime.now().isoformat()
         set_project(local_path, info)
 
         # Check if there are remaining unsynced files
         synced_set = {f["rel_path"] for f in file_results}
         unsynced = [k for k, v in new_hashes.items()
-                    if old_hashes.get(k) != v and k not in synced_set]
+                    if info["file_hashes"].get(k) != v and k not in synced_set]
         msg = f"本地扫描完成: {len(file_results)} 文件已同步, {len(deleted)} 文件删除。"
         if unsynced:
             msg += f"\n还有 {len(unsynced)} 文件未同步（超出单次限制），请再次调用 manon_index {repo_id} 继续。"
@@ -778,13 +793,22 @@ def manon_push_update(repo_id: str) -> str:
         if not file_results and not deleted:
             return "没有检测到文件变更。"
         _sync_to_server(repo_id, file_results, deleted)
-        info["file_hashes"] = new_hashes
+        # Only record hashes for actually synced files; keep old hashes for
+        # unsynced files so the next call picks them up as changed.
+        synced_set = {f["rel_path"] for f in file_results}
+        partial_hashes = dict(old_hashes)
+        for f in file_results:
+            rp = f["rel_path"]
+            if rp in new_hashes:
+                partial_hashes[rp] = new_hashes[rp]
+        for d in deleted:
+            partial_hashes.pop(d, None)
+        info["file_hashes"] = partial_hashes
         info["last_sync"] = __import__("datetime").datetime.now().isoformat()
         set_project(local_path, info)
 
-        synced_set = {f["rel_path"] for f in file_results}
         unsynced = [k for k, v in new_hashes.items()
-                    if old_hashes.get(k) != v and k not in synced_set]
+                    if partial_hashes.get(k) != v and k not in synced_set]
         msg = f"增量同步: {len(file_results)} 文件已同步, {len(deleted)} 文件删除。"
         if unsynced:
             msg += f"\n还有 {len(unsynced)} 文件未同步，请再次调用 manon_push_update {repo_id} 继续。"
