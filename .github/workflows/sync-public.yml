@@ -33,16 +33,19 @@ jobs:
           rm -f .env saas.db test_saas3.db manon.db
           rm -rf saas_indexes/ saas_repos/ indexes/
 
-      - name: Push to public repo
+      - name: Push to public repos
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 设置 public 仓库 remote
-          git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/brandonzyy/manon.git
 
           # 提交删除操作（仅在工作区，不影响 private 仓库历史）
           git add -A
           git diff --cached --quiet || git commit -m "sync: remove private modules"
 
+          # Push to GitHub public repo
+          git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/brandonzyy/manon.git
           git push public HEAD:main --force
+
+          # Push to Gitee mirror (CN users)
+          git remote add gitee https://x-access-token:${{ secrets.GITEE_TOKEN }}@gitee.com/ymxy_1_0/manon.git
+          git push gitee HEAD:main --force
