@@ -16,6 +16,8 @@ jobs:
 
       - name: Remove private directories
         run: |
+          # 保存国内版 README（Gitee 用）
+          cp README_CN.md /tmp/README_CN.md 2>/dev/null || true
           # 服务器端模块
           rm -rf saas/ matrixone_graph/
           # CI/CD 配置（不暴露给用户）
@@ -29,6 +31,8 @@ jobs:
           rm -rf docs/
           # 内部开发指南
           rm -f CLAUDE.md
+          # 国内版 README（GitHub 不需要）
+          rm -f README_CN.md
           # 敏感配置和运行时数据
           rm -f .env saas.db test_saas3.db manon.db
           rm -rf saas_indexes/ saas_repos/ indexes/
@@ -45,6 +49,13 @@ jobs:
           # Push to GitHub public repo
           git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/brandonzyy/manon.git
           git push public HEAD:main --force
+
+          # Swap README for Gitee (CN version)
+          if [ -f /tmp/README_CN.md ]; then
+            cp /tmp/README_CN.md README.md
+            git add README.md
+            git commit -m "sync: use CN readme for Gitee"
+          fi
 
           # Push to Gitee mirror (CN users)
           git remote add gitee https://oauth2:${{ secrets.GITEE_TOKEN }}@gitee.com/ymxy_1_0/manon.git

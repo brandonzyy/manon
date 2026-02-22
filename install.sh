@@ -341,6 +341,25 @@ except: pass
     fi
 done
 
+# ── Region-aware git remote ──────────────────────────
+GIT_REMOTE_CN="https://gitee.com/ymxy_1_0/manon.git"
+GIT_REMOTE_INTL="https://github.com/brandonzyy/manon.git"
+REGION="CN"
+REGION_FILE="$HOME/.manon/region.json"
+if [ -f "$REGION_FILE" ]; then
+    _r=$(python3 -c "import json; print(json.load(open('$REGION_FILE')).get('region','CN'))" 2>/dev/null) || _r="CN"
+    REGION="$_r"
+fi
+if [ "$REGION" = "CN" ]; then
+    GIT_REMOTE="$GIT_REMOTE_CN"
+    GIT_BRANCH="master"
+else
+    GIT_REMOTE="$GIT_REMOTE_INTL"
+    GIT_BRANCH="main"
+fi
+cd "$SCRIPT_DIR" && git remote set-url origin "$GIT_REMOTE" 2>/dev/null || true
+info "Git remote → $GIT_REMOTE ($REGION)"
+
 # ── Venv + deps ───────────────────────────────────────
 head1 "Dependencies"
 if [ ! -d "$VENV_DIR" ]; then
