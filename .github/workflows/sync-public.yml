@@ -16,7 +16,7 @@ jobs:
 
       - name: Remove private directories
         run: |
-          rm -rf saas/ matrixone_graph/
+          rm -rf saas/ matrixone_graph/ .github/
           # 同时移除可能包含敏感信息的文件
           rm -f saas.db test_saas3.db manon.db
           rm -rf saas_indexes/ saas_repos/
