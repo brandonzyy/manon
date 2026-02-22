@@ -26,6 +26,8 @@ jobs:
           rm -rf tests/
           # 商业文档
           rm -rf docs/
+          # 内部开发指南
+          rm -f CLAUDE.md
           # 敏感配置和运行时数据
           rm -f .env saas.db test_saas3.db manon.db
           rm -rf saas_indexes/ saas_repos/ indexes/
