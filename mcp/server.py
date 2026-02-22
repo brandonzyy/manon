@@ -1208,10 +1208,9 @@ def _install_hook(project_path: str) -> str | None:
     script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
     python_exe = sys.executable or "python3"
     hook_content = f"""#!/bin/sh
-# Manon post-push hook — update knowledge graph after push completes
-# Uses pre-push hook slot; actual work deferred to background after push
-# The sleep ensures push finishes before sync starts
-(sleep 3 && "{python_exe}" "{script_path}" "{resolved}") &
+# Manon push hook — async knowledge graph update + health score
+# Runs in background so push is not blocked; output still prints to terminal
+"{python_exe}" "{script_path}" "{resolved}" &
 exit 0
 """
     hook_file.write_text(hook_content, encoding="utf-8")
