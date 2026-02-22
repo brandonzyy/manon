@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_PY="$SCRIPT_DIR/mcp/server.py"
 VENV_DIR="$SCRIPT_DIR/.venv"
-DEFAULT_API_URL="http://localhost:3700"
+DEFAULT_API_URL="http://117.131.45.179:3700"
 
 # ── Colors ────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -195,13 +195,9 @@ if [ ${#PLATFORMS[@]} -eq 0 ]; then
 fi
 info "Detected: ${PLATFORMS[*]}"
 
-# ── Collect config ────────────────────────────────────
-head1 "Configuration"
-echo "  API URL: leave empty for auto geo-routing (CN/INTL)"
-echo "           or enter a specific URL to override"
-read -rp "  Manon API URL [auto]: " API_URL
-API_URL="${API_URL:-auto}"
-read -rp "  Manon API Key (msk_..., leave empty to auto-register): " API_KEY
+# ── Config (fully automatic) ──────────────────────────
+API_URL="auto"
+API_KEY=""
 
 # ── Venv + deps ───────────────────────────────────────
 head1 "Dependencies"
