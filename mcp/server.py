@@ -775,6 +775,10 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     notice = _check_version()
     if notice:
         lines.append(notice)
+    # Report previous background update result (if any)
+    prev = _read_update_status()
+    if prev:
+        lines.append(prev)
 
     # 2. Check local project registry first
     proj = get_project(project_path)
@@ -952,10 +956,14 @@ def manon_embedding(texts: list[str]) -> str:
 
 
 
+_UPDATE_STATUS_FILE = Path.home() / ".manon" / "update_status.json"
+
+
 def _do_update() -> list[str]:
-    """Execute git pull + pip install. Returns status lines."""
+    """Execute git pull + pip install. Writes result to status file."""
     install_dir = Path(__file__).resolve().parent.parent
     lines: list[str] = []
+    ok = False
 
     # Git pull (timeout 15s — MCP tools can't block too long)
     try:
@@ -967,13 +975,17 @@ def _do_update() -> list[str]:
         git_out = result.stdout.strip()
         if "Already up to date" in git_out or "Already up-to-date" in git_out or not git_out:
             lines.append("代码已是最新，无需更新。")
+            ok = True
+            _write_update_status(ok, lines)
             return lines
         lines.append(f"代码已更新:\n{git_out}")
     except subprocess.TimeoutExpired:
         lines.append("git pull 超时（15s），请手动执行: cd manon && git pull")
+        _write_update_status(False, lines)
         return lines
     except Exception as e:
         lines.append(f"git pull 失败: {e}")
+        _write_update_status(False, lines)
         return lines
 
     # Reinstall dependencies (timeout 30s)
@@ -984,23 +996,56 @@ def _do_update() -> list[str]:
             capture_output=True, timeout=30,
         )
         lines.append("依赖已更新。")
+        ok = True
     except subprocess.TimeoutExpired:
         lines.append("pip install 超时，请手动执行: pip install -r mcp/requirements.txt")
     except Exception as e:
         lines.append(f"依赖安装失败: {e}")
 
     lines.append("请重启 Claude Code 使新版本生效。")
+    _write_update_status(ok, lines)
     return lines
+
+
+def _write_update_status(ok: bool, lines: list[str]) -> None:
+    """Persist update result so next manon_update/init can report it."""
+    try:
+        import datetime
+        _UPDATE_STATUS_FILE.write_text(json.dumps({
+            "ok": ok,
+            "message": "\n".join(lines),
+            "timestamp": datetime.datetime.now().isoformat(),
+        }, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _read_update_status() -> str | None:
+    """Read and clear previous background update result."""
+    try:
+        if not _UPDATE_STATUS_FILE.exists():
+            return None
+        data = json.loads(_UPDATE_STATUS_FILE.read_text(encoding="utf-8"))
+        _UPDATE_STATUS_FILE.unlink(missing_ok=True)
+        tag = "✓" if data.get("ok") else "✗"
+        return f"[上次后台更新 {tag}] {data.get('message', '')}"
+    except Exception:
+        return None
 
 
 @mcp.tool()
 def manon_update() -> str:
-    """检查并更新 Manon 到最新版本。自动执行 git pull + 依赖安装。
+    """检查并更新 Manon 到最新版本。后台执行 git pull + 依赖安装。
 
     更新完成后需要重启 Claude Code 使新版本生效。
     """
     install_dir = Path(__file__).resolve().parent.parent
-    lines: list[str] = []
+    parts: list[str] = []
+
+    # Report previous background update result (if any)
+    prev = _read_update_status()
+    if prev:
+        parts.append(prev)
 
     # Quick check how far behind (reuse cached fetch from _check_version if available)
     try:
@@ -1009,14 +1054,22 @@ def manon_update() -> str:
             cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if behind and int(behind) > 0:
-            lines.append(f"发现 {behind} 个新提交（当前 {CLIENT_VERSION}）")
+            import threading
+            threading.Thread(target=_do_update, daemon=True).start()
+            parts.append(
+                f"发现 {behind} 个新提交（当前 {CLIENT_VERSION}），"
+                f"更新已在后台启动。\n完成后请重启 Claude Code 使新版本生效。"
+            )
         else:
-            lines.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
+            parts.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
     except Exception:
-        lines.append(f"当前版本: {CLIENT_VERSION}")
-
-    lines.extend(_do_update())
-    return "\n".join(lines)
+        import threading
+        threading.Thread(target=_do_update, daemon=True).start()
+        parts.append(
+            f"当前版本: {CLIENT_VERSION}，更新已在后台启动。\n"
+            f"完成后请重启 Claude Code 使新版本生效。"
+        )
+    return "\n".join(parts)
 
 
 @mcp.tool()
