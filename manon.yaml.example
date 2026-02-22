@@ -6,9 +6,6 @@ repos_dir: ./repos
 # LoomGraph CLI binary path
 loomgraph_bin: loomgraph
 
-# API Server WebSocket (auto-fix agent hub)
-api_server_ws: ws://localhost:3501/ws/coach
-
 # LLM API (ZhiPu GLM-5)
 llm_api_url: https://open.bigmodel.cn/api/coding/paas/v4/chat/completions
 llm_model: GLM-5
