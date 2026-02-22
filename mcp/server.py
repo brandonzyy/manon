@@ -151,44 +151,40 @@ _update_notice: str = ""
 
 
 def _check_version() -> str:
-    """Compare local HEAD with remote via git fetch.
+    """Compare local version with public repo via hosting API (no git ops).
 
-    Non-blocking: if git fetch is slow or fails, silently skip.
+    CN → Gitee API, INTL → GitHub API. Non-blocking.
     """
     global _version_checked, _update_notice
     if _version_checked:
         return _update_notice
     _version_checked = True
     try:
-        install_dir = Path(__file__).resolve().parent.parent
-        # Skip if not a git repo
-        if not (install_dir / ".git").exists():
-            return _update_notice
-        remote = _ensure_git_remote(install_dir)
-        branch = _git_branch()
-        # Quick fetch (timeout 5s)
-        subprocess.run(
-            ["git", "fetch", "--quiet", remote, branch],
-            cwd=str(install_dir), capture_output=True, timeout=5,
-        )
-        local = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
-        ).stdout.strip()
-        remote_ref = subprocess.run(
-            ["git", "rev-parse", f"{remote}/{branch}"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
-        ).stdout.strip()
-        if local and remote_ref and local != remote_ref:
-            behind = subprocess.run(
-                ["git", "rev-list", "--count", f"{local}..{remote_ref}"],
-                cwd=str(install_dir), capture_output=True, text=True, timeout=3,
-            ).stdout.strip()
-            if behind and int(behind) > 0:
-                _update_notice = (
-                    f"\n⚠️  有 {behind} 个新提交可用（当前 {CLIENT_VERSION}）\n"
-                    f"   更新: 调用 manon_update 一键更新\n"
+        if REGION == "CN":
+            url = "https://gitee.com/api/v5/repos/ymxy_1_0/manon"
+        else:
+            url = "https://api.github.com/repos/brandonzyy/manon"
+        r = httpx.get(url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            # Gitee: pushed_at, GitHub: pushed_at — compare with local version age
+            pushed = data.get("pushed_at", "")
+            if pushed:
+                import datetime
+                remote_time = datetime.datetime.fromisoformat(pushed.replace("Z", "+00:00"))
+                # Get local HEAD commit time
+                install_dir = Path(__file__).resolve().parent.parent
+                result = subprocess.run(
+                    ["git", "log", "-1", "--format=%cI"],
+                    cwd=str(install_dir), capture_output=True, text=True, timeout=3,
                 )
+                if result.returncode == 0 and result.stdout.strip():
+                    local_time = datetime.datetime.fromisoformat(result.stdout.strip())
+                    if remote_time > local_time + datetime.timedelta(hours=1):
+                        _update_notice = (
+                            f"\n⚠️  公开仓库有更新（当前 {CLIENT_VERSION}）\n"
+                            f"   更新: 调用 manon_update 一键更新\n"
+                        )
     except Exception:
         pass
     return _update_notice
@@ -1010,38 +1006,9 @@ def manon_embedding(texts: list[str]) -> str:
 _UPDATE_STATUS_FILE = Path.home() / ".manon" / "update_status.json"
 
 
-def _git_remote_url() -> str:
-    """Return git remote URL based on cached region."""
-    return GIT_REMOTE_CN if REGION == "CN" else GIT_REMOTE_INTL
-
-
 def _git_branch() -> str:
     """Return git branch name based on cached region."""
     return GIT_BRANCH_CN if REGION == "CN" else GIT_BRANCH_INTL
-
-
-def _ensure_git_remote(install_dir: Path) -> str:
-    """Ensure 'manon' remote points to the correct region URL. Returns remote name."""
-    url = _git_remote_url()
-    try:
-        # Check if 'manon' remote exists
-        result = subprocess.run(
-            ["git", "remote", "get-url", "manon"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
-        )
-        if result.returncode != 0:
-            subprocess.run(
-                ["git", "remote", "add", "manon", url],
-                cwd=str(install_dir), capture_output=True, timeout=3,
-            )
-        elif result.stdout.strip() != url:
-            subprocess.run(
-                ["git", "remote", "set-url", "manon", url],
-                cwd=str(install_dir), capture_output=True, timeout=3,
-            )
-    except Exception:
-        return "origin"  # fallback
-    return "manon"
 
 
 def _do_update() -> list[str]:
@@ -1050,13 +1017,12 @@ def _do_update() -> list[str]:
     lines: list[str] = []
     ok = False
 
-    remote = _ensure_git_remote(install_dir)
     branch = _git_branch()
 
-    # Git pull (timeout 15s)
+    # Git pull from origin (install scripts already set origin to gitee/github)
     try:
         result = subprocess.run(
-            ["git", "pull", "--quiet", remote, branch],
+            ["git", "pull", "--quiet", "origin", branch],
             cwd=str(install_dir),
             capture_output=True, text=True, timeout=15,
         )
@@ -1137,10 +1103,14 @@ def manon_update() -> str:
 
     # Quick check how far behind
     try:
-        remote = _ensure_git_remote(install_dir)
         branch = _git_branch()
+        # Fetch latest refs from origin (public repo, no credentials needed)
+        subprocess.run(
+            ["git", "fetch", "--quiet", "origin", branch],
+            cwd=str(install_dir), capture_output=True, timeout=5,
+        )
         behind = subprocess.run(
-            ["git", "rev-list", "--count", f"HEAD..{remote}/{branch}"],
+            ["git", "rev-list", "--count", f"HEAD..origin/{branch}"],
             cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if behind and int(behind) > 0:
