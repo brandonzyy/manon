@@ -235,14 +235,39 @@ PYEOF
 
 # --- CodeBuddy (Tencent) ---
 configure_codebuddy() {
-    local mcp_file
+    local mcp_file skill_dir
     if [ -d "$HOME/.codebuddy" ]; then
         mcp_file="$HOME/.codebuddy/mcp.json"
+        skill_dir="$HOME/.codebuddy/skills/manon"
     else
         mcp_file="$HOME/.tencent/codebuddy/mcp.json"
+        skill_dir="$HOME/.tencent/codebuddy/skills/manon"
     fi
     write_mcp_json "$mcp_file"
     info "CodeBuddy MCP registered"
+
+    # /manon Skill
+    mkdir -p "$skill_dir"
+    cat > "$skill_dir/SKILL.md" <<SKILLEOF
+---
+name: manon
+description: /manon — 进入 Manon 模式，初始化项目知识图谱连接
+user_invocable: true
+---
+
+$MANON_RULES
+
+## 初始化流程（/manon 触发时执行）
+
+1. 调用 \`manon_init\`，传入当前工作目录路径和项目名
+2. 根据返回结果：
+   - 仓库已存在且已索引 → 展示图谱统计
+   - 仓库已存在但未索引 → 轮询 \`manon_index_status\` 直到完成
+   - 仓库不存在 → 已自动创建并触发索引，轮询等待
+3. 调用 \`manon_config\` 展示当前配置
+4. 告知用户 Manon 模式已激活
+SKILLEOF
+    info "CodeBuddy /manon Skill installed"
 }
 
 
@@ -397,9 +422,15 @@ else
 fi
 
 # ── Summary ───────────────────────────────────────────
+MANON_VERSION=$("$VENV_PYTHON" -c "
+import subprocess
+r = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], cwd='$SCRIPT_DIR', capture_output=True, text=True)
+print(f'0.1.{r.stdout.strip()}' if r.returncode == 0 else '0.1.0')
+" 2>/dev/null) || MANON_VERSION="0.1.0"
 echo ""
 echo "  ────────────────────────────────────"
-echo "  Done! Configured: ${CONFIGURED[*]}"
+echo "  Manon v${MANON_VERSION} installed"
+echo "  Configured: ${CONFIGURED[*]}"
 echo ""
 for p in "${CONFIGURED[@]}"; do
     case "$p" in
@@ -408,7 +439,7 @@ for p in "${CONFIGURED[@]}"; do
         windsurf)    echo "  Windsurf:     manon_deep_query available in Cascade" ;;
         zed)         echo "  Zed:          manon tools available in Assistant" ;;
         continue)    echo "  Continue:     manon tools available in Chat" ;;
-        codebuddy)   echo "  CodeBuddy:    manon tools available in Chat" ;;
+        codebuddy)   echo "  CodeBuddy:    type /manon to initialize" ;;
     esac
 done
 echo ""

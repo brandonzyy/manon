@@ -132,6 +132,10 @@ exit /b %errorlevel%
 ::PS         "codebuddy" {
 ::PS             $mf = if (Test-Path "$HOME_DIR\.codebuddy") { "$HOME_DIR\.codebuddy\mcp.json" } else { "$HOME_DIR\.tencent\codebuddy\mcp.json" }
 ::PS             Write-McpJson $mf; info "CodeBuddy MCP registered"
+::PS             $cbDir = if (Test-Path "$HOME_DIR\.codebuddy") { "$HOME_DIR\.codebuddy" } else { "$HOME_DIR\.tencent\codebuddy" }
+::PS             $sd = "$cbDir\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
+::PS             Set-Content -Path "$sd\SKILL.md" -Encoding UTF8 -Value "---`nname: manon`ndescription: /manon -- 进入 Manon 模式`nuser_invocable: true`n---`n`n$MANON_RULES`n`n## 初始化流程`n1. 调用 ``manon_init``，传入当前工作目录`n2. 轮询索引状态直到完成`n3. 调用 ``manon_config`` 展示配置`n4. 告知用户 Manon 模式已激活"
+::PS             info "CodeBuddy /manon Skill installed"
 ::PS         }
 ::PS     }
 ::PS     $CONFIGURED += $platform
@@ -141,6 +145,7 @@ exit /b %errorlevel%
 ::PS $CU = if ($API_URL -eq "auto") { $DEFAULT_API_URL } else { $API_URL }
 ::PS $HC = & $VENV_PYTHON -c "import httpx`ntry:`n    r=httpx.get('$CU/health',timeout=5)`n    print(r.status_code)`nexcept Exception as e:`n    print(f'error:{e}')" 2>&1
 ::PS if ($HC -eq "200") { info "API reachable" } else { warn "API not reachable ($HC) -- start the server first" }
-::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host "  Done! Configured: $($CONFIGURED -join ', ')"; Write-Host ""
-::PS foreach ($p in $CONFIGURED) { switch ($p) { "claude-code" { Write-Host "  Claude Code:  type /manon to initialize" } "cursor" { Write-Host "  Cursor:       manon_deep_query available" } "windsurf" { Write-Host "  Windsurf:     manon_deep_query available" } "zed" { Write-Host "  Zed:          manon tools available" } "continue" { Write-Host "  Continue:     manon tools available" } "codebuddy" { Write-Host "  CodeBuddy:    manon tools available" } } }
+::PS $MV = & $VENV_PYTHON -c "import subprocess`nr=subprocess.run(['git','rev-list','--count','HEAD'],cwd=r'$SCRIPT_DIR',capture_output=True,text=True)`nprint(f'0.1.{r.stdout.strip()}' if r.returncode==0 else '0.1.0')" 2>&1; if (-not $MV) { $MV = "0.1.0" }
+::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host "  Manon v$MV installed"; Write-Host "  Configured: $($CONFIGURED -join ', ')"; Write-Host ""
+::PS foreach ($p in $CONFIGURED) { switch ($p) { "claude-code" { Write-Host "  Claude Code:  type /manon to initialize" } "cursor" { Write-Host "  Cursor:       manon_deep_query available" } "windsurf" { Write-Host "  Windsurf:     manon_deep_query available" } "zed" { Write-Host "  Zed:          manon tools available" } "continue" { Write-Host "  Continue:     manon tools available" } "codebuddy" { Write-Host "  CodeBuddy:    type /manon to initialize" } } }
 ::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host ""
