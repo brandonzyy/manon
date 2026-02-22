@@ -922,16 +922,23 @@ def manon_init(project_path: str, project_name: str = "") -> str:
 @mcp.tool()
 def manon_config() -> str:
     """查看当前 Manon 配置和连接状态。"""
+    log.info("manon_config called")
     lines = [f"─── ⚙️ Manon 配置 {'─' * 28}"]
     lines.append(f"  🏷️ 版本  {CLIENT_VERSION}")
     lines.append(f"  🌐 区域  {REGION}")
     lines.append(f"  🔗 API   {API_URL}")
     # Try fetching server config with short timeout
+    import time as _time
+    t0 = _time.monotonic()
     try:
-        cfg = _get("/api/v1/config", timeout=5)
+        cfg = _get("/api/v1/config", timeout=3)
+        elapsed = _time.monotonic() - t0
+        log.info("manon_config /api/v1/config OK in %.1fs", elapsed)
         lines.append(f"  💎 套餐  {cfg['tier']}")
         lines.append(f"  ⚡ 限速  {cfg['rate_limit']} req/min")
-    except Exception:
+    except Exception as e:
+        elapsed = _time.monotonic() - t0
+        log.warning("manon_config /api/v1/config failed in %.1fs: %s", elapsed, e)
         lines.append("  ⚠️ 服务  连接超时")
     # Show cached update notice; trigger background check if not yet done
     if _update_notice:
