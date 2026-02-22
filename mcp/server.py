@@ -29,6 +29,14 @@ mcp = FastMCP("manon", instructions="Manon 代码智能工具 — 语义搜索�
 
 log = logging.getLogger("manon-mcp")
 
+# ── Log to file (MCP stdio occupies stdout/stderr) ────
+_log_dir = Path.home() / ".manon"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_handler = logging.FileHandler(_log_dir / "mcp.log", encoding="utf-8")
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+log.addHandler(_log_handler)
+log.setLevel(logging.DEBUG)
+
 # ── Config ────────────────────────────────────────────
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 45
@@ -111,31 +119,36 @@ _update_notice: str = ""
 
 
 def _check_version() -> str:
-    """Compare local HEAD with origin/master via git fetch (no server dependency)."""
+    """Compare local HEAD with origin/master via git fetch (no server dependency).
+
+    Non-blocking: if git fetch is slow or fails, silently skip.
+    """
     global _version_checked, _update_notice
     if _version_checked:
         return _update_notice
     _version_checked = True
     try:
         install_dir = Path(__file__).resolve().parent.parent
-        # Quick fetch (timeout 10s, no heavy objects)
+        # Skip if not a git repo
+        if not (install_dir / ".git").exists():
+            return _update_notice
+        # Quick fetch (timeout 5s — don't block init)
         subprocess.run(
             ["git", "fetch", "--quiet", "origin", "master"],
-            cwd=str(install_dir), capture_output=True, timeout=10,
+            cwd=str(install_dir), capture_output=True, timeout=5,
         )
         local = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         remote = subprocess.run(
             ["git", "rev-parse", "origin/master"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if local and remote and local != remote:
-            # Count how many commits behind
             behind = subprocess.run(
                 ["git", "rev-list", "--count", f"{local}..{remote}"],
-                cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+                cwd=str(install_dir), capture_output=True, text=True, timeout=3,
             ).stdout.strip()
             if behind and int(behind) > 0:
                 _update_notice = (
@@ -757,24 +770,25 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         project_path: 项目在本机的绝对路径（通常是当前工作目录）
         project_name: 项目名称（可选，默认从路径推断）
     """
+    log.info("manon_init called: path=%s, name=%s", project_path, project_name)
     # 1. health check
     try:
         health = _get_no_auth("/health")
+        log.info("Health check OK")
     except Exception as e:
+        log.error("Health check failed: %s", e)
         return f"Manon API 不可达 ({API_URL}): {e}\n请确认 saas 服务已启动。"
 
     lines = [f"Manon 连接成功"]
     notice = _check_version()
     if notice:
         lines.append(notice)
-        # Auto-update
-        update_result = _do_update()
-        lines.extend(update_result)
 
     # 2. Check local project registry first
     proj = get_project(project_path)
     if proj:
         rid = proj["repo_id"]
+        log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
         lines.append(f"\n本地项目已注册: {proj['name']} (id={rid})")
         lines.append(f"  上次同步: {proj.get('last_sync', '未知')}")
         lines.append(f"  已跟踪文件: {len(proj.get('file_hashes', {}))}")
@@ -783,7 +797,8 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"  索引状态: {repo['index_status']}")
             if repo.get("index_stats"):
                 s = repo["index_stats"]
-                fil = s.get("total_files", 0)
+                log.debug("index_stats: %s", s)
+                fil = s.get("total_files", s.get("files_indexed", 0))
                 ent = s.get("total_entities", s.get("entities_added", 0))
                 rel = s.get("total_relations", s.get("relations_added", 0))
                 chk = s.get("total_chunks", s.get("chunks_added", 0))

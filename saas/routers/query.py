@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import TenantContext, require_tenant
 from ..db import get_db
-from ..metering import record_usage
+from ..metering import record_usage, record_query
 from ..models import SearchResult, ImpactResult, DeepQueryRequest
 from ..services.graph import get_graph
 from ..services.llm import llm_chat, parse_json
@@ -45,6 +45,15 @@ async def search(
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     result = await mg.query(q, top_k=top_k, depth=depth)
     await record_usage(ctx.tenant_id, "query.search", repo_id)
+    asyncio.create_task(record_query(
+        ctx.tenant_id, repo_id, "search", q,
+        rounds_detail=[{
+            "round": 0, "query": q,
+            "entities": [e.get("id", e.get("name", "")) for e in result.entities[:20]],
+            "chunks": [c.get("id", c.get("entity", "")) for c in result.chunks[:20]],
+            "covered": True,
+        }],
+    ))
     return SearchResult(
         entities=result.entities,
         relations=result.relations,
@@ -162,6 +171,12 @@ async def deep_query(
     # initial query
     result = await mg.query(body.question, top_k=10, depth=1)
     accumulated = result.context or ""
+    rounds_detail: list[dict] = [{
+        "round": 0, "query": body.question,
+        "entities": [e.get("id", e.get("name", "")) for e in result.entities],
+        "chunks": [c.get("id", c.get("entity", "")) for c in result.chunks],
+        "covered": False,  # unknown yet, updated after first LLM analysis
+    }]
     rounds = [{"round": 0, "query": body.question, "context_chars": len(accumulated)}]
     parsed: dict = {}
 
@@ -179,7 +194,10 @@ async def deep_query(
 
         follow_ups = parsed.get("queries", [])
         if not follow_ups:
-            break  # all covered
+            # All covered — mark round 0 as covered if it was the only round
+            if len(rounds_detail) == 1:
+                rounds_detail[0]["covered"] = True
+            break
 
         # Run follow-up queries in parallel
         async def _run_query(q: str):
@@ -189,6 +207,12 @@ async def deep_query(
         for q, r in results:
             if r.context:
                 accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
+            rounds_detail.append({
+                "round": i + 1, "query": q,
+                "entities": [e.get("id", e.get("name", "")) for e in r.entities],
+                "chunks": [c.get("id", c.get("entity", "")) for c in r.chunks],
+                "covered": True,  # GLM requested this query to fill a gap
+            })
 
         rounds.append({
             "round": i + 1,
@@ -196,10 +220,21 @@ async def deep_query(
             "context_chars": len(accumulated),
         })
 
+    # Compute coverage ratio
+    sub_qs = parsed.get("sub_questions", [])
+    covered = parsed.get("covered", [])
+    coverage = len(covered) / len(sub_qs) if sub_qs else 1.0
+
     await record_usage(ctx.tenant_id, "query.deep_query", repo_id)
+    asyncio.create_task(record_query(
+        ctx.tenant_id, repo_id, "deep_query", body.question,
+        rounds=len(rounds),
+        rounds_detail=rounds_detail,
+        coverage=coverage,
+    ))
     return {
         "context": accumulated,
         "rounds": rounds,
-        "sub_questions": parsed.get("sub_questions", []),
-        "covered": parsed.get("covered", []),
+        "sub_questions": sub_qs,
+        "covered": covered,
     }

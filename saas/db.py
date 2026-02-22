@@ -43,12 +43,36 @@ CREATE TABLE IF NOT EXISTS usage_log (
     tokens     INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS query_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id       TEXT NOT NULL,
+    repo_id         TEXT NOT NULL,
+    endpoint        TEXT NOT NULL,
+    query           TEXT NOT NULL,
+    rounds          INTEGER NOT NULL DEFAULT 1,
+    rounds_detail   TEXT,
+    coverage        REAL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
 _MIGRATIONS = [
     # Add source_type column for local AST sync repos
     "ALTER TABLE repos ADD COLUMN source_type TEXT NOT NULL DEFAULT ''",
+    # query_log for embedding training data pipeline
+    """CREATE TABLE IF NOT EXISTS query_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id       TEXT NOT NULL,
+        repo_id         TEXT NOT NULL,
+        endpoint        TEXT NOT NULL,
+        query           TEXT NOT NULL,
+        rounds          INTEGER NOT NULL DEFAULT 1,
+        rounds_detail   TEXT,
+        coverage        REAL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
 ]
 
 

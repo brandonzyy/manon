@@ -50,6 +50,7 @@ async def _run_index(repo_id: str, tenant_id: str, local_path: str, incremental:
             "entities_added": result.entities_added,
             "relations_added": result.relations_added,
             "chunks_added": result.chunks_added,
+            "total_files": result.files_indexed,
         }
         await db.execute(
             "UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
