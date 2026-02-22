@@ -199,6 +199,26 @@ info "Detected: ${PLATFORMS[*]}"
 API_URL="auto"
 API_KEY=""
 
+# ── Check for existing key ────────────────────────────
+for _cfg in "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
+            "$HOME/.codeium/windsurf/mcp_config.json" "$HOME/.windsurf/mcp_config.json"; do
+    if [ -f "$_cfg" ]; then
+        _key=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    k = d.get('mcpServers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
+    if k.startswith('msk_'): print(k)
+except: pass
+" "$_cfg" 2>/dev/null)
+        if [ -n "$_key" ]; then
+            API_KEY="$_key"
+            info "Existing API key found, skipping registration"
+            break
+        fi
+    fi
+done
+
 # ── Venv + deps ───────────────────────────────────────
 head1 "Dependencies"
 if [ ! -d "$VENV_DIR" ]; then
