@@ -75,7 +75,32 @@ GIT_BRANCH_INTL = "main"
 
 
 def _detect_region() -> str:
-    """Detect user region via public IP lookup. Returns 'CN' or 'INTL'."""
+    """Detect user region. Returns 'CN' or 'INTL'.
+
+    Priority: OS locale/timezone (fast, offline) → IP lookup (slow, online).
+    """
+    # 1) OS-level hints — instant, no network
+    import locale
+    try:
+        loc = locale.getdefaultlocale()[0] or ""
+        if loc.startswith("zh_CN") or loc.startswith("zh_Hans"):
+            return "CN"
+    except Exception:
+        pass
+    # Windows: check system timezone
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import subprocess as _sp
+            tz = _sp.run(
+                ["powershell", "-c", "(Get-TimeZone).Id"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.strip()
+            if "China" in tz or "Beijing" in tz or "Shanghai" in tz:
+                return "CN"
+        except Exception:
+            pass
+    # 2) IP lookup — fallback
     for endpoint, country_key in [
         ("https://api.country.is/", "country"),
         ("https://ipinfo.io/json", "country"),
@@ -118,18 +143,6 @@ def _get_cached_region() -> str:
     return "CN"
 
 
-def _fetch_tunnel_url() -> str:
-    try:
-        r = httpx.get(f"{API_URL_CN}/tunnel-url", timeout=5)
-        if r.status_code == 200:
-            url = r.json().get("url", "")
-            if url:
-                return url
-    except Exception as e:
-        log.debug("Tunnel URL fetch failed: %s", e)
-    return ""
-
-
 def _resolve_api_url() -> str:
     if _explicit_url:
         return _explicit_url
@@ -137,7 +150,7 @@ def _resolve_api_url() -> str:
     if region == "CN":
         url = API_URL_CN
     else:
-        url = API_URL_INTL or _fetch_tunnel_url() or API_URL_CN
+        url = API_URL_INTL or API_URL_CN  # INTL 未配置时回落到 CN
     log.info("Geo-routing: region=%s, api_url=%s", region, url)
     return url
 
@@ -908,15 +921,18 @@ def manon_init(project_path: str, project_name: str = "") -> str:
 @mcp.tool()
 def manon_config() -> str:
     """查看当前 Manon 配置和连接状态。"""
-    try:
-        cfg = _get("/api/v1/config")
-    except Exception as e:
-        return f"获取配置失败: {e}"
     lines = [
-        f"套餐: {cfg['tier']}",
-        f"速率限制: {cfg['rate_limit']} req/min",
         f"客户端版本: {CLIENT_VERSION}",
+        f"区域: {REGION}",
+        f"API: {API_URL}",
     ]
+    # Try fetching server config with short timeout
+    try:
+        cfg = _get("/api/v1/config", timeout=5)
+        lines.insert(0, f"套餐: {cfg['tier']}")
+        lines.append(f"速率限制: {cfg['rate_limit']} req/min")
+    except Exception:
+        lines.append("服务端: 连接超时，本地配置如上")
     # Show cached update notice; trigger background check if not yet done
     if _update_notice:
         lines.append(_update_notice)
