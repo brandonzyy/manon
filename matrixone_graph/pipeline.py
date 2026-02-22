@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -180,6 +181,9 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             callee_id = _make_entity_id(module, call.callee)
         elif call.callee in imported_names:
             callee_id = imported_names[call.callee]
+        elif call.callee.startswith(("./", "../")):
+            # TS parser resolved callee with relative module path — resolve to full entity ID
+            callee_id = _resolve_relative_module(module, call.callee)
         else:
             callee_id = call.callee
         relations.append(Relation(
@@ -234,6 +238,49 @@ def _save_chunks(kg_path: Path, chunks: dict[str, Chunk]) -> None:
         json.dumps({k: v.to_dict() for k, v in chunks.items()}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+# ---------------------------------------------------------------------------
+# In-memory graph cache (30-min TTL)
+# ---------------------------------------------------------------------------
+
+_KG_CACHE_TTL = 30 * 60  # 30 minutes
+
+@dataclass
+class _CachedKG:
+    graph: CodeGraph
+    vec_index: VectorIndex
+    chunks: dict[str, Chunk]
+    last_access: float
+
+_kg_cache: dict[str, _CachedKG] = {}
+
+
+def _get_cached_kg(kg_path: Path) -> tuple[CodeGraph, VectorIndex, dict[str, Chunk]]:
+    """Load graph/vectors/chunks from cache or disk. Resets TTL on access."""
+    key = str(kg_path)
+    now = time.monotonic()
+    # Evict stale entries
+    stale = [k for k, v in _kg_cache.items() if now - v.last_access > _KG_CACHE_TTL]
+    for k in stale:
+        del _kg_cache[k]
+    if key in _kg_cache:
+        _kg_cache[key].last_access = now
+        c = _kg_cache[key]
+        return c.graph, c.vec_index, c.chunks
+    # Load from disk
+    graph = CodeGraph()
+    vec_index = VectorIndex()
+    graph.load(kg_path / GRAPH_FILE)
+    vec_index.load(kg_path / VECTORS_FILE)
+    chunks = _load_chunks(kg_path)
+    _kg_cache[key] = _CachedKG(graph=graph, vec_index=vec_index, chunks=chunks, last_access=now)
+    return graph, vec_index, chunks
+
+
+def invalidate_kg_cache(kg_path: Path) -> None:
+    """Remove a specific kg_path from cache (call after re-indexing)."""
+    _kg_cache.pop(str(kg_path), None)
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +385,7 @@ async def index_repo(
     graph.save(kg_path / GRAPH_FILE)
     vec_index.save(kg_path / VECTORS_FILE)
     _save_chunks(kg_path, all_chunks)
+    invalidate_kg_cache(kg_path)  # force reload on next query
     meta.update({
         "version": 1, "entity_count": graph.entity_count,
         "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
@@ -360,11 +408,7 @@ async def query(
     if kg_path is None:
         kg_path = repo_path / KG_DIR
 
-    graph = CodeGraph()
-    vec_index = VectorIndex()
-    graph.load(kg_path / GRAPH_FILE)
-    vec_index.load(kg_path / VECTORS_FILE)
-    all_chunks = _load_chunks(kg_path)
+    graph, vec_index, all_chunks = _get_cached_kg(kg_path)
 
     q_vec = await embedder.embed_single(text)
     ent_hits = vec_index.search_entities(q_vec, top_k)

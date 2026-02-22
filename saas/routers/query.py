@@ -1,6 +1,7 @@
 """Query endpoints — search, graph, impact, deep-query."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -145,7 +146,7 @@ async def deep_query(
             analysis = await llm_chat([
                 {"role": "system", "content": _DEEPQUERY_SYSTEM},
                 {"role": "user", "content": f"## 用户问题\n{body.question}\n\n## 已有上下文\n{accumulated[:12000]}"},
-            ])
+            ], max_tokens=1024)
             parsed = parse_json(analysis)
         except Exception:
             log.warning("deep-query LLM round %d failed, stopping iteration", i + 1)
@@ -155,8 +156,12 @@ async def deep_query(
         if not follow_ups:
             break  # all covered
 
-        for q in follow_ups[:3]:
-            r = await mg.query(q, top_k=5, depth=1)
+        # Run follow-up queries in parallel
+        async def _run_query(q: str):
+            return q, await mg.query(q, top_k=5, depth=1)
+
+        results = await asyncio.gather(*[_run_query(q) for q in follow_ups[:3]])
+        for q, r in results:
             if r.context:
                 accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
 
