@@ -31,6 +31,7 @@ log = logging.getLogger("manon-mcp")
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 45
 INLINE_SCAN_LIMIT = 200
+CLIENT_VERSION = "0.1.0"
 
 # ── Geo-routing ───────────────────────────────────────
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
@@ -84,6 +85,27 @@ def _resolve_api_url() -> str:
 
 
 API_URL = _resolve_api_url()
+
+# ── Version check ─────────────────────────────────────
+_version_checked = False
+_update_notice: str = ""
+
+def _check_version() -> str:
+    global _version_checked, _update_notice
+    if _version_checked:
+        return _update_notice
+    _version_checked = True
+    try:
+        data = _get_no_auth("/version")
+        latest = data.get("version", "")
+        if latest and latest != CLIENT_VERSION:
+            _update_notice = (
+                f"\n⚠️  新版本可用: {latest}（当前 {CLIENT_VERSION}）\n"
+                f"   更新: git -C $(dirname $(which manon 2>/dev/null) 2>/dev/null || echo .) pull && bash install.sh\n"
+            )
+    except Exception:
+        pass
+    return _update_notice
 
 
 def _headers():
@@ -533,6 +555,9 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     lines.append(f"  服务器: {API_URL} ({'国内' if API_URL == API_URL_CN else '海外'})")
     lines.append(f"  模型: {health.get('llm_model', '?')}")
     lines.append(f"  Embedding: {health.get('embedding_url', '?')}")
+    notice = _check_version()
+    if notice:
+        lines.append(notice)
 
     # 2. Check local project registry first
     proj = get_project(project_path)
@@ -639,7 +664,11 @@ def manon_config() -> str:
         f"Embedding: {cfg['embedding_url']}",
         f"租户: {cfg['tenant_id']} ({cfg['tier']})",
         f"速率限制: {cfg['rate_limit']} req/min",
+        f"客户端版本: {CLIENT_VERSION}",
     ]
+    notice = _check_version()
+    if notice:
+        lines.append(notice)
     return "\n".join(lines)
 
 
