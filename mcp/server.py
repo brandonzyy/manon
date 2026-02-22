@@ -853,6 +853,18 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         rid = matched["id"]
         lines.append(f"\n服务端仓库匹配: {matched['name']} (id={rid})")
         lines.append(f"  索引状态: {matched['index_status']}")
+        # Fetch detailed stats
+        try:
+            repo = _get(f"/api/v1/repos/{rid}")
+            if repo.get("index_stats"):
+                s = repo["index_stats"]
+                fil = s.get("total_files", s.get("files_indexed", 0))
+                ent = s.get("total_entities", s.get("entities_added", 0))
+                rel = s.get("total_relations", s.get("relations_added", 0))
+                chk = s.get("total_chunks", s.get("chunks_added", 0))
+                lines.append(f"  文件: {fil}, 实体: {ent}, 关系: {rel}, 块: {chk}")
+        except Exception:
+            pass
         # Register locally if it's a local source_type
         if matched.get("source_type") == "local":
             set_project(project_path, {
