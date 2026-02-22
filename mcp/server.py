@@ -704,7 +704,7 @@ def manon_deep_query(repo_id: str, question: str, max_rounds: int = 3) -> str:
     try:
         result = _post(f"/api/v1/repos/{repo_id}/deep-query", {
             "question": question, "max_rounds": max_rounds,
-        }, timeout=50)  # deep-query is slow; 50s leaves ~10s margin for MCP framework
+        }, timeout=30 + max_rounds * 30)  # ~30s per round + 30s base
     except httpx.TimeoutException:
         # Graceful degradation: fall back to single-round search
         try:
