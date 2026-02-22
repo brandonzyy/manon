@@ -129,7 +129,7 @@ def deploy(c):
     print("\n=== 部署 ===")
     run(c, f"mkdir -p {REMOTE_DIR} && cd {REMOTE_DIR} && tar xzf {remote_tar} && rm -f {remote_tar}")
 
-    # Write VERSION file
+    # Write VERSION file on server and locally
     result = subprocess.run(
         ["git", "rev-list", "--count", "HEAD"],
         cwd=ROOT, capture_output=True, text=True,
@@ -137,6 +137,9 @@ def deploy(c):
     if result.returncode == 0:
         version = f"0.1.{result.stdout.strip()}"
         run(c, f"echo '{version}' > {REMOTE_DIR}/VERSION")
+        # Also write locally so public sync picks it up
+        with open(os.path.join(ROOT, "VERSION"), "w") as f:
+            f.write(version + "\n")
         print(f"  VERSION: {version}")
 
 

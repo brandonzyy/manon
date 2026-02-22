@@ -43,9 +43,18 @@ HTTP_TIMEOUT = 45
 INLINE_SCAN_LIMIT = 50  # must be ≤ SYNC_BATCH_SIZE to fit in one HTTP call
 
 def _get_client_version() -> str:
-    """Auto-generate version from git commit count: 0.1.{count}"""
+    """Read version from VERSION file, or fall back to git commit count."""
+    install_dir = Path(__file__).resolve().parent.parent
+    # 1. VERSION file (written by CI sync workflow for public releases)
+    version_file = install_dir / "VERSION"
     try:
-        install_dir = Path(__file__).resolve().parent.parent
+        v = version_file.read_text(encoding="utf-8").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    # 2. Git commit count (works in dev / private repo)
+    try:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD"],
             cwd=str(install_dir),
