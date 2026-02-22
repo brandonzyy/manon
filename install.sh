@@ -303,7 +303,7 @@ for _cfg in "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
         _key=$(python3 -c "
 import json, sys
 try:
-    d = json.load(open(sys.argv[1]))
+    d = json.load(open(sys.argv[1], encoding='utf-8'))
     k = d.get('mcpServers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
     if k.startswith('msk_'): print(k)
 except: pass
