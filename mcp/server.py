@@ -302,6 +302,170 @@ def _format_impact(result: dict) -> str:
     return _truncate("\n".join(parts))
 
 
+def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) -> str:
+    """Client-side impact analysis for local repos using git diff + server graph."""
+    import re
+
+    root = Path(local_path).resolve()
+    parts: list[str] = []
+
+    # 0. Detect git root and compute project prefix
+    #    Git root may differ from project root (e.g. git root = 一码行云, project = 一码行云/donnie)
+    try:
+        git_root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=5,
+        )
+        if git_root_result.returncode == 0:
+            git_root = Path(git_root_result.stdout.strip()).resolve()
+        else:
+            git_root = root
+    except Exception:
+        git_root = root
+
+    # prefix to strip from git diff paths (e.g. "donnie/")
+    try:
+        rel_prefix = root.relative_to(git_root).as_posix()
+    except ValueError:
+        rel_prefix = ""
+    prefix_with_slash = (rel_prefix + "/") if rel_prefix else ""
+
+    # 1. Get changed files from git diff
+    try:
+        if commit == "HEAD":
+            diff_cmd = ["git", "diff", "HEAD~1", "--name-only"]
+            commit_msg_cmd = ["git", "log", "-1", "--format=%h %s"]
+        else:
+            diff_cmd = ["git", "diff", f"{commit}~1", commit, "--name-only"]
+            commit_msg_cmd = ["git", "log", "-1", "--format=%h %s", commit]
+
+        msg_result = subprocess.run(commit_msg_cmd, cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        commit_info = msg_result.stdout.strip() if msg_result.returncode == 0 else commit
+
+        diff_result = subprocess.run(diff_cmd, cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        if diff_result.returncode != 0:
+            return f"git diff 失败: {diff_result.stderr.strip()}"
+
+        raw_files = [f for f in diff_result.stdout.strip().split("\n") if f]
+
+        # Filter to project files and strip prefix
+        changed_files = []
+        for f in raw_files:
+            if prefix_with_slash and f.startswith(prefix_with_slash):
+                changed_files.append(f[len(prefix_with_slash):])
+            elif not prefix_with_slash:
+                changed_files.append(f)
+            # else: file outside project, skip
+    except Exception as e:
+        return f"git 操作失败: {e}"
+
+    if not changed_files:
+        return "没有检测到文件变更。"
+
+    parts.append(f"影响分析: {commit_info}")
+    parts.append(f"变更文件 ({len(changed_files)}):")
+    for f in changed_files:
+        parts.append(f"  {f}")
+
+    # 2. Get changed line ranges to identify affected symbols
+    changed_symbols: list[str] = []
+    for cf in changed_files:
+        ext = Path(cf).suffix.lower()
+        if ext not in (".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php"):
+            continue
+        try:
+            # When cwd is project root (subdir of git root), -- paths are cwd-relative
+            udiff = subprocess.run(
+                ["git", "diff", "HEAD~1" if commit == "HEAD" else f"{commit}~1..{commit}",
+                 "--unified=0", "--", cf],
+                cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+            )
+            changed_lines: set[int] = set()
+            for line in udiff.stdout.split("\n"):
+                m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+                if m:
+                    start = int(m.group(1))
+                    count = int(m.group(2)) if m.group(2) else 1
+                    changed_lines.update(range(start, start + count))
+
+            if not changed_lines:
+                continue
+
+            # Parse file to get symbols with line ranges
+            full_path = root / cf
+            if not full_path.exists():
+                continue
+            from codeindex.parser import parse_file
+            pr = parse_file(full_path)
+            for sym in pr.symbols:
+                if hasattr(sym, "line_start") and hasattr(sym, "line_end"):
+                    sym_lines = set(range(sym.line_start, sym.line_end + 1))
+                    if sym_lines & changed_lines:
+                        changed_symbols.append(sym.name)
+                elif hasattr(sym, "line_number"):
+                    if sym.line_number in changed_lines:
+                        changed_symbols.append(sym.name)
+        except Exception as e:
+            log.debug("Failed to analyze %s: %s", cf, e)
+
+    if not changed_symbols:
+        parts.append("\n未能精确定位变更符号，按文件级别分析。")
+        # Fall back to querying all symbols in changed files
+        for cf in changed_files:
+            module = cf.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")
+            try:
+                result = _get(f"/api/v1/repos/{repo_id}/graph", symbol=module, depth=1)
+                for r in result.get("relations", [])[:5]:
+                    parts.append(f"  {r.get('src_id', '?')} --{r.get('kind', '?')}--> {r.get('tgt_id', '?')}")
+            except Exception:
+                pass
+        return _truncate("\n".join(parts))
+
+    # Deduplicate
+    changed_symbols = list(dict.fromkeys(changed_symbols))
+    parts.append(f"\n变更符号 ({len(changed_symbols)}):")
+    for s in changed_symbols:
+        parts.append(f"  {s}")
+
+    # 3. Query graph for callers of each changed symbol
+    all_callers: list[str] = []
+    affected_modules: set[str] = set()
+    for sym in changed_symbols[:10]:  # limit to avoid too many queries
+        try:
+            result = _get(f"/api/v1/repos/{repo_id}/graph", symbol=sym, depth=max_depth)
+            for r in result.get("relations", []):
+                src = r.get("src_id", "")
+                tgt = r.get("tgt_id", "")
+                kind = r.get("kind", "")
+                if kind == "calls" and tgt and sym in tgt:
+                    all_callers.append(f"  {src} --calls--> {tgt}")
+                    # Extract module from caller
+                    mod = ".".join(src.split(".")[:-1]) if "." in src else src
+                    affected_modules.add(mod)
+        except Exception as e:
+            log.debug("Graph query for %s failed: %s", sym, e)
+
+    if all_callers:
+        callers_dedup = list(dict.fromkeys(all_callers))
+        parts.append(f"\n调用者 ({len(callers_dedup)}):")
+        parts.extend(callers_dedup[:20])
+
+    if affected_modules:
+        parts.append(f"\n受影响模块 ({len(affected_modules)}):")
+        for m in sorted(affected_modules):
+            parts.append(f"  {m}")
+
+    # 4. Risk assessment
+    risk = "low"
+    if len(affected_modules) > 5:
+        risk = "high"
+    elif len(affected_modules) > 2:
+        risk = "medium"
+    parts.append(f"\n风险评估: {risk} — 影响 {len(affected_modules)} 个模块, {len(changed_symbols)} 个符号变更")
+
+    return _truncate("\n".join(parts))
+
+
 # ── Tools ──────────────────────────────────────────────
 
 @mcp.tool()
@@ -360,6 +524,11 @@ def manon_impact(repo_id: str, commit: str = "HEAD", max_depth: int = 2) -> str:
         commit: commit hash（默认 HEAD）
         max_depth: 影响传播深度（默认 2）
     """
+    # For local repos, do client-side impact analysis using local git + server graph
+    found = find_project_by_repo_id(repo_id)
+    if found:
+        return _local_impact(repo_id, found[0], commit, max_depth)
+
     result = _get(f"/api/v1/repos/{repo_id}/impact", commit=commit, max_depth=max_depth)
     return _format_impact(result)
 
