@@ -382,11 +382,15 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
             )
             changed_lines: set[int] = set()
             for line in udiff.stdout.split("\n"):
-                m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+                m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
                 if m:
-                    start = int(m.group(1))
-                    count = int(m.group(2)) if m.group(2) else 1
-                    changed_lines.update(range(start, start + count))
+                    # Added lines
+                    add_start = int(m.group(3))
+                    add_count = int(m.group(4)) if m.group(4) else 1
+                    changed_lines.update(range(add_start, add_start + add_count))
+                    # Deleted lines — use the deletion position in the new file
+                    if add_count == 0 and add_start > 0:
+                        changed_lines.add(add_start)
 
             if not changed_lines:
                 continue
@@ -991,3 +995,79 @@ def manon_update() -> str:
 
     lines.append("\n请重启 Claude Code 使新版本生效。")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def manon_code_health(repo_id: str) -> str:
+    """分析代码库的健康状况。基于知识图谱计算 8 个维度的健康评分。
+
+    维度: 模块耦合度(MC)、循环依赖(CD)、扇入集中度(FI)、死代码(DC)、
+          测试覆盖(TC)、函数规模(FS)、技术债务(TD)、继承深度(ID)
+
+    Args:
+        repo_id: 仓库 ID（从 manon_repos_list 获取）
+    """
+    result = _get(f"/api/v1/repos/{repo_id}/code-health", timeout=60)
+    score = result.get("score", 0)
+    dims = result.get("dimensions", [])
+
+    grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D"
+    lines = [f"代码健康评分: {score}/100 ({grade})"]
+    lines.append(f"实体: {result.get('entity_count', 0)}, 关系: {result.get('relation_count', 0)}")
+    lines.append("")
+    for d in dims:
+        bar = "█" * d["value"] + "░" * (10 - d["value"])
+        lines.append(f"  {d['abbr']:>2s} {d['name']:<6s} {bar} {d['value']}/10 (权重{d['weight']})")
+        detail = d.get("detail", {})
+        if detail:
+            info = ", ".join(f"{k}={v}" for k, v in detail.items() if not isinstance(v, list))
+            if info:
+                lines.append(f"     {info}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def manon_setup_hooks(project_path: str) -> str:
+    """为项目安装 git pre-push hook，push 后自动更新知识图谱并输出健康评分。
+
+    Args:
+        project_path: 项目在本机的绝对路径
+    """
+    resolved = Path(project_path).resolve()
+    git_dir = resolved / ".git"
+    if not git_dir.is_dir():
+        return f"不是 git 仓库: {resolved}"
+
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_file = hooks_dir / "pre-push"
+
+    script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
+    python_exe = sys.executable or "python3"
+
+    hook_content = f"""#!/bin/sh
+# Manon post-push hook — update knowledge graph + health score
+# Installed by manon_setup_hooks
+"{python_exe}" "{script_path}" "{resolved}" &
+exit 0
+"""
+
+    if hook_file.exists():
+        existing = hook_file.read_text(encoding="utf-8", errors="replace")
+        if "manon" in existing.lower() or "post_push" in existing:
+            hook_file.write_text(hook_content, encoding="utf-8")
+            return f"pre-push hook 已更新: {hook_file}"
+        hook_content_append = f"""
+# Manon post-push hook (appended)
+"{python_exe}" "{script_path}" "{resolved}" &
+"""
+        with open(hook_file, "a", encoding="utf-8") as f:
+            f.write(hook_content_append)
+        return f"已追加 Manon hook 到现有 pre-push: {hook_file}"
+
+    hook_file.write_text(hook_content, encoding="utf-8")
+    try:
+        hook_file.chmod(0o755)
+    except Exception:
+        pass
+    return f"pre-push hook 已安装: {hook_file}\ngit push 后将自动更新图谱并输出健康评分。"
