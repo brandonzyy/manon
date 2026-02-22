@@ -16,10 +16,19 @@ jobs:
 
       - name: Remove private directories
         run: |
-          rm -rf saas/ matrixone_graph/ .github/
-          # 同时移除可能包含敏感信息的文件
-          rm -f saas.db test_saas3.db manon.db
-          rm -rf saas_indexes/ saas_repos/
+          # 服务器端模块
+          rm -rf saas/ matrixone_graph/
+          # CI/CD 配置（不暴露给用户）
+          rm -rf .github/
+          # 内部脚本
+          rm -f scripts/manon-admin.py scripts/run-saas.py
+          # 内部测试和评测
+          rm -rf tests/
+          # 商业文档
+          rm -rf docs/
+          # 敏感配置和运行时数据
+          rm -f .env saas.db test_saas3.db manon.db
+          rm -rf saas_indexes/ saas_repos/ indexes/
 
       - name: Push to public repo
         run: |
