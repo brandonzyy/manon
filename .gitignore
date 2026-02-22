@@ -23,3 +23,5 @@ web/static/test-results/
 
 # internal docs (business plans, etc.)
 docs/
+.last-deploy-hash
+.mcp.json

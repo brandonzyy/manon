@@ -109,27 +109,37 @@ API_URL = _resolve_api_url()
 _version_checked = False
 _update_notice: str = ""
 
-def _parse_version(v: str) -> tuple[int, ...]:
-    """Parse '0.1.100' into (0, 1, 100) for numeric comparison."""
-    try:
-        return tuple(int(x) for x in v.split("."))
-    except (ValueError, AttributeError):
-        return (0,)
-
 
 def _check_version() -> str:
+    """Compare local HEAD with origin/master via git fetch (no server dependency)."""
     global _version_checked, _update_notice
     if _version_checked:
         return _update_notice
     _version_checked = True
     try:
-        data = _get_no_auth("/version")
-        latest = data.get("version", "")
-        if latest and latest != CLIENT_VERSION:
-            # Only notify if server version is actually higher
-            if _parse_version(latest) > _parse_version(CLIENT_VERSION):
+        install_dir = Path(__file__).resolve().parent.parent
+        # Quick fetch (timeout 10s, no heavy objects)
+        subprocess.run(
+            ["git", "fetch", "--quiet", "origin", "master"],
+            cwd=str(install_dir), capture_output=True, timeout=10,
+        )
+        local = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        remote = subprocess.run(
+            ["git", "rev-parse", "origin/master"],
+            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if local and remote and local != remote:
+            # Count how many commits behind
+            behind = subprocess.run(
+                ["git", "rev-list", "--count", f"{local}..{remote}"],
+                cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            if behind and int(behind) > 0:
                 _update_notice = (
-                    f"\n⚠️  新版本可用: {latest}（当前 {CLIENT_VERSION}）\n"
+                    f"\n⚠️  有 {behind} 个新提交可用（当前 {CLIENT_VERSION}）\n"
                     f"   更新: 调用 manon_update 一键更新\n"
                 )
     except Exception:
@@ -959,16 +969,22 @@ def manon_update() -> str:
     install_dir = Path(__file__).resolve().parent.parent
     lines: list[str] = []
 
-    # 1. Version check
+    # 1. Check for updates via git
     try:
-        data = _get_no_auth("/version")
-        latest = data.get("version", "")
-        if not latest or _parse_version(latest) <= _parse_version(CLIENT_VERSION):
-            lines.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
+        subprocess.run(
+            ["git", "fetch", "--quiet", "origin", "master"],
+            cwd=str(install_dir), capture_output=True, timeout=10,
+        )
+        behind = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..origin/master"],
+            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if behind and int(behind) > 0:
+            lines.append(f"发现 {behind} 个新提交（当前 {CLIENT_VERSION}）")
         else:
-            lines.append(f"发现新版本: {latest}（当前 {CLIENT_VERSION}）")
+            lines.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
     except Exception:
-        lines.append(f"当前版本: {CLIENT_VERSION}（无法连接服务端检查更新）")
+        lines.append(f"当前版本: {CLIENT_VERSION}")
 
     # 2. Git pull
     try:
@@ -1036,7 +1052,7 @@ def manon_code_health(repo_id: str) -> str:
 
 @mcp.tool()
 def manon_setup_hooks(project_path: str) -> str:
-    """为项目安装 git pre-push hook，push 后自动更新知识图谱并输出健康评分。
+    """为项目安装 git pre-push hook，push 后自动更新知识图谱并输出代码健康评分。
 
     Args:
         project_path: 项目在本机的绝对路径
@@ -1054,28 +1070,15 @@ def manon_setup_hooks(project_path: str) -> str:
     python_exe = sys.executable or "python3"
 
     hook_content = f"""#!/bin/sh
-# Manon post-push hook — update knowledge graph + health score
+# Manon pre-push hook — update knowledge graph + health score
 # Installed by manon_setup_hooks
 "{python_exe}" "{script_path}" "{resolved}" &
 exit 0
 """
-
-    if hook_file.exists():
-        existing = hook_file.read_text(encoding="utf-8", errors="replace")
-        if "manon" in existing.lower() or "post_push" in existing:
-            hook_file.write_text(hook_content, encoding="utf-8")
-            return f"pre-push hook 已更新: {hook_file}"
-        hook_content_append = f"""
-# Manon post-push hook (appended)
-"{python_exe}" "{script_path}" "{resolved}" &
-"""
-        with open(hook_file, "a", encoding="utf-8") as f:
-            f.write(hook_content_append)
-        return f"已追加 Manon hook 到现有 pre-push: {hook_file}"
 
     hook_file.write_text(hook_content, encoding="utf-8")
     try:
         hook_file.chmod(0o755)
     except Exception:
         pass
-    return f"pre-push hook 已安装: {hook_file}\ngit push 后将自动更新图谱并输出健康评分。"
+    return f"pre-push hook 已安装: {hook_file}\ngit push 后将自动更新知识图谱并输出代码健康评分。"

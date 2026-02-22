@@ -96,8 +96,6 @@ async def code_health(
 ):
     """Compute 8-dimension code health score from the knowledge graph."""
     from matrixone_graph.health import compute_graph_metrics, compute_score, scan_directory_debt
-    from matrixone_graph.store import CodeGraph
-    from matrixone_graph import GRAPH_FILE
 
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
