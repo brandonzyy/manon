@@ -48,4 +48,4 @@ jobs:
 
           # Push to Gitee mirror (CN users)
           git remote add gitee https://x-access-token:${{ secrets.GITEE_TOKEN }}@gitee.com/ymxy_1_0/manon.git
-          git push gitee HEAD:main --force
+          git push gitee HEAD:master --force

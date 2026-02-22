@@ -67,7 +67,9 @@ API_KEY = os.environ.get("MANON_API_KEY", "")
 _explicit_url = os.environ.get("MANON_API_URL", "")
 _REGION_CACHE = Path.home() / ".manon" / "region.json"
 GIT_REMOTE_CN = "https://gitee.com/ymxy_1_0/manon.git"
-GIT_REMOTE_INTL = "https://github.com/brandonzyy/manon-server.git"
+GIT_REMOTE_INTL = "https://github.com/brandonzyy/manon.git"
+GIT_BRANCH_CN = "master"
+GIT_BRANCH_INTL = "main"
 
 
 def _detect_region() -> str:
@@ -161,9 +163,10 @@ def _check_version() -> str:
         if not (install_dir / ".git").exists():
             return _update_notice
         remote = _ensure_git_remote(install_dir)
+        branch = _git_branch()
         # Quick fetch (timeout 5s)
         subprocess.run(
-            ["git", "fetch", "--quiet", remote, "master"],
+            ["git", "fetch", "--quiet", remote, branch],
             cwd=str(install_dir), capture_output=True, timeout=5,
         )
         local = subprocess.run(
@@ -171,7 +174,7 @@ def _check_version() -> str:
             cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         remote_ref = subprocess.run(
-            ["git", "rev-parse", f"{remote}/master"],
+            ["git", "rev-parse", f"{remote}/{branch}"],
             cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if local and remote_ref and local != remote_ref:
@@ -990,6 +993,11 @@ def _git_remote_url() -> str:
     return GIT_REMOTE_CN if REGION == "CN" else GIT_REMOTE_INTL
 
 
+def _git_branch() -> str:
+    """Return git branch name based on cached region."""
+    return GIT_BRANCH_CN if REGION == "CN" else GIT_BRANCH_INTL
+
+
 def _ensure_git_remote(install_dir: Path) -> str:
     """Ensure 'manon' remote points to the correct region URL. Returns remote name."""
     url = _git_remote_url()
@@ -1021,11 +1029,12 @@ def _do_update() -> list[str]:
     ok = False
 
     remote = _ensure_git_remote(install_dir)
+    branch = _git_branch()
 
     # Git pull (timeout 15s)
     try:
         result = subprocess.run(
-            ["git", "pull", "--quiet", remote, "master"],
+            ["git", "pull", "--quiet", remote, branch],
             cwd=str(install_dir),
             capture_output=True, text=True, timeout=15,
         )
@@ -1107,8 +1116,9 @@ def manon_update() -> str:
     # Quick check how far behind
     try:
         remote = _ensure_git_remote(install_dir)
+        branch = _git_branch()
         behind = subprocess.run(
-            ["git", "rev-list", "--count", f"HEAD..{remote}/master"],
+            ["git", "rev-list", "--count", f"HEAD..{remote}/{branch}"],
             cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if behind and int(behind) > 0:
