@@ -88,7 +88,7 @@ async def ws_dev(ws: WebSocket):
                 log.exception("handle_dev_message error for %s: %s", dev_id, exc)
                 await ws.send_json({"type": "error", "message": f"内部错误: {exc}"})
             await hub.broadcast_to_monitors({**msg, "_dir": "in"})
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         hub.remove_dev(dev_id)
@@ -108,7 +108,7 @@ async def ws_agent(ws: WebSocket):
                 continue
             msg["_agent_id"] = agent_id
             await _handle_agent_message(agent_id, msg)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         hub.remove_agent(agent_id)
@@ -139,7 +139,7 @@ async def ws_monitor(ws: WebSocket):
     try:
         while True:
             await ws.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         hub.remove_monitor(ws)

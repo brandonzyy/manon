@@ -53,11 +53,18 @@ async def impact(project_id: str, file: str | None = Query(None), staged: bool =
 @router.get("/projects/{project_id}/stats")
 async def stats(project_id: str):
     """Get index stats from saas/."""
+    default = {"entities": 0, "relations": 0, "files": 0, "chunks": 0}
     try:
         repo = await saas_client.repos_get(project_id)
-        return repo.get("index_stats", {"entities": 0, "relations": 0, "files": 0, "chunks": 0})
+        raw = repo.get("index_stats", {})
+        return {
+            "entities": raw.get("total_entities", raw.get("entities_added", 0)),
+            "relations": raw.get("total_relations", raw.get("relations_added", 0)),
+            "files": raw.get("total_files", raw.get("files_synced", 0)),
+            "chunks": raw.get("total_chunks", raw.get("chunks_added", 0)),
+        }
     except Exception:
-        return {"entities": 0, "relations": 0, "files": 0, "chunks": 0}
+        return default
 
 
 @router.get("/projects/{project_id}/status")
