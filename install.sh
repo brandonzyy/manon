@@ -9,7 +9,7 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVER_PY="$SCRIPT_DIR/mcp/server.py"
+SERVER_PY="$SCRIPT_DIR/run_mcp.py"
 VENV_DIR="$SCRIPT_DIR/.venv"
 DEFAULT_API_URL="http://117.131.45.179:3700"
 

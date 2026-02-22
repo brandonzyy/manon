@@ -18,7 +18,7 @@ powershell -ExecutionPolicy Bypass -Command ^
   "& { $sd = '%SCRIPT_DIR%'; $f = '%~f0'; $lines = [IO.File]::ReadAllLines($f, [Text.Encoding]::UTF8); $ps = ($lines | Where-Object { $_ -match '^::PS ' } | ForEach-Object { $_ -replace '^::PS ', '' }) -join \"`n\"; $ps = ('$SCRIPT_DIR = ''' + $sd + '''') + \"`n\" + $ps; Invoke-Expression $ps }"
 exit /b %errorlevel%
 
-::PS $SERVER_PY  = "$SCRIPT_DIR\mcp\server.py"
+::PS $SERVER_PY  = "$SCRIPT_DIR\run_mcp.py"
 ::PS $VENV_DIR   = "$SCRIPT_DIR\.venv"
 ::PS $DEFAULT_API_URL = "http://117.131.45.179:3700"
 ::PS $ErrorActionPreference = "Stop"
