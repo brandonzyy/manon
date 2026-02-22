@@ -71,6 +71,36 @@ def _make_entity_id(module: str, symbol_name: str) -> str:
     return f"{module}.{symbol_name}" if module else symbol_name
 
 
+def _resolve_relative_module(current_module: str, import_path: str) -> str:
+    """Resolve a relative import path against the current module.
+
+    Examples:
+        ("electron.orchestrator.skill-router", "./tool-executor")
+        → "electron.orchestrator.tool-executor"
+
+        ("electron.orchestrator.skill-router", "../utils/helper")
+        → "electron.utils.helper"
+    """
+    if not import_path.startswith("."):
+        return import_path
+    parts = current_module.split(".")
+    # Start from parent directory (drop the file-level module name)
+    parts = parts[:-1]
+    # Consume leading ../ or ./
+    path = import_path
+    while path.startswith("../"):
+        path = path[3:]
+        if parts:
+            parts.pop()
+    if path.startswith("./"):
+        path = path[2:]
+    # Convert remaining slashes to dots
+    resolved = path.replace("/", ".")
+    if parts:
+        return ".".join(parts) + "." + resolved
+    return resolved
+
+
 def _build_description(symbol) -> str:
     parts = [f"{symbol.kind}: {symbol.name}"]
     if symbol.signature:
@@ -132,11 +162,26 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             description=_build_description(sym),
             file_path=fp, line_start=sym.line_start, line_end=sym.line_end,
         ))
+    # Build imported_names: short name → fully qualified entity ID
+    imported_names: dict[str, str] = {}
+    for imp in pr.imports:
+        resolved_module = _resolve_relative_module(module, imp.module)
+        for name in imp.names:
+            imported_names[name] = f"{resolved_module}.{name}"
+        if not imp.names:
+            # import of whole module — use last segment as short name
+            short = resolved_module.rsplit(".", 1)[-1]
+            imported_names[short] = resolved_module
     for call in pr.calls:
         if call.callee is None:
             continue
         caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
-        callee_id = _make_entity_id(module, call.callee) if call.callee in local_names else call.callee
+        if call.callee in local_names:
+            callee_id = _make_entity_id(module, call.callee)
+        elif call.callee in imported_names:
+            callee_id = imported_names[call.callee]
+        else:
+            callee_id = call.callee
         relations.append(Relation(
             src_id=caller_id, tgt_id=callee_id,
             kind="calls", description=f"{call.caller} -> {call.callee}",
@@ -150,16 +195,17 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             file_path=fp, weight=1.0,
         ))
     for imp in pr.imports:
+        resolved_module = _resolve_relative_module(module, imp.module)
         for name in imp.names:
             relations.append(Relation(
-                src_id=module, tgt_id=f"{imp.module}.{name}",
-                kind="imports", description=f"imports {imp.module}.{name}",
+                src_id=module, tgt_id=f"{resolved_module}.{name}",
+                kind="imports", description=f"imports {resolved_module}.{name}",
                 file_path=fp, weight=0.5,
             ))
         if not imp.names:
             relations.append(Relation(
-                src_id=module, tgt_id=imp.module,
-                kind="imports", description=f"imports {imp.module}",
+                src_id=module, tgt_id=resolved_module,
+                kind="imports", description=f"imports {resolved_module}",
                 file_path=fp, weight=0.5,
             ))
     return entities, relations
