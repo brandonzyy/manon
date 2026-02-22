@@ -40,7 +40,7 @@ log.setLevel(logging.DEBUG)
 # ── Config ────────────────────────────────────────────
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 45
-INLINE_SCAN_LIMIT = 200
+INLINE_SCAN_LIMIT = 50  # must be ≤ SYNC_BATCH_SIZE to fit in one HTTP call
 
 def _get_client_version() -> str:
     """Auto-generate version from git commit count: 0.1.{count}"""
@@ -755,7 +755,18 @@ def manon_push_update(repo_id: str) -> str:
             msg += "\n用 manon_index_status 查看索引进度。"
         return msg
 
-    # Fallback: server-side git pull
+    # Not a registered local project — check if it's a local-type repo on server
+    try:
+        repo = _get(f"/api/v1/repos/{repo_id}")
+        if repo.get("source_type") == "local":
+            return (
+                f"本地项目未注册（可能 manon_init 超时未完成）。\n"
+                f"请先在项目目录执行 manon_init 注册本地项目，再调用 push_update。"
+            )
+    except Exception:
+        pass
+
+    # Fallback: server-side git pull (only for git-url repos)
     result = _post(f"/api/v1/repos/{repo_id}/push-update", {})
     return f"更新已触发: {result['status']}。用 manon_index_status 查看进度。"
 

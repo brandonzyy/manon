@@ -44,6 +44,7 @@ async def _run_index(repo_id: str, tenant_id: str, local_path: str, incremental:
 
         mg = get_graph(tenant_id, local_path)
         result = await mg.index(incremental=incremental)
+        st = mg.status()
         stats = {
             "files_scanned": result.files_scanned,
             "files_indexed": result.files_indexed,
@@ -51,6 +52,9 @@ async def _run_index(repo_id: str, tenant_id: str, local_path: str, incremental:
             "relations_added": result.relations_added,
             "chunks_added": result.chunks_added,
             "total_files": result.files_indexed,
+            "total_entities": st.get("entity_count", 0),
+            "total_relations": st.get("relation_count", 0),
+            "total_chunks": st.get("chunk_count", 0),
         }
         await db.execute(
             "UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
@@ -98,6 +102,9 @@ async def push_update(repo_id: str, ctx: TenantContext = Depends(require_tenant)
         await db.commit()
     else:
         local_path = row["local_path"]
+
+    if not local_path:
+        raise HTTPException(400, "repo has no local path or git_url — use sync-ast for local repos")
 
     asyncio.create_task(_run_index(repo_id, ctx.tenant_id, local_path, incremental=True))
     await record_usage(ctx.tenant_id, "indexing.push_update", repo_id)
