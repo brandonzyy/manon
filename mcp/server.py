@@ -763,13 +763,13 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     except Exception as e:
         return f"Manon API 不可达 ({API_URL}): {e}\n请确认 saas 服务已启动。"
 
-    lines = [f"Manon API 连接成功 — {health.get('status', 'ok')}"]
-    lines.append(f"  服务器: {API_URL} ({'国内' if API_URL == API_URL_CN else '海外'})")
-    lines.append(f"  模型: {health.get('llm_model', '?')}")
-    lines.append(f"  Embedding: {health.get('embedding_url', '?')}")
+    lines = [f"Manon 连接成功"]
     notice = _check_version()
     if notice:
         lines.append(notice)
+        # Auto-update
+        update_result = _do_update()
+        lines.extend(update_result)
 
     # 2. Check local project registry first
     proj = get_project(project_path)
@@ -783,10 +783,11 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"  索引状态: {repo['index_status']}")
             if repo.get("index_stats"):
                 s = repo["index_stats"]
+                fil = s.get("total_files", 0)
                 ent = s.get("total_entities", s.get("entities_added", 0))
                 rel = s.get("total_relations", s.get("relations_added", 0))
                 chk = s.get("total_chunks", s.get("chunks_added", 0))
-                lines.append(f"  实体: {ent}, 关系: {rel}, 块: {chk}")
+                lines.append(f"  文件: {fil}, 实体: {ent}, 关系: {rel}, 块: {chk}")
         except Exception as e:
             lines.append(f"  [!] 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
@@ -865,16 +866,13 @@ def manon_init(project_path: str, project_name: str = "") -> str:
 
 @mcp.tool()
 def manon_config() -> str:
-    """查看当前 Manon 配置：LLM 模型、Embedding 地址、租户信息、速率限制。"""
+    """查看当前 Manon 配置和连接状态。"""
     try:
         cfg = _get("/api/v1/config")
     except Exception as e:
         return f"获取配置失败: {e}"
     lines = [
-        f"LLM 模型: {cfg['llm_model']}",
-        f"LLM API: {cfg['llm_api_url']}",
-        f"Embedding: {cfg['embedding_url']}",
-        f"租户: {cfg['tenant_id']} ({cfg['tier']})",
+        f"套餐: {cfg['tier']}",
         f"速率限制: {cfg['rate_limit']} req/min",
         f"客户端版本: {CLIENT_VERSION}",
     ]
@@ -893,7 +891,7 @@ def manon_account() -> str:
         return f"获取账户信息失败: {e}"
     q = acc["quotas"]
     lines = [
-        f"租户: {acc['tenant_id']} ({acc['tier']})",
+        f"套餐: {acc['tier']}",
         f"速率限制: {acc['rate_limit']} req/min",
         f"仓库: {q['repos']['used']}/{q['repos']['limit']}",
         f"深度查询 (今日): {q['deep_query_daily']['used']}/{q['deep_query_daily']['limit']}",
@@ -960,6 +958,49 @@ def manon_embedding(texts: list[str]) -> str:
     return f"生成了 {result['count']} 个向量（维度: {len(result['embeddings'][0])}）"
 
 
+
+def _do_update() -> list[str]:
+    """Execute git pull + pip install. Returns status lines."""
+    install_dir = Path(__file__).resolve().parent.parent
+    lines: list[str] = []
+
+    # Git pull
+    try:
+        result = subprocess.run(
+            ["git", "pull"],
+            cwd=str(install_dir),
+            capture_output=True, text=True, timeout=30,
+        )
+        git_out = result.stdout.strip()
+        if "Already up to date" in git_out or "Already up-to-date" in git_out:
+            lines.append("代码已是最新，无需更新。")
+            return lines
+        lines.append(f"代码已更新:\n{git_out}")
+    except subprocess.TimeoutExpired:
+        lines.append("git pull 超时，请检查网络连接。")
+        return lines
+    except FileNotFoundError:
+        lines.append("git 未安装，请先安装 git。")
+        return lines
+    except Exception as e:
+        lines.append(f"git pull 失败: {e}")
+        return lines
+
+    # Reinstall dependencies
+    req_file = install_dir / "mcp" / "requirements.txt"
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
+            timeout=120,
+        )
+        lines.append("依赖已更新。")
+    except Exception as e:
+        lines.append(f"依赖安装失败: {e}")
+
+    lines.append("请重启 Claude Code 使新版本生效。")
+    return lines
+
+
 @mcp.tool()
 def manon_update() -> str:
     """检查并更新 Manon 到最新版本。自动执行 git pull + 依赖安装。
@@ -969,7 +1010,7 @@ def manon_update() -> str:
     install_dir = Path(__file__).resolve().parent.parent
     lines: list[str] = []
 
-    # 1. Check for updates via git
+    # Check for updates via git
     try:
         subprocess.run(
             ["git", "fetch", "--quiet", "origin", "master"],
@@ -986,38 +1027,7 @@ def manon_update() -> str:
     except Exception:
         lines.append(f"当前版本: {CLIENT_VERSION}")
 
-    # 2. Git pull
-    try:
-        result = subprocess.run(
-            ["git", "pull"],
-            cwd=str(install_dir),
-            capture_output=True, text=True, timeout=30,
-        )
-        git_out = result.stdout.strip()
-        if "Already up to date" in git_out or "Already up-to-date" in git_out:
-            lines.append("代码已是最新，无需更新。")
-            return "\n".join(lines)
-        lines.append(f"代码已更新:\n{git_out}")
-    except subprocess.TimeoutExpired:
-        return "\n".join(lines) + "\ngit pull 超时，请检查网络连接。"
-    except FileNotFoundError:
-        return "\n".join(lines) + "\ngit 未安装，请先安装 git。"
-    except Exception as e:
-        return "\n".join(lines) + f"\ngit pull 失败: {e}"
-
-    # 3. Reinstall dependencies
-    req_file = install_dir / "mcp" / "requirements.txt"
-    venv_python = sys.executable
-    try:
-        subprocess.check_call(
-            [venv_python, "-m", "pip", "install", "-q", "-r", str(req_file)],
-            timeout=120,
-        )
-        lines.append("依赖已更新。")
-    except Exception as e:
-        lines.append(f"依赖安装失败: {e}")
-
-    lines.append("\n请重启 Claude Code 使新版本生效。")
+    lines.extend(_do_update())
     return "\n".join(lines)
 
 
