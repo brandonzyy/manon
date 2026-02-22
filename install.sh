@@ -120,10 +120,10 @@ PYEOF
 
 # --- Claude Code ---
 configure_claude_code() {
-    local settings="$HOME/.claude/settings.json"
+    local settings="$HOME/.claude.json"
     local skill_dir="$HOME/.claude/skills/manon"
 
-    # MCP config
+    # MCP config (write to ~/.claude.json — highest priority for Claude Code)
     write_mcp_json "$settings"
     info "Claude Code MCP registered"
 
@@ -297,7 +297,7 @@ API_URL="auto"
 API_KEY=""
 
 # ── Check for existing key ────────────────────────────
-for _cfg in "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
+for _cfg in "$HOME/.claude.json" "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
             "$HOME/.codeium/windsurf/mcp_config.json" "$HOME/.windsurf/mcp_config.json"; do
     if [ -f "$_cfg" ]; then
         _key=$(python3 -c "

@@ -77,7 +77,7 @@ exit /b %errorlevel%
 ::PS info "Dependencies installed"
 ::PS # ── Check for existing API key ────────────────────────
 ::PS $API_KEY = ""; $API_URL = "auto"
-::PS foreach ($cfg in @("$HOME_DIR\.claude\settings.json","$HOME_DIR\.cursor\mcp.json","$HOME_DIR\.codeium\windsurf\mcp_config.json","$HOME_DIR\.windsurf\mcp_config.json")) {
+::PS foreach ($cfg in @("$HOME_DIR\.claude.json","$HOME_DIR\.claude\settings.json","$HOME_DIR\.cursor\mcp.json","$HOME_DIR\.codeium\windsurf\mcp_config.json","$HOME_DIR\.windsurf\mcp_config.json")) {
 ::PS     if (Test-Path $cfg) {
 ::PS         $key = & $VENV_PYTHON -c "import json`ntry:`n    d=json.load(open(r'$cfg',encoding='utf-8'))`n    k=d.get('mcpServers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n    if k.startswith('msk_'): print(k)`nexcept: pass" 2>`$null
 ::PS         if ($key -and $key.Trim().StartsWith("msk_")) { $API_KEY = $key.Trim(); info "Existing API key found, skipping registration"; break }
@@ -103,7 +103,7 @@ exit /b %errorlevel%
 ::PS foreach ($platform in $PLATFORMS) {
 ::PS     switch ($platform) {
 ::PS         "claude-code" {
-::PS             Write-McpJson "$HOME_DIR\.claude\settings.json"; info "Claude Code MCP registered"
+::PS             Write-McpJson "$HOME_DIR\.claude.json"; info "Claude Code MCP registered"
 ::PS             $sd = "$HOME_DIR\.claude\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
 ::PS             Set-Content -Path "$sd\SKILL.md" -Encoding UTF8 -Value "---`nname: manon`ndescription: /manon -- 进入 Manon 模式`nuser_invocable: true`n---`n`n$MANON_RULES`n`n## 初始化流程`n1. 调用 ``manon_init``，传入当前工作目录`n2. 轮询索引状态直到完成`n3. 调用 ``manon_config`` 展示配置`n4. 告知用户 Manon 模式已激活"
 ::PS             info "Claude Code /manon Skill installed"
