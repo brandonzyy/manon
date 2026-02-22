@@ -6,10 +6,12 @@ Usage: python post_push.py <project_path>
 Designed to run in background after git push (invoked by pre-push hook).
 Reads ~/.manon/projects.json to find repo_id, scans changed files,
 uploads AST to server, then fetches and prints health score.
+Writes results to ~/.manon/update_status.json for LLM feedback.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import sys
@@ -22,6 +24,7 @@ if _root not in sys.path:
 
 
 PROJECTS_FILE = Path.home() / ".manon" / "projects.json"
+STATUS_FILE = Path.home() / ".manon" / "update_status.json"
 SYNC_BATCH_SIZE = 50
 
 
@@ -42,11 +45,24 @@ def _find_repo_id(project_path: str) -> tuple[str, dict] | None:
 
 def _api_url() -> str:
     return os.environ.get("MANON_API_URL", os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700"))
-
-
 def _headers() -> dict:
     key = os.environ.get("MANON_API_KEY", "")
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _write_status(ok: bool, message: str) -> None:
+    """Write result to status file for LLM to pick up on next tool call."""
+    try:
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATUS_FILE.write_text(json.dumps({
+            "ok": ok,
+            "message": message,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def main():
     if len(sys.argv) < 2:
         print("[manon] usage: post_push.py <project_path>")
@@ -56,7 +72,6 @@ def main():
     result = _find_repo_id(project_path)
     if not result:
         print(f"[manon] 项目未注册: {project_path}")
-        print("[manon] 请先运行 manon_init 初始化项目。")
         return
 
     repo_id, info = result
@@ -67,9 +82,11 @@ def main():
     import httpx
     api_url = _api_url()
     headers = _headers()
+    summary_parts = []
 
     # Step 1: Scan and upload AST changes
-    print(f"[manon] 正在扫描变更文件...")
+    print("[manon] 正在扫描变更文件...")
+    sync_ok = False
     try:
         from shared.ast_sync import scan_and_parse, set_project
         old_hashes = info.get("file_hashes", {})
@@ -77,7 +94,6 @@ def main():
             project_path, old_hashes, max_files=200,
         )
         if file_results or deleted:
-            # Upload in batches
             for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
                 batch = file_results[i:i + SYNC_BATCH_SIZE]
                 payload = {
@@ -88,35 +104,36 @@ def main():
                 with httpx.Client(base_url=api_url, headers=headers, timeout=45) as c:
                     r = c.post(f"/api/v1/repos/{repo_id}/sync-ast", json=payload)
                     r.raise_for_status()
-            print(f"[manon] 已同步 {len(file_results)} 文件, 删除 {len(deleted)} 文件。")
-
-            # Update local project registry
+            msg = f"已同步 {len(file_results)} 文件, 删除 {len(deleted)} 文件"
+            print(f"[manon] {msg}")
+            summary_parts.append(msg)
             info["file_hashes"] = new_hashes
-            import datetime
             info["last_sync"] = datetime.datetime.now().isoformat()
             set_project(project_path, info)
+            sync_ok = True
         else:
             print("[manon] 无文件变更。")
+            summary_parts.append("无文件变更")
+            sync_ok = True
     except Exception as e:
         print(f"[manon] AST 同步失败: {e}")
+        summary_parts.append(f"同步失败: {e}")
 
     # Step 2: Fetch health score
-    print("[manon] 正在计算代码健康评分...")
     try:
         with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
             r = c.get(f"/api/v1/repos/{repo_id}/code-health")
             r.raise_for_status()
             health = r.json()
-
         score = health.get("score", 0)
-        grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D"
-        print(f"\n[manon] 代码健康: {score}/100 ({grade})")
-        for d in health.get("dimensions", []):
-            bar = "█" * d["value"] + "░" * (10 - d["value"])
-            print(f"  {d['abbr']:>2s} {d['name']:<6s} {bar} {d['value']}/10")
-        print()
+        grade = health.get("grade", "?")
+        summary_parts.append(f"健康评分: {score}/100 ({grade})")
+        print(f"[manon] 代码健康: {score}/100 ({grade})")
     except Exception as e:
         print(f"[manon] 健康评分获取失败: {e}")
+
+    # Write status for LLM feedback
+    _write_status(sync_ok, " | ".join(summary_parts))
 
 
 if __name__ == "__main__":

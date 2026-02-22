@@ -901,6 +901,11 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         except Exception as e:
             lines.append(f"\n创建仓库失败: {e}")
 
+    # Auto-install pre-push hook
+    hook_msg = _install_hook(project_path)
+    if hook_msg:
+        lines.append(hook_msg)
+
     return "\n".join(lines)
 
 
@@ -1188,6 +1193,35 @@ def manon_code_health(repo_id: str) -> str:
     return "\n".join(lines)
 
 
+def _install_hook(project_path: str) -> str | None:
+    """Install pre-push hook if .git exists. Returns status message or None."""
+    resolved = Path(project_path).resolve()
+    git_dir = resolved / ".git"
+    if not git_dir.is_dir():
+        return None
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_file = hooks_dir / "pre-push"
+    # Skip if already installed by manon
+    if hook_file.exists() and "manon" in hook_file.read_text(encoding="utf-8", errors="replace"):
+        return None
+    script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
+    python_exe = sys.executable or "python3"
+    hook_content = f"""#!/bin/sh
+# Manon post-push hook — update knowledge graph after push completes
+# Uses pre-push hook slot; actual work deferred to background after push
+# The sleep ensures push finishes before sync starts
+(sleep 3 && "{python_exe}" "{script_path}" "{resolved}") &
+exit 0
+"""
+    hook_file.write_text(hook_content, encoding="utf-8")
+    try:
+        hook_file.chmod(0o755)
+    except Exception:
+        pass
+    return f"pre-push hook 已安装"
+
+
 @mcp.tool()
 def manon_setup_hooks(project_path: str) -> str:
     """为项目安装 git pre-push hook，push 后自动更新知识图谱并输出代码健康评分。
@@ -1196,27 +1230,9 @@ def manon_setup_hooks(project_path: str) -> str:
         project_path: 项目在本机的绝对路径
     """
     resolved = Path(project_path).resolve()
-    git_dir = resolved / ".git"
-    if not git_dir.is_dir():
+    if not (resolved / ".git").is_dir():
         return f"不是 git 仓库: {resolved}"
-
-    hooks_dir = git_dir / "hooks"
-    hooks_dir.mkdir(exist_ok=True)
-    hook_file = hooks_dir / "pre-push"
-
-    script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
-    python_exe = sys.executable or "python3"
-
-    hook_content = f"""#!/bin/sh
-# Manon pre-push hook — update knowledge graph + health score
-# Installed by manon_setup_hooks
-"{python_exe}" "{script_path}" "{resolved}" &
-exit 0
-"""
-
-    hook_file.write_text(hook_content, encoding="utf-8")
-    try:
-        hook_file.chmod(0o755)
-    except Exception:
-        pass
-    return f"pre-push hook 已安装: {hook_file}\ngit push 后将自动更新知识图谱并输出代码健康评分。"
+    result = _install_hook(project_path)
+    if result:
+        return f"{result}\ngit push 后将自动更新知识图谱并输出代码健康评分。"
+    return "pre-push hook 已存在，无需重复安装。"
