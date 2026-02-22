@@ -62,6 +62,8 @@ CLIENT_VERSION = _get_client_version()
 
 # ── Geo-routing ───────────────────────────────────────
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
+# TODO: SD-WAN 新加坡公网 IP 就绪后填入，格式 "http://<sg-ip>:3700"
+# 空值时 INTL 用户自动回落到 API_URL_CN
 API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "")
 API_KEY = os.environ.get("MANON_API_KEY", "")
 _explicit_url = os.environ.get("MANON_API_URL", "")
