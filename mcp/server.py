@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -101,7 +103,7 @@ def _check_version() -> str:
         if latest and latest != CLIENT_VERSION:
             _update_notice = (
                 f"\n⚠️  新版本可用: {latest}（当前 {CLIENT_VERSION}）\n"
-                f"   更新: git -C $(dirname $(which manon 2>/dev/null) 2>/dev/null || echo .) pull && bash install.sh\n"
+                f"   更新: 调用 manon_update 一键更新\n"
             )
     except Exception:
         pass
@@ -746,3 +748,60 @@ def manon_embedding(texts: list[str]) -> str:
     """
     result = _post("/api/v1/embedding", {"inputs": texts})
     return f"生成了 {result['count']} 个向量（维度: {len(result['embeddings'][0])}）"
+
+
+@mcp.tool()
+def manon_update() -> str:
+    """检查并更新 Manon 到最新版本。自动执行 git pull + 依赖安装。
+
+    更新完成后需要重启 Claude Code 使新版本生效。
+    """
+    install_dir = Path(__file__).resolve().parent.parent
+    lines: list[str] = []
+
+    # 1. Version check
+    try:
+        data = _get_no_auth("/version")
+        latest = data.get("version", "")
+        if latest and latest == CLIENT_VERSION:
+            lines.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
+        elif latest:
+            lines.append(f"发现新版本: {latest}（当前 {CLIENT_VERSION}）")
+        else:
+            lines.append(f"当前版本: {CLIENT_VERSION}")
+    except Exception:
+        lines.append(f"当前版本: {CLIENT_VERSION}（无法连接服务端检查更新）")
+
+    # 2. Git pull
+    try:
+        result = subprocess.run(
+            ["git", "pull"],
+            cwd=str(install_dir),
+            capture_output=True, text=True, timeout=30,
+        )
+        git_out = result.stdout.strip()
+        if "Already up to date" in git_out or "Already up-to-date" in git_out:
+            lines.append("代码已是最新，无需更新。")
+            return "\n".join(lines)
+        lines.append(f"代码已更新:\n{git_out}")
+    except subprocess.TimeoutExpired:
+        return "\n".join(lines) + "\ngit pull 超时，请检查网络连接。"
+    except FileNotFoundError:
+        return "\n".join(lines) + "\ngit 未安装，请先安装 git。"
+    except Exception as e:
+        return "\n".join(lines) + f"\ngit pull 失败: {e}"
+
+    # 3. Reinstall dependencies
+    req_file = install_dir / "mcp" / "requirements.txt"
+    venv_python = sys.executable
+    try:
+        subprocess.check_call(
+            [venv_python, "-m", "pip", "install", "-q", "-r", str(req_file)],
+            timeout=120,
+        )
+        lines.append("依赖已更新。")
+    except Exception as e:
+        lines.append(f"依赖安装失败: {e}")
+
+    lines.append("\n请重启 Claude Code 使新版本生效。")
+    return "\n".join(lines)
