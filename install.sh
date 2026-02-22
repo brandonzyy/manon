@@ -72,6 +72,21 @@ detect_platforms() {
     if [ -d "$HOME/.codeium/windsurf" ] || [ -d "$HOME/.windsurf" ]; then
         PLATFORMS+=("windsurf")
     fi
+
+    # Zed
+    if [ -d "$HOME/.config/zed" ] || command -v zed >/dev/null 2>&1; then
+        PLATFORMS+=("zed")
+    fi
+
+    # Continue
+    if [ -d "$HOME/.continue" ]; then
+        PLATFORMS+=("continue")
+    fi
+
+    # CodeBuddy (Tencent)
+    if [ -d "$HOME/.codebuddy" ] || [ -d "$HOME/.tencent/codebuddy" ]; then
+        PLATFORMS+=("codebuddy")
+    fi
 }
 
 # ══════════════════════════════════════════════════════
@@ -171,17 +186,99 @@ configure_windsurf() {
     info "Windsurf deep-query rules installed → $rules_dir/manon.md"
 }
 
-# ══════════════════════════════════════════════════════
-#  Main
-# ══════════════════════════════════════════════════════
+# --- Zed ---
+configure_zed() {
+    local settings="$HOME/.config/zed/settings.json"
+    $VENV_PYTHON - "$settings" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+import json, sys, os
+target, venv_py, server, url, key = sys.argv[1:6]
+cfg = {}
+if os.path.exists(target):
+    with open(target, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+cfg.setdefault("context_servers", {})
+env = {"MANON_API_KEY": key}
+if url != "auto":
+    env["MANON_API_URL"] = url
+cfg["context_servers"]["manon"] = {
+    "command": {"path": venv_py, "args": [server], "env": env}
+}
+os.makedirs(os.path.dirname(target), exist_ok=True)
+with open(target, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PYEOF
+    info "Zed MCP registered"
+}
+
+# --- Continue ---
+configure_continue() {
+    local cfg_file="$HOME/.continue/config.json"
+    $VENV_PYTHON - "$cfg_file" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+import json, sys, os
+target, venv_py, server, url, key = sys.argv[1:6]
+cfg = {}
+if os.path.exists(target):
+    with open(target, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+cfg.setdefault("mcpServers", [])
+env = {"MANON_API_KEY": key}
+if url != "auto":
+    env["MANON_API_URL"] = url
+cfg["mcpServers"] = [s for s in cfg["mcpServers"] if s.get("name") != "manon"]
+cfg["mcpServers"].append({"name": "manon", "command": venv_py, "args": [server], "env": env})
+os.makedirs(os.path.dirname(target), exist_ok=True)
+with open(target, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PYEOF
+    info "Continue MCP registered"
+}
+
+# --- CodeBuddy (Tencent) ---
+configure_codebuddy() {
+    local mcp_file
+    if [ -d "$HOME/.codebuddy" ]; then
+        mcp_file="$HOME/.codebuddy/mcp.json"
+    else
+        mcp_file="$HOME/.tencent/codebuddy/mcp.json"
+    fi
+    write_mcp_json "$mcp_file"
+    info "CodeBuddy MCP registered"
+}
+
+
 
 echo ""
 echo "  Manon MCP — 代码智能工具"
 echo "  ────────────────────────"
 echo ""
 
-# ── Python check ──────────────────────────────────────
-command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || err "Python 3.10+ required"
+# ── Python check / auto-install ───────────────────────
+if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+    warn "Python not found, attempting to install..."
+    case "$(uname -s)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                brew install python@3.12 || err "Failed to install Python. Install manually: https://python.org/downloads"
+            else
+                err "Python 3.10+ required. Install via: https://python.org/downloads"
+            fi
+            ;;
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get install -y python3 python3-venv || err "Failed to install Python"
+            elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y python3 || err "Failed to install Python"
+            elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y python3 || err "Failed to install Python"
+            else
+                err "Python 3.10+ required. Install via: https://python.org/downloads"
+            fi
+            ;;
+        *)
+            err "Python 3.10+ required. Install via: https://python.org/downloads"
+            ;;
+    esac
+fi
 PYTHON=$(command -v python3 || command -v python)
 PY_MAJOR=$($PYTHON -c "import sys; print(sys.version_info.major)")
 PY_MINOR=$($PYTHON -c "import sys; print(sys.version_info.minor)")
@@ -273,6 +370,9 @@ for platform in "${PLATFORMS[@]}"; do
         claude-code) configure_claude_code ;;
         cursor)      configure_cursor ;;
         windsurf)    configure_windsurf ;;
+        zed)         configure_zed ;;
+        continue)    configure_continue ;;
+        codebuddy)   configure_codebuddy ;;
     esac
     CONFIGURED+=("$platform")
 done
@@ -301,9 +401,12 @@ echo "  Done! Configured: ${CONFIGURED[*]}"
 echo ""
 for p in "${CONFIGURED[@]}"; do
     case "$p" in
-        claude-code) echo "  Claude Code: type /manon to initialize" ;;
-        cursor)      echo "  Cursor:      manon_deep_query available in Composer" ;;
-        windsurf)    echo "  Windsurf:    manon_deep_query available in Cascade" ;;
+        claude-code) echo "  Claude Code:  type /manon to initialize" ;;
+        cursor)      echo "  Cursor:       manon_deep_query available in Composer" ;;
+        windsurf)    echo "  Windsurf:     manon_deep_query available in Cascade" ;;
+        zed)         echo "  Zed:          manon tools available in Assistant" ;;
+        continue)    echo "  Continue:     manon tools available in Chat" ;;
+        codebuddy)   echo "  CodeBuddy:    manon tools available in Chat" ;;
     esac
 done
 echo ""
