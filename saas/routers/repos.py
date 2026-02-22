@@ -34,6 +34,16 @@ def _row_to_repo(row) -> RepoOut:
 async def create_repo(body: RepoCreate, ctx: TenantContext = Depends(require_tenant)):
     await check_repo_quota(ctx)
     db = await get_db()
+
+    # Dedup: return existing repo if same name + tenant
+    cur = await db.execute(
+        "SELECT * FROM repos WHERE tenant_id = ? AND name = ?",
+        (ctx.tenant_id, body.name),
+    )
+    existing = await cur.fetchone()
+    if existing:
+        return _row_to_repo(existing)
+
     repo_id = uuid.uuid4().hex[:8]
     local_path = body.local_path
     source_type = body.source_type or ""

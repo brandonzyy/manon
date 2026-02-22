@@ -650,37 +650,18 @@ def manon_repos_create(name: str, git_url: str = "", branch: str = "main", local
         })
         repo_id = result["id"]
 
-        # Check project size — large projects defer to async index
-        file_count = count_scannable_files(resolved)
-        if file_count > INLINE_SCAN_LIMIT:
-            set_project(resolved, {
-                "repo_id": repo_id, "name": name,
-                "last_sync": "", "file_hashes": {},
-            })
-            return (
-                f"仓库已创建: id={repo_id}, name={name}\n"
-                f"本地路径: {resolved}\n"
-                f"检测到 {file_count} 个文件（超过 {INLINE_SCAN_LIMIT} 阈值），"
-                f"请调用 manon_index {repo_id} 异步索引。"
-            )
-
-        # Small project — scan + parse + upload inline
-        file_results, deleted, new_hashes = scan_and_parse(resolved, {})
-        if file_results:
-            _sync_to_server(repo_id, file_results, deleted, full_reindex=True)
-
-        # Save local project mapping
+        # Register locally IMMEDIATELY (before any slow ops)
         set_project(resolved, {
-            "repo_id": repo_id,
-            "name": name,
-            "last_sync": __import__("datetime").datetime.now().isoformat(),
-            "file_hashes": new_hashes,
+            "repo_id": repo_id, "name": name,
+            "last_sync": "", "file_hashes": {},
         })
+
+        # Always defer scanning to manon_index
+        file_count = count_scannable_files(resolved)
         return (
             f"仓库已创建: id={repo_id}, name={name}\n"
             f"本地路径: {resolved}\n"
-            f"已扫描 {len(new_hashes)} 文件, {len(file_results)} 文件已上传 AST。\n"
-            f"用 manon_index_status {repo_id} 查看索引进度。"
+            f"检测到 {file_count} 个文件，请调用 manon_index {repo_id} 开始索引。"
         )
 
     # Git URL mode — original logic
@@ -845,45 +826,31 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             })
             lines.append("  已注册到本地项目表。")
     else:
-        # 4. Create new local repo
+        # 4. Create new local repo — fast path, no inline scanning
         try:
-            # Auto-detect languages and install parsers
-            parser_status = ensure_parsers(project_path)
-            if parser_status:
-                installed = [l for l, s in parser_status.items() if s == "installed"]
-                failed = [l for l, s in parser_status.items() if s == "failed"]
-                all_langs = sorted(parser_status.keys())
-                lines.append(f"\n检测到语言: {', '.join(all_langs)}")
-                if installed:
-                    lines.append(f"  自动安装解析器: {', '.join(installed)}")
-                if failed:
-                    lines.append(f"  [!] 安装失败: {', '.join(failed)}")
-
             result = _post("/api/v1/repos", {
                 "name": name, "source_type": "local",
             })
             rid = result["id"]
+
+            # Register locally IMMEDIATELY (before any slow ops)
+            set_project(project_path, {
+                "repo_id": rid, "name": name,
+                "last_sync": "", "file_hashes": {},
+            })
             lines.append(f"\n仓库已创建: {name} (id={rid})")
 
-            # Scan + sync (with limit for large projects)
+            # Auto-detect languages and install parsers (best-effort)
+            try:
+                parser_status = ensure_parsers(project_path)
+                if parser_status:
+                    all_langs = sorted(parser_status.keys())
+                    lines.append(f"检测到语言: {', '.join(all_langs)}")
+            except Exception:
+                pass
+
             file_count = count_scannable_files(project_path)
-            if file_count > INLINE_SCAN_LIMIT:
-                set_project(project_path, {
-                    "repo_id": rid, "name": name,
-                    "last_sync": "", "file_hashes": {},
-                })
-                lines.append(f"检测到 {file_count} 个文件，请调用 manon_index {rid} 异步索引。")
-            else:
-                file_results, deleted, new_hashes = scan_and_parse(project_path, {})
-                if file_results:
-                    _sync_to_server(rid, file_results, deleted, full_reindex=True)
-                    lines.append(f"已扫描 {len(new_hashes)} 文件, {len(file_results)} 文件已上传 AST。")
-                set_project(project_path, {
-                    "repo_id": rid, "name": name,
-                    "last_sync": __import__("datetime").datetime.now().isoformat(),
-                    "file_hashes": new_hashes if file_count <= INLINE_SCAN_LIMIT else {},
-                })
-            lines.append("用 manon_index_status 查看索引进度。")
+            lines.append(f"检测到 {file_count} 个文件，请调用 manon_index {rid} 开始索引。")
         except Exception as e:
             lines.append(f"\n创建仓库失败: {e}")
 
