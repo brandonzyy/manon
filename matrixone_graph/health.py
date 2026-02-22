@@ -298,7 +298,9 @@ def compute_score(graph_metrics: dict, debt_metrics: dict | None = None) -> dict
 
     return {
         "score": round(total / 10, 1),
+        "grade": "A" if total >= 850 else "B" if total >= 700 else "C" if total >= 500 else "D",
         "dimensions": dimensions,
         "entity_count": graph_metrics.get("entity_count", 0),
         "relation_count": graph_metrics.get("relation_count", 0),
+        "reliable": graph_metrics.get("entity_count", 0) > 0,
     }

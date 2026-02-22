@@ -110,6 +110,12 @@ async def code_health(
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     g = mg._load_graph()
 
+    if g.entity_count == 0:
+        log.warning(
+            "code-health: graph empty for repo %s, kg_path=%s, graph_file_exists=%s",
+            repo_id, mg.kg_path, (mg.kg_path / "graph.json").exists(),
+        )
+
     graph_metrics = compute_graph_metrics(g)
 
     # Static debt scan — only if repo has a local path on server

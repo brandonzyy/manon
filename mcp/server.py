@@ -916,9 +916,12 @@ def manon_config() -> str:
         f"速率限制: {cfg['rate_limit']} req/min",
         f"客户端版本: {CLIENT_VERSION}",
     ]
-    notice = _check_version()
-    if notice:
-        lines.append(notice)
+    # Show cached update notice; trigger background check if not yet done
+    if _update_notice:
+        lines.append(_update_notice)
+    elif not _version_checked:
+        import threading
+        threading.Thread(target=_check_version, daemon=True).start()
     return "\n".join(lines)
 
 
@@ -1168,9 +1171,11 @@ def manon_code_health(repo_id: str) -> str:
     score = result.get("score", 0)
     dims = result.get("dimensions", [])
 
-    grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D"
+    grade = result.get("grade", "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D")
     lines = [f"代码健康评分: {score}/100 ({grade})"]
     lines.append(f"实体: {result.get('entity_count', 0)}, 关系: {result.get('relation_count', 0)}")
+    if not result.get("reliable", True):
+        lines.append("⚠ 图谱数据为空，评分不可靠。请先运行 manon_index 重建索引。")
     lines.append("")
     for d in dims:
         bar = "█" * d["value"] + "░" * (10 - d["value"])

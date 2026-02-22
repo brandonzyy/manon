@@ -154,8 +154,22 @@ class CodeGraph:
     def load(self, path: Path) -> None:
         if not path.exists():
             return
-        data = json.loads(path.read_text(encoding="utf-8"))
-        self._g = nx.node_link_graph(data, directed=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        # NetworkX 3.2+ changed default key from "links" to "edges";
+        # ensure both formats load correctly
+        if "links" in data and "edges" not in data:
+            data["edges"] = data.pop("links")
+        try:
+            self._g = nx.node_link_graph(data, directed=True)
+        except Exception:
+            # Fallback: try without directed kwarg (API changed in nx 3.4)
+            try:
+                self._g = nx.node_link_graph(data)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
