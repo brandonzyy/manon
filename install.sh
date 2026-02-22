@@ -379,10 +379,12 @@ done
 
 # ── Verify connectivity ──────────────────────────────
 head1 "Connectivity"
+CHECK_URL="$API_URL"
+[ "$CHECK_URL" = "auto" ] && CHECK_URL="$DEFAULT_API_URL"
 HTTP_CODE=$("$VENV_PYTHON" -c "
 import httpx
 try:
-    r = httpx.get('${API_URL}/health', timeout=5)
+    r = httpx.get('${CHECK_URL}/health', timeout=5)
     print(r.status_code)
 except Exception as e:
     print(f'error: {e}')
