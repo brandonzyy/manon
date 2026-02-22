@@ -832,6 +832,83 @@ def manon_push_update(repo_id: str) -> str:
     return f"更新已触发: {result['status']}。用 manon_index_status 查看进度。"
 
 
+# ── Graph completeness check ─────────────────────────
+
+def _ensure_graph_complete(project_path: str, repo_id: str, proj_info: dict) -> list[str]:
+    """Check if knowledge graph is complete; sync missing files if needed.
+
+    Compares local scannable file count against cached file_hashes.
+    If files are missing, loops scan_and_parse in batches until caught up.
+
+    Returns list of status lines to append to manon_init output.
+    """
+    import datetime
+
+    try:
+        local_count = count_scannable_files(project_path)
+    except Exception as e:
+        log.warning("count_scannable_files failed: %s", e)
+        return [f"  ⚠️ 文件扫描失败: {e}"]
+
+    synced_count = len(proj_info.get("file_hashes", {}))
+
+    if local_count <= synced_count:
+        return ["  ✅ 图谱完整"]
+
+    # Files are missing — loop sync
+    lines: list[str] = []
+    lines.append(f"  🔄 图谱不完整（本地 {local_count} / 已同步 {synced_count}），自动补齐中...")
+    total_synced = 0
+    total_deleted = 0
+
+    while True:
+        old_hashes = proj_info.get("file_hashes", {})
+        try:
+            file_results, deleted, new_hashes = scan_and_parse(
+                project_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
+            )
+        except Exception as e:
+            log.warning("scan_and_parse failed during completeness check: %s", e)
+            lines.append(f"  ⚠️ 扫描失败: {e}")
+            break
+
+        if not file_results and not deleted:
+            break
+
+        try:
+            _sync_to_server(repo_id, file_results, deleted)
+        except Exception as e:
+            log.warning("sync failed during completeness check: %s", e)
+            lines.append(f"  ⚠️ 同步失败: {e}")
+            break
+
+        # Incremental hash update (same partial logic as manon_index)
+        partial_hashes = dict(old_hashes)
+        for f in file_results:
+            rp = f["rel_path"]
+            if rp in new_hashes:
+                partial_hashes[rp] = new_hashes[rp]
+        for d in deleted:
+            partial_hashes.pop(d, None)
+        proj_info["file_hashes"] = partial_hashes
+        proj_info["last_sync"] = datetime.datetime.now().isoformat()
+        set_project(project_path, proj_info)
+
+        total_synced += len(file_results)
+        total_deleted += len(deleted)
+        synced_count = len(partial_hashes)
+        log.info("Completeness sync batch: +%d synced, +%d deleted, total tracked=%d",
+                 len(file_results), len(deleted), synced_count)
+
+    if total_synced or total_deleted:
+        lines.append(f"  ✅ 补齐完成: +{total_synced} 文件同步, {total_deleted} 文件删除 (共 {synced_count} 文件)")
+    else:
+        # No new files but counts didn't match — hashes were stale
+        lines[-1] = "  ✅ 图谱完整"
+
+    return lines
+
+
 # ── Init / Config / Deep Query ────────────────────────
 
 @mcp.tool()
@@ -884,6 +961,8 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
             lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
+        # Check graph completeness and auto-sync missing files
+        lines.extend(_ensure_graph_complete(project_path, rid, proj))
         return "\n".join(lines)
 
     # 3. Check server repos by name match
@@ -915,11 +994,13 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             pass
         # Register locally if it's a local source_type
         if matched.get("source_type") == "local":
-            set_project(project_path, {
+            info = {
                 "repo_id": rid, "name": matched["name"],
                 "last_sync": "", "file_hashes": {},
-            })
+            }
+            set_project(project_path, info)
             lines.append("  ✅ 已注册到本地项目表")
+            lines.extend(_ensure_graph_complete(project_path, rid, info))
     else:
         # 4. Create new local repo — fast path, no inline scanning
         try:
@@ -929,10 +1010,11 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             rid = result["id"]
 
             # Register locally IMMEDIATELY (before any slow ops)
-            set_project(project_path, {
+            info = {
                 "repo_id": rid, "name": name,
                 "last_sync": "", "file_hashes": {},
-            })
+            }
+            set_project(project_path, info)
             lines.append(f"\n  🆕 {name}  ({rid[:8]})")
 
             # Auto-detect languages and install parsers (best-effort)
@@ -944,8 +1026,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             except Exception:
                 pass
 
-            file_count = count_scannable_files(project_path)
-            lines.append(f"  📁 检测到 {file_count} 个文件，调用 manon_index {rid} 开始索引")
+            lines.extend(_ensure_graph_complete(project_path, rid, info))
         except Exception as e:
             lines.append(f"\n  ❌ 创建仓库失败: {e}")
 
@@ -1224,6 +1305,26 @@ def manon_code_health(repo_id: str) -> str:
     return "\n".join(lines)
 
 
+def _persist_api_config() -> None:
+    """Save current API_URL and API_KEY to ~/.manon/config.json.
+
+    Called during hook install so that git hooks (which run outside MCP)
+    can read the credentials without relying on environment variables.
+    """
+    cfg_file = Path.home() / ".manon" / "config.json"
+    try:
+        existing = {}
+        if cfg_file.exists():
+            existing = json.loads(cfg_file.read_text(encoding="utf-8"))
+        existing["api_url"] = API_URL
+        if API_KEY:
+            existing["api_key"] = API_KEY
+        cfg_file.parent.mkdir(parents=True, exist_ok=True)
+        cfg_file.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log.warning("Failed to persist API config: %s", e)
+
+
 def _install_hook(project_path: str) -> str | None:
     """Install pre-push hook if .git exists. Returns status message or None."""
     resolved = Path(project_path).resolve()
@@ -1261,6 +1362,8 @@ exit 0
         hook_file.chmod(0o755)
     except Exception:
         pass
+    # Persist API credentials so the hook can read them
+    _persist_api_config()
     return "🔗 Push hook 已安装"
 
 
@@ -1275,6 +1378,8 @@ def manon_setup_hooks(project_path: str) -> str:
     if not (resolved / ".git").is_dir():
         return f"不是 git 仓库: {resolved}"
     result = _install_hook(project_path)
+    # Always persist config so existing hooks pick up current credentials
+    _persist_api_config()
     if result:
         return f"{result}\ngit push 后将自动更新知识图谱并输出代码健康评分。"
-    return "pre-push hook 已存在，无需重复安装。"
+    return "pre-push hook 已存在，API 配置已更新。"

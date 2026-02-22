@@ -25,7 +25,18 @@ if _root not in sys.path:
 
 PROJECTS_FILE = Path.home() / ".manon" / "projects.json"
 STATUS_FILE = Path.home() / ".manon" / "update_status.json"
+CONFIG_FILE = Path.home() / ".manon" / "config.json"
 SYNC_BATCH_SIZE = 50
+
+
+def _load_config() -> dict:
+    """Load persisted API config from ~/.manon/config.json."""
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
 
 
 def _load_projects() -> dict:
@@ -44,9 +55,15 @@ def _find_repo_id(project_path: str) -> tuple[str, dict] | None:
 
 
 def _api_url() -> str:
-    return os.environ.get("MANON_API_URL", os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700"))
+    url = os.environ.get("MANON_API_URL") or os.environ.get("MANON_API_URL_CN")
+    if not url:
+        url = _load_config().get("api_url", "")
+    return url or "http://117.131.45.179:3700"
+
 def _headers() -> dict:
     key = os.environ.get("MANON_API_KEY", "")
+    if not key:
+        key = _load_config().get("api_key", "")
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
@@ -82,6 +99,13 @@ def main():
     import httpx
     api_url = _api_url()
     headers = _headers()
+
+    # Guard: if API key is still empty, skip HTTP calls entirely
+    if "Bearer " == headers.get("Authorization", "").strip():
+        print("[manon] ⚠ MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
+        _write_status(False, "API key 未配置")
+        return
+
     summary_parts = []
 
     # Step 1: Scan and upload AST changes

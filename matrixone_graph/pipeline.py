@@ -81,6 +81,11 @@ def _resolve_relative_module(current_module: str, import_path: str) -> str:
 
         ("electron.orchestrator.skill-router", "../utils/helper")
         → "electron.utils.helper"
+
+    WARNING: This function splits module IDs by '.' to count directory levels.
+    Filenames with dots (e.g., 'foo.test.ts' → module 'dir.foo.test') will
+    produce incorrect results.  Prefer _resolve_import_by_filepath() when the
+    original file path is available.
     """
     if not import_path.startswith("."):
         return import_path
@@ -100,6 +105,29 @@ def _resolve_relative_module(current_module: str, import_path: str) -> str:
     if parts:
         return ".".join(parts) + "." + resolved
     return resolved
+
+
+def _resolve_import_by_filepath(file_path: str, import_path: str) -> str:
+    """Resolve a relative import using the actual file path.
+
+    Unlike _resolve_relative_module (which splits module IDs by '.'),
+    this uses the file path with '/' separators so that filenames
+    containing dots (e.g., 'intent-detector.test.ts') are treated as
+    a single path component.
+
+    Args:
+        file_path: Relative file path, e.g. "tests/intent-detector.test.ts"
+        import_path: Import path, e.g. "../electron/orchestrator/intent-detector"
+
+    Returns:
+        Dot-separated module ID, e.g. "electron.orchestrator.intent-detector"
+    """
+    if not import_path.startswith("."):
+        return import_path
+    import posixpath
+    file_dir = posixpath.dirname(file_path.replace("\\", "/"))
+    resolved = posixpath.normpath(posixpath.join(file_dir, import_path))
+    return resolved.replace("/", ".")
 
 
 def _build_description(symbol) -> str:
@@ -166,7 +194,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
     # Build imported_names: short name → fully qualified entity ID
     imported_names: dict[str, str] = {}
     for imp in pr.imports:
-        resolved_module = _resolve_relative_module(module, imp.module)
+        resolved_module = _resolve_import_by_filepath(fp, imp.module)
         for name in imp.names:
             imported_names[name] = f"{resolved_module}.{name}"
         if not imp.names:
@@ -183,7 +211,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             callee_id = imported_names[call.callee]
         elif call.callee.startswith(("./", "../")):
             # TS parser resolved callee with relative module path — resolve to full entity ID
-            callee_id = _resolve_relative_module(module, call.callee)
+            callee_id = _resolve_import_by_filepath(fp, call.callee)
         else:
             callee_id = call.callee
         relations.append(Relation(
@@ -199,7 +227,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             file_path=fp, weight=1.0,
         ))
     for imp in pr.imports:
-        resolved_module = _resolve_relative_module(module, imp.module)
+        resolved_module = _resolve_import_by_filepath(fp, imp.module)
         for name in imp.names:
             relations.append(Relation(
                 src_id=module, tgt_id=f"{resolved_module}.{name}",
