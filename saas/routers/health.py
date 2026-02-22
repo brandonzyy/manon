@@ -9,9 +9,18 @@ router = APIRouter(tags=["health"])
 
 
 def _get_latest_version() -> str:
-    """Auto-generate version from git commit count: 0.1.{count}"""
+    """Get version: prefer VERSION file (written at deploy), fallback to git commit count."""
+    repo_dir = Path(__file__).resolve().parent.parent.parent
+    # 1. Check VERSION file (created by deploy script or CI)
+    version_file = repo_dir / "VERSION"
     try:
-        repo_dir = Path(__file__).resolve().parent.parent.parent
+        v = version_file.read_text().strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    # 2. Fallback to git commit count
+    try:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD"],
             cwd=str(repo_dir),
@@ -19,10 +28,16 @@ def _get_latest_version() -> str:
         )
         if result.returncode == 0:
             count = result.stdout.strip()
-            return f"0.1.{count}"
+            v = f"0.1.{count}"
+            # Write VERSION file so it survives without .git
+            try:
+                version_file.write_text(v)
+            except Exception:
+                pass
+            return v
     except Exception:
         pass
-    return "0.1.0"
+    return ""
 
 LATEST_VERSION = _get_latest_version()
 

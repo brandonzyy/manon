@@ -109,6 +109,14 @@ API_URL = _resolve_api_url()
 _version_checked = False
 _update_notice: str = ""
 
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Parse '0.1.100' into (0, 1, 100) for numeric comparison."""
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 def _check_version() -> str:
     global _version_checked, _update_notice
     if _version_checked:
@@ -118,10 +126,12 @@ def _check_version() -> str:
         data = _get_no_auth("/version")
         latest = data.get("version", "")
         if latest and latest != CLIENT_VERSION:
-            _update_notice = (
-                f"\n⚠️  新版本可用: {latest}（当前 {CLIENT_VERSION}）\n"
-                f"   更新: 调用 manon_update 一键更新\n"
-            )
+            # Only notify if server version is actually higher
+            if _parse_version(latest) > _parse_version(CLIENT_VERSION):
+                _update_notice = (
+                    f"\n⚠️  新版本可用: {latest}（当前 {CLIENT_VERSION}）\n"
+                    f"   更新: 调用 manon_update 一键更新\n"
+                )
     except Exception:
         pass
     return _update_notice
@@ -953,12 +963,10 @@ def manon_update() -> str:
     try:
         data = _get_no_auth("/version")
         latest = data.get("version", "")
-        if latest and latest == CLIENT_VERSION:
+        if not latest or _parse_version(latest) <= _parse_version(CLIENT_VERSION):
             lines.append(f"当前版本 {CLIENT_VERSION} 已是最新。")
-        elif latest:
-            lines.append(f"发现新版本: {latest}（当前 {CLIENT_VERSION}）")
         else:
-            lines.append(f"当前版本: {CLIENT_VERSION}")
+            lines.append(f"发现新版本: {latest}（当前 {CLIENT_VERSION}）")
     except Exception:
         lines.append(f"当前版本: {CLIENT_VERSION}（无法连接服务端检查更新）")
 
