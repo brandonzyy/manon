@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -85,6 +86,32 @@ async def impact_analysis(
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
     result = mg.impact_commit(commit=commit, max_depth=max_depth)
     await record_usage(ctx.tenant_id, "query.impact", repo_id)
+    return result
+
+
+@router.get("/code-health")
+async def code_health(
+    repo_id: str,
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Compute 8-dimension code health score from the knowledge graph."""
+    from matrixone_graph.health import compute_graph_metrics, compute_score, scan_directory_debt
+    from matrixone_graph.store import CodeGraph
+    from matrixone_graph import GRAPH_FILE
+
+    row = await _require_indexed_repo(repo_id, ctx.tenant_id)
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
+    g = mg._load_graph()
+
+    graph_metrics = compute_graph_metrics(g)
+
+    # Static debt scan — only if repo has a local path on server
+    debt_metrics = None
+    if row["local_path"] and Path(row["local_path"]).is_dir():
+        debt_metrics = scan_directory_debt(Path(row["local_path"]))
+
+    result = compute_score(graph_metrics, debt_metrics)
+    await record_usage(ctx.tenant_id, "query.code_health", repo_id)
     return result
 
 

@@ -164,26 +164,12 @@ class MatrixoneGraph:
     # -- Health scoring --
 
     async def health(self) -> dict:
-        from .health import scan_file, compute_score
-        from codeindex.scanner import scan_directory
-        from codeindex.config import Config
+        from .health import compute_graph_metrics, compute_score, scan_directory_debt
 
-        config = Config.load(self.repo_path / ".codeindex.yaml")
-        scan_result = scan_directory(self.repo_path, config, self.repo_path)
-
-        max_lines = any_count = mt_issues = legacy_marks = 0
-        for f in scan_result.files:
-            h = scan_file(f)
-            if h.get("lines", 0) > max_lines:
-                max_lines = h["lines"]
-            any_count += h.get("any_count", 0)
-            mt_issues += h.get("todos", 0) + h.get("hardcoded_urls", 0)
-            legacy_marks += h.get("legacy_marks", 0)
-
-        return compute_score({
-            "max_lines": max_lines, "any_count": any_count,
-            "mt_issues": mt_issues, "legacy_marks": legacy_marks,
-        })
+        g = self._load_graph()
+        graph_metrics = compute_graph_metrics(g)
+        debt_metrics = scan_directory_debt(self.repo_path)
+        return compute_score(graph_metrics, debt_metrics)
 
     # -- Status / lifecycle --
 
