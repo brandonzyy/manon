@@ -14,37 +14,45 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Remove private directories
+      - name: Prepare public files
         run: |
-          # 保存国内版 README（Gitee 用）
+          # 把公开文件复制到临时目录
+          mkdir -p /tmp/public
+          # 复制所有文件，排除私有模块
+          rsync -a --exclude='.git' \
+            --exclude='saas/' \
+            --exclude='matrixone_graph/' \
+            --exclude='.github/' \
+            --exclude='tests/' \
+            --exclude='docs/' \
+            --exclude='CLAUDE.md' \
+            --exclude='README_CN.md' \
+            --exclude='scripts/manon-admin.py' \
+            --exclude='scripts/run-saas.py' \
+            --exclude='scripts/github-helper.py' \
+            --exclude='package.json' \
+            --exclude='package-lock.json' \
+            --exclude='.env' \
+            --exclude='*.db' \
+            --exclude='saas_indexes/' \
+            --exclude='saas_repos/' \
+            --exclude='indexes/' \
+            ./ /tmp/public/
+          # 保存国内版 README
           cp README_CN.md /tmp/README_CN.md 2>/dev/null || true
-          # 服务器端模块
-          rm -rf saas/ matrixone_graph/
-          # CI/CD 配置（不暴露给用户）
-          rm -rf .github/
-          # 内部脚本和 Node 工具
-          rm -f scripts/manon-admin.py scripts/run-saas.py scripts/github-helper.py
-          rm -f package.json package-lock.json
-          # 内部测试和评测
-          rm -rf tests/
-          # 商业文档
-          rm -rf docs/
-          # 内部开发指南
-          rm -f CLAUDE.md
-          # 国内版 README（GitHub 不需要）
-          rm -f README_CN.md
-          # 敏感配置和运行时数据
-          rm -f .env saas.db test_saas3.db manon.db
-          rm -rf saas_indexes/ saas_repos/ indexes/
 
-      - name: Push to public repos
+      - name: Push to public repos (orphan — isolated history)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 提交删除操作（仅在工作区，不影响 private 仓库历史）
+          # 创建 orphan 分支，历史与私有仓库完全隔离
+          git checkout --orphan _public_sync
+          git rm -rf . > /dev/null 2>&1
+          cp -r /tmp/public/* .
+          cp -r /tmp/public/.* . 2>/dev/null || true
           git add -A
-          git diff --cached --quiet || git commit -m "sync: remove private modules"
+          git commit -m "release: $(git describe --tags --always master 2>/dev/null || git rev-parse --short master)"
 
           # Push to GitHub public repo
           git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/brandonzyy/manon.git
@@ -54,7 +62,7 @@ jobs:
           if [ -f /tmp/README_CN.md ]; then
             cp /tmp/README_CN.md README.md
             git add README.md
-            git commit -m "sync: use CN readme for Gitee"
+            git commit --amend --no-edit
           fi
 
           # Push to Gitee mirror (CN users)
