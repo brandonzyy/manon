@@ -186,6 +186,50 @@ def ensure_parsers(local_path: str) -> dict[str, str]:
 
 # ── File scanning + AST extraction ───────────────────
 
+def _resolve_relative_callees(parse_dict: dict, rel_path: str) -> dict:
+    """Resolve relative-path callees (./mod.func) to full module IDs.
+
+    The TypeScript parser resolves import aliases to relative paths like
+    ``./chat-helpers.streamLLMWithTools``.  The server pipeline expects
+    full dot-separated module IDs like
+    ``electron.orchestrator.chat-helpers.streamLLMWithTools``.
+    """
+    import posixpath
+
+    calls = parse_dict.get("calls")
+    if not calls:
+        return parse_dict
+
+    # e.g. "electron/orchestrator/skill-router.ts" → "electron/orchestrator"
+    file_dir = posixpath.dirname(rel_path)
+
+    changed = False
+    for call in calls:
+        callee = call.get("callee", "")
+        if not (callee.startswith("./") or callee.startswith("../")):
+            continue
+        # Split first dot-segment (relative module) from the rest (symbol chain)
+        # e.g. "./chat-helpers.streamLLMWithTools" → "./chat-helpers", "streamLLMWithTools"
+        dot_idx = callee.find(".", 2 if callee.startswith("./") else 3)
+        if dot_idx == -1:
+            # No symbol part, just a module reference
+            mod_rel = callee
+            symbol = ""
+        else:
+            mod_rel = callee[:dot_idx]
+            symbol = callee[dot_idx + 1:]
+
+        # Resolve relative path: "./chat-helpers" relative to "electron/orchestrator"
+        resolved = posixpath.normpath(posixpath.join(file_dir, mod_rel))
+        # Convert slashes to dots: "electron/orchestrator/chat-helpers" → "electron.orchestrator.chat-helpers"
+        module_id = resolved.replace("/", ".")
+
+        call["callee"] = f"{module_id}.{symbol}" if symbol else module_id
+        changed = True
+
+    return parse_dict
+
+
 def _file_hash(path: Path) -> str:
     h = hashlib.sha256()
     h.update(path.read_bytes())
@@ -235,9 +279,11 @@ def scan_and_parse(
         except Exception as e:
             log.warning("Failed to read %s: %s", rel, e)
             source = ""
+        pr_dict = pr.to_dict()
+        pr_dict = _resolve_relative_callees(pr_dict, rel)
         file_results.append({
             "rel_path": rel, "hash": h,
-            "source": source, "parse_result": pr.to_dict(),
+            "source": source, "parse_result": pr_dict,
         })
 
     deleted_files = list(set(old_hashes.keys()) - set(new_hashes.keys()))
