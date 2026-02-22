@@ -1,3 +1,8 @@
 mcp>=1.0.0
 httpx>=0.28,<1
 ai-codeindex>=0.19.0
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-java
+tree-sitter-php
