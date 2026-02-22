@@ -979,36 +979,35 @@ def _do_update() -> list[str]:
     install_dir = Path(__file__).resolve().parent.parent
     lines: list[str] = []
 
-    # Git pull
+    # Git pull (timeout 15s — MCP tools can't block too long)
     try:
         result = subprocess.run(
-            ["git", "pull"],
+            ["git", "pull", "--quiet"],
             cwd=str(install_dir),
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=15,
         )
         git_out = result.stdout.strip()
-        if "Already up to date" in git_out or "Already up-to-date" in git_out:
+        if "Already up to date" in git_out or "Already up-to-date" in git_out or not git_out:
             lines.append("代码已是最新，无需更新。")
             return lines
         lines.append(f"代码已更新:\n{git_out}")
     except subprocess.TimeoutExpired:
-        lines.append("git pull 超时，请检查网络连接。")
-        return lines
-    except FileNotFoundError:
-        lines.append("git 未安装，请先安装 git。")
+        lines.append("git pull 超时（15s），请手动执行: cd manon && git pull")
         return lines
     except Exception as e:
         lines.append(f"git pull 失败: {e}")
         return lines
 
-    # Reinstall dependencies
+    # Reinstall dependencies (timeout 30s)
     req_file = install_dir / "mcp" / "requirements.txt"
     try:
-        subprocess.check_call(
+        subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
-            timeout=120,
+            capture_output=True, timeout=30,
         )
         lines.append("依赖已更新。")
+    except subprocess.TimeoutExpired:
+        lines.append("pip install 超时，请手动执行: pip install -r mcp/requirements.txt")
     except Exception as e:
         lines.append(f"依赖安装失败: {e}")
 
@@ -1025,15 +1024,11 @@ def manon_update() -> str:
     install_dir = Path(__file__).resolve().parent.parent
     lines: list[str] = []
 
-    # Check for updates via git
+    # Quick check how far behind (reuse cached fetch from _check_version if available)
     try:
-        subprocess.run(
-            ["git", "fetch", "--quiet", "origin", "master"],
-            cwd=str(install_dir), capture_output=True, timeout=10,
-        )
         behind = subprocess.run(
             ["git", "rev-list", "--count", "HEAD..origin/master"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=5,
+            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
         ).stdout.strip()
         if behind and int(behind) > 0:
             lines.append(f"发现 {behind} 个新提交（当前 {CLIENT_VERSION}）")
