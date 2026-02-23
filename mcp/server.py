@@ -1602,7 +1602,7 @@ def _install_hook(project_path: str) -> str | None:
     hook_file = hooks_dir / "pre-push"
     script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
     python_exe = sys.executable or "python3"
-    manon_line = f'"{python_exe}" "{script_path}" "{resolved}" &'
+    manon_line = f'"{python_exe}" "{script_path}" "{resolved}"'
     manon_marker = "# Manon push hook"
 
     if hook_file.exists():
@@ -1617,13 +1617,12 @@ def _install_hook(project_path: str) -> str | None:
             if lines[i].strip() == "exit 0":
                 insert_idx = i
                 break
-        lines.insert(insert_idx, f"\n{manon_marker} — async knowledge graph update + health score")
+        lines.insert(insert_idx, f"\n{manon_marker} — knowledge graph update + health score")
         lines.insert(insert_idx + 1, manon_line)
         hook_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     else:
         hook_content = f"""#!/bin/sh
-{manon_marker} — async knowledge graph update + health score
-# Runs in background so push is not blocked; output still prints to terminal
+{manon_marker} — knowledge graph update + health score
 {manon_line}
 exit 0
 """
