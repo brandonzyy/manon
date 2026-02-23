@@ -130,15 +130,19 @@ class CodeGraph:
                     continue
                 visited.add(neighbor)
                 ent = self.get_entity(neighbor)
-                if ent is None:
-                    continue
+                is_phantom = ent is None
+                if is_phantom:
+                    # External reference (e.g. path.join, fs.readFile) — no AST data
+                    # but still has edges worth reporting
+                    ent = Entity(id=neighbor, kind="external", name=neighbor.rsplit(".", 1)[-1])
                 rels: list[Relation] = []
                 for u, v, edata in self._g.edges([nid, neighbor], data=True):
                     if (u == nid and v == neighbor) or (u == neighbor and v == nid):
                         if "src_id" in edata:
                             rels.append(Relation.from_dict(edata))
                 results.append((ent, rels))
-                queue.append((neighbor, d + 1))
+                if not is_phantom:
+                    queue.append((neighbor, d + 1))
         return results
 
     def files_indexed(self) -> set[str]:
