@@ -1020,11 +1020,16 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         return f"❌ Manon API 不可达 ({API_URL}): {e}\n   请确认 saas 服务已启动。"
 
     lines = [f"─── 🧠 Manon v{CLIENT_VERSION} {'─' * 28}"]
+
+    # ── Section 1: 项目基本状态 ──
+    lines.append("\n📦 项目状态")
     lines.append("  ✅ API 连接成功")
     # Report previous background update result (if any)
     prev = _read_update_status()
     if prev:
         lines.append(prev)
+
+    rid = None  # will be set by whichever branch matches
 
     def _fmt_stats(s: dict) -> str:
         fil = s.get("total_files", s.get("files_indexed", 0))
@@ -1033,117 +1038,140 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         chk = s.get("total_chunks", s.get("chunks_added", 0))
         return f"  📊 文件 {fil}  ·  实体 {ent}  ·  关系 {rel}  ·  块 {chk}"
 
+    # ── Section 2: 知识图谱状态 ──
+    graph_lines: list[str] = []
+
     # 2. Check local project registry first
     proj = get_project(project_path)
     if proj:
         rid = proj["repo_id"]
         log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
-        lines.append(f"\n  📦 {proj['name']}  ({rid[:8]})")
+        lines.append(f"  {proj['name']}  ({rid[:8]})")
         sync = proj.get('last_sync', '') or '—'
         tracked = len(proj.get('file_hashes', {}))
         try:
             repo = _get(f"/api/v1/repos/{rid}")
             status = repo['index_status']
             status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
-            lines.append(f"  {status_icon} 状态 {status}  ·  🕐 同步 {sync}")
+            graph_lines.append(f"  {status_icon} 索引 {status}  ·  🕐 同步 {sync}")
             if repo.get("index_stats"):
-                lines.append(_fmt_stats(repo["index_stats"]))
+                graph_lines.append(_fmt_stats(repo["index_stats"]))
         except Exception as e:
-            lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
-            lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
+            graph_lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
+            graph_lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
-        # Start background sync instead of blocking
+        # Start background sync
         bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
                                 old_hashes=proj.get("file_hashes", {}))
-        lines.append(f"  🔄 {bg_msg}")
-        return "\n".join(lines)
+        graph_lines.append(f"  🔄 {bg_msg}")
 
-    # 3. Check server repos by name match
-    try:
-        repos = _get("/api/v1/repos")
-    except Exception as e:
-        return "\n".join(lines) + f"\n\n  ❌ 获取仓库列表失败: {e}"
-
-    norm = project_path.replace("\\", "/").rstrip("/")
-    name = project_name or norm.split("/")[-1]
-    matched = None
-    for r in repos:
-        if r.get("name") == name:
-            matched = r
-            break
-
-    if matched:
-        rid = matched["id"]
-        lines.append(f"\n  📦 {matched['name']}  ({rid[:8]})")
-        status = matched['index_status']
-        status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
-        lines.append(f"  {status_icon} 状态 {status}")
-        # Fetch detailed stats
-        try:
-            repo = _get(f"/api/v1/repos/{rid}")
-            if repo.get("index_stats"):
-                lines.append(_fmt_stats(repo["index_stats"]))
-        except Exception:
-            pass
-        # Register locally if it's a local source_type
-        if matched.get("source_type") == "local":
-            info = {
-                "repo_id": rid, "name": matched["name"],
-                "last_sync": "", "file_hashes": {},
-            }
-            set_project(project_path, info)
-            lines.append("  ✅ 已注册到本地项目表")
-            bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
-                                    old_hashes=info.get("file_hashes", {}))
-            lines.append(f"  🔄 {bg_msg}")
     else:
-        # 4. Create new local repo — fast path, no inline scanning
+        # 3. Check server repos by name match
         try:
-            result = _post("/api/v1/repos", {
-                "name": name, "source_type": "local",
-            })
-            rid = result["id"]
-
-            # Register locally IMMEDIATELY (before any slow ops)
-            info = {
-                "repo_id": rid, "name": name,
-                "last_sync": "", "file_hashes": {},
-            }
-            set_project(project_path, info)
-            lines.append(f"\n  🆕 {name}  ({rid[:8]})")
-
-            # Auto-detect languages and install parsers (best-effort)
-            try:
-                parser_status = ensure_parsers(project_path)
-                if parser_status:
-                    all_langs = sorted(parser_status.keys())
-                    lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
-            except Exception:
-                pass
-
-            # Directory preview for LLM self-check
-            try:
-                preview = preview_project_structure(project_path)
-                lines.append(f"\n  📂 目录结构预览:\n{preview}")
-                lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
-            except Exception:
-                pass
-
-            bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
-                                    old_hashes=info.get("file_hashes", {}))
-            lines.append(f"  🔄 {bg_msg}")
+            repos = _get("/api/v1/repos")
         except Exception as e:
-            lines.append(f"\n  ❌ 创建仓库失败: {e}")
+            return "\n".join(lines) + f"\n\n  ❌ 获取仓库列表失败: {e}"
 
-    # Auto-install pre-push hook
+        norm = project_path.replace("\\", "/").rstrip("/")
+        name = project_name or norm.split("/")[-1]
+        matched = None
+        for r in repos:
+            if r.get("name") == name:
+                matched = r
+                break
+
+        if matched:
+            rid = matched["id"]
+            lines.append(f"  {matched['name']}  ({rid[:8]})")
+            status = matched['index_status']
+            status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
+            graph_lines.append(f"  {status_icon} 索引 {status}")
+            try:
+                repo = _get(f"/api/v1/repos/{rid}")
+                if repo.get("index_stats"):
+                    graph_lines.append(_fmt_stats(repo["index_stats"]))
+            except Exception:
+                pass
+            if matched.get("source_type") == "local":
+                info = {
+                    "repo_id": rid, "name": matched["name"],
+                    "last_sync": "", "file_hashes": {},
+                }
+                set_project(project_path, info)
+                lines.append("  ✅ 已注册到本地项目表")
+                bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
+                                        old_hashes=info.get("file_hashes", {}))
+                graph_lines.append(f"  🔄 {bg_msg}")
+        else:
+            # 4. Create new local repo
+            try:
+                result = _post("/api/v1/repos", {
+                    "name": name, "source_type": "local",
+                })
+                rid = result["id"]
+                info = {
+                    "repo_id": rid, "name": name,
+                    "last_sync": "", "file_hashes": {},
+                }
+                set_project(project_path, info)
+                lines.append(f"  🆕 {name}  ({rid[:8]})")
+
+                try:
+                    parser_status = ensure_parsers(project_path)
+                    if parser_status:
+                        all_langs = sorted(parser_status.keys())
+                        lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+                except Exception:
+                    pass
+
+                try:
+                    preview = preview_project_structure(project_path)
+                    lines.append(f"\n  📂 目录结构预览:\n{preview}")
+                    lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
+                except Exception:
+                    pass
+
+                bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
+                                        old_hashes=info.get("file_hashes", {}))
+                graph_lines.append(f"  🔄 {bg_msg}")
+            except Exception as e:
+                lines.append(f"\n  ❌ 创建仓库失败: {e}")
+
+    # Append graph section
+    if graph_lines:
+        lines.append("\n🕸️ 知识图谱")
+        lines.extend(graph_lines)
+
+    # ── Section 3: 代码健康状态 ──
+    if rid:
+        lines.append("\n💊 代码健康")
+        try:
+            health_result = _get(f"/api/v1/repos/{rid}/code-health", timeout=10)
+            score = health_result.get("score", 0)
+            grade = health_result.get("grade", "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D")
+            if not health_result.get("reliable", True):
+                lines.append("  ⚠️ 图谱数据不足，评分待索引完成后可用")
+            else:
+                dims = health_result.get("dimensions", [])
+                dim_summary = "  ".join(f"{d['abbr']}{d['value']}" for d in dims[:4])
+                lines.append(f"  {grade} {score}/100  {dim_summary}")
+        except Exception:
+            lines.append("  ⏳ 待索引完成后可用")
+
+    # ── Section 4: 钩子安装状态 ──
+    hook_lines: list[str] = []
     hook_msg = _install_hook(project_path)
     if hook_msg:
-        lines.append(hook_msg)
-
-    # Auto-install Claude Code PreToolUse hooks
+        hook_lines.append(f"  {hook_msg}")
+    else:
+        hook_lines.append("  ✅ Push hook 已就绪")
     claude_hook_msg = _install_claude_hooks()
     if claude_hook_msg:
-        lines.append(claude_hook_msg)
+        hook_lines.append(f"  {claude_hook_msg}")
+    else:
+        hook_lines.append("  ✅ Claude Code hooks 已就绪")
+    lines.append("\n🔗 钩子")
+    lines.extend(hook_lines)
 
     return "\n".join(lines)
 
@@ -1500,9 +1528,22 @@ def _install_claude_hooks() -> str | None:
     try:
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write hook scripts
+        # Check if already installed
         search_hook = hooks_dir / "pre_search.py"
         edit_hook = hooks_dir / "pre_edit.py"
+        if search_hook.exists() and edit_hook.exists():
+            if settings_file.exists():
+                try:
+                    cfg = json.loads(settings_file.read_text(encoding="utf-8"))
+                    pre_hooks = cfg.get("hooks", {}).get("PreToolUse", [])
+                    has_search = any("pre_search.py" in str(h.get("args", [])) for h in pre_hooks)
+                    has_edit = any("pre_edit.py" in str(h.get("args", [])) for h in pre_hooks)
+                    if has_search and has_edit:
+                        return None  # already installed
+                except Exception:
+                    pass
+
+        # Write hook scripts
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
 
