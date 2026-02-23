@@ -100,6 +100,13 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
     checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
     dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]
     dc_ratio = len(dead) / max(len(checkable), 1)
+    # Debug: count exclusion reasons
+    _n_dunder = sum(1 for nid in entry_point_ids
+                    if (nid.rsplit(".", 1)[-1] if "." in nid else nid).startswith("__"))
+    _n_decorated = sum(1 for nid, data in nodes.items()
+                       if nid in entry_point_ids and data.get("decorators"))
+    _n_class = sum(1 for nid, data in nodes.items()
+                   if nid in entry_point_ids and data.get("kind") == "class")
 
     # ── TC: Test Coverage ────────────────────────────────
     test_entity_ids = set()
@@ -144,7 +151,7 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
         "mc": {"ratio": round(mc_ratio, 3), "cross_module": cross_module, "total": len(call_edges)},
         "cd": {"cycles": cycle_count, "modules": cycle_modules},
         "fi": {"ratio": round(fi_ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called},
-        "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(checkable), "excluded_entry_points": len(entry_point_ids)},
+        "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(checkable), "excluded_entry_points": len(entry_point_ids), "_dbg_dunder": _n_dunder, "_dbg_decorated": _n_decorated, "_dbg_class": _n_class},
         "tc": {"ratio": round(tc_ratio, 3), "tested": len(tested_entities & set(testable)), "testable": len(testable)},
         "fs": {"ratio": round(fs_ratio, 3), "oversized": len(oversized), "total": len(functions)},
         "id": {"max_depth": max_depth},
