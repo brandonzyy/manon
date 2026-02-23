@@ -1140,6 +1140,11 @@ def manon_init(project_path: str, project_name: str = "") -> str:
     if hook_msg:
         lines.append(hook_msg)
 
+    # Auto-install Claude Code PreToolUse hooks
+    claude_hook_msg = _install_claude_hooks()
+    if claude_hook_msg:
+        lines.append(claude_hook_msg)
+
     return "\n".join(lines)
 
 
@@ -1450,6 +1455,93 @@ def _persist_api_config() -> None:
         cfg_file.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         log.warning("Failed to persist API config: %s", e)
+
+
+# ── Claude Code hooks installer ──────────────────────
+
+_PRE_SEARCH_HOOK = '''\
+"""PreToolUse hook: remind to use Manon graph before Grep/Glob."""
+import json, sys
+data = json.load(sys.stdin)
+print(json.dumps({
+    "continue": True,
+    "message": (
+        "\\u26a0\\ufe0f 规则提醒：是否已先用 manon_search / manon_graph 查过图谱？"
+        "如未查，请先查图谱再补搜索，并声明\\'图谱未覆盖，补充搜索\\'。"
+    ),
+}))
+'''
+
+_PRE_EDIT_HOOK = '''\
+"""PreToolUse hook: remind to check context before editing code."""
+import json, sys
+data = json.load(sys.stdin)
+fp = data.get("parameters", {}).get("file_path", "")
+exts = (".py",".js",".ts",".tsx",".jsx",".java",".go",".rs",".c",".cpp",".h")
+if not any(fp.endswith(e) for e in exts):
+    print(json.dumps({"continue": True}))
+    sys.exit(0)
+print(json.dumps({
+    "continue": True,
+    "message": (
+        "\\u26a0\\ufe0f 改代码前必查：1) manon_search/manon_graph 了解上下文 "
+        "2) git log --oneline -10 -- <file> 看近期改动，避免回退已有设计决策。"
+    ),
+}))
+'''
+
+
+def _install_claude_hooks() -> str | None:
+    """Install Claude Code PreToolUse hooks into ~/.claude/. Returns status or None."""
+    claude_dir = Path.home() / ".claude"
+    hooks_dir = claude_dir / "hooks"
+    settings_file = claude_dir / "settings.json"
+
+    try:
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write hook scripts
+        search_hook = hooks_dir / "pre_search.py"
+        edit_hook = hooks_dir / "pre_edit.py"
+        search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
+        edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
+
+        # Merge into settings.json
+        settings: dict = {}
+        if settings_file.exists():
+            try:
+                settings = json.loads(settings_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        python_cmd = "python"
+        hooks_cfg = settings.setdefault("hooks", {})
+        pre_tool = hooks_cfg.setdefault("PreToolUse", [])
+
+        # Deduplicate: remove existing Manon hooks, then re-add
+        pre_tool[:] = [h for h in pre_tool
+                       if "pre_search.py" not in str(h.get("args", []))
+                       and "pre_edit.py" not in str(h.get("args", []))]
+        pre_tool.append({
+            "matcher": "^(Grep|Glob)$",
+            "command": python_cmd,
+            "args": [str(search_hook).replace("\\", "/")],
+        })
+        pre_tool.append({
+            "matcher": "^(Edit|Write)$",
+            "command": python_cmd,
+            "args": [str(edit_hook).replace("\\", "/")],
+        })
+
+        settings_file.write_text(
+            json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        log.info("Claude Code hooks installed: %s", hooks_dir)
+        return "🔗 Claude Code hooks 已安装（Grep/Glob → 先查图谱, Edit/Write → 查上下文）"
+    except Exception as e:
+        log.warning("Failed to install Claude Code hooks: %s", e)
+        return None
 
 
 def _install_hook(project_path: str) -> str | None:
