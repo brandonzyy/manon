@@ -1153,7 +1153,7 @@ def manon_init(project_path: str, project_name: str = "") -> str:
                 lines.append("  ⚠️ 图谱数据不足，评分待索引完成后可用")
             else:
                 dims = health_result.get("dimensions", [])
-                dim_summary = "  ".join(f"{d['abbr']}{d['value']}" for d in dims[:4])
+                dim_summary = "  ".join(f"{d['abbr']}{d['value']}" for d in dims)
                 lines.append(f"  {grade} {score}/100  {dim_summary}")
         except Exception:
             lines.append("  ⏳ 待索引完成后可用")
