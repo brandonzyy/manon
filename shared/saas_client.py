@@ -94,8 +94,8 @@ async def search(repo_id: str, query: str, *, top_k: int = 10, depth: int = 1) -
     return await _get(f"/api/v1/repos/{repo_id}/search", q=query, top_k=top_k, depth=depth)
 
 
-async def graph(repo_id: str, symbol: str, *, depth: int = 2) -> dict:
-    return await _get(f"/api/v1/repos/{repo_id}/graph", symbol=symbol, depth=depth)
+async def graph(repo_id: str, symbol: str, *, depth: int = 2, direction: str = "both") -> dict:
+    return await _get(f"/api/v1/repos/{repo_id}/graph", symbol=symbol, depth=depth, direction=direction)
 
 
 async def impact(repo_id: str, *, commit: str = "HEAD", max_depth: int = 3) -> dict:

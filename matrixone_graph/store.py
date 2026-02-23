@@ -109,7 +109,7 @@ class CodeGraph:
         ]
         self._g.remove_nodes_from(to_remove)
 
-    def neighbors(self, entity_id: str, depth: int = 1) -> list[tuple[Entity, list[Relation]]]:
+    def neighbors(self, entity_id: str, depth: int = 1, direction: str = "both") -> list[tuple[Entity, list[Relation]]]:
         if entity_id not in self._g:
             return []
         visited: set[str] = {entity_id}
@@ -119,7 +119,13 @@ class CodeGraph:
             nid, d = queue.popleft()
             if d >= depth:
                 continue
-            for neighbor in set(self._g.successors(nid)) | set(self._g.predecessors(nid)):
+            if direction == "callers":
+                neighbor_set = set(self._g.predecessors(nid))
+            elif direction == "callees":
+                neighbor_set = set(self._g.successors(nid))
+            else:
+                neighbor_set = set(self._g.successors(nid)) | set(self._g.predecessors(nid))
+            for neighbor in neighbor_set:
                 if neighbor in visited:
                     continue
                 visited.add(neighbor)

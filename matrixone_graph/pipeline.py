@@ -430,7 +430,8 @@ async def index_repo(
 
 async def query(
     repo_path: Path, text: str, embedder: EmbeddingClient,
-    *, top_k: int = 10, depth: int = 1, kg_path: Path | None = None,
+    *, top_k: int = 10, depth: int = 1, direction: str = "both",
+    kg_path: Path | None = None,
 ) -> QueryResult:
     repo_path = repo_path.resolve()
     if kg_path is None:
@@ -441,6 +442,18 @@ async def query(
     q_vec = await embedder.embed_single(text)
     ent_hits = vec_index.search_entities(q_vec, top_k)
     chunk_hits = vec_index.search_chunks(q_vec, top_k)
+
+    # Deduplicate entity hits — keep highest score per entity ID
+    _seen_eids: dict[str, float] = {}
+    deduped_ent_hits: list[tuple[str, float]] = []
+    for eid, score in ent_hits:
+        if eid not in _seen_eids or score > _seen_eids[eid]:
+            if eid not in _seen_eids:
+                deduped_ent_hits.append((eid, score))
+            else:
+                deduped_ent_hits = [(e, s if e != eid else score) for e, s in deduped_ent_hits]
+            _seen_eids[eid] = score
+    ent_hits = deduped_ent_hits
 
     matched_entities: list[dict[str, Any]] = []
     for eid, score in ent_hits:
@@ -454,7 +467,7 @@ async def query(
     neighbor_entities: list[dict[str, Any]] = []
     seen_rels: set[str] = set()
     for eid, _ in ent_hits:
-        for ent, rels in graph.neighbors(eid, depth):
+        for ent, rels in graph.neighbors(eid, depth, direction=direction):
             for r in rels:
                 rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
                 if rkey not in seen_rels:

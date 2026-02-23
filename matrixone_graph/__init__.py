@@ -133,10 +133,10 @@ class MatrixoneGraph:
 
     # -- Query --
 
-    async def query(self, text: str, *, top_k=10, depth=1) -> QueryResult:
+    async def query(self, text: str, *, top_k=10, depth=1, direction="both") -> QueryResult:
         return await query(
             self.repo_path, text, self._embedder,
-            top_k=top_k, depth=depth, kg_path=self.kg_path,
+            top_k=top_k, depth=depth, direction=direction, kg_path=self.kg_path,
         )
 
     # -- Impact analysis (graph-based, no LLM calls) --

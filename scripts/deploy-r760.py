@@ -42,6 +42,7 @@ ExecStart=/usr/bin/python3 -m saas
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
+Environment=SAAS_LLM_API_KEY=sk-cFnE5mi2zKEiWZa89TdFJcQQVKO4BTgSgz8E5EGOIpEpCpXJ
 
 [Install]
 WantedBy=multi-user.target

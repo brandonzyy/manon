@@ -14,6 +14,7 @@ from ..models import SearchResult, ImpactResult, DeepQueryRequest
 from ..services.graph import get_graph
 from ..services.llm import llm_chat, parse_json
 from ..quota import check_deep_query_quota
+from ..config import settings
 
 log = logging.getLogger("saas.query")
 
@@ -67,11 +68,12 @@ async def graph_traverse(
     repo_id: str,
     symbol: str = Query(..., min_length=1),
     depth: int = Query(1, ge=0, le=3),
+    direction: str = Query("both", regex="^(both|callers|callees)$"),
     ctx: TenantContext = Depends(require_tenant),
 ):
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
-    result = await mg.query(symbol, top_k=5, depth=depth)
+    result = await mg.query(symbol, top_k=5, depth=depth, direction=direction)
     await record_usage(ctx.tenant_id, "query.graph", repo_id)
     return SearchResult(
         entities=result.entities,
@@ -170,6 +172,8 @@ async def deep_query(
     ctx: TenantContext = Depends(require_tenant),
 ):
     """多轮迭代查询，确保上下文完整覆盖用户问题。"""
+    if not settings.llm_api_key:
+        raise HTTPException(status_code=503, detail="LLM API key not configured (set SAAS_LLM_API_KEY)")
     await check_deep_query_quota(ctx)
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
@@ -194,8 +198,8 @@ async def deep_query(
                 {"role": "user", "content": f"## 用户问题\n{body.question}\n\n## 已有上下文\n{accumulated[:12000]}"},
             ], max_tokens=1024)
             parsed = parse_json(analysis)
-        except Exception:
-            log.warning("deep-query LLM round %d failed, stopping iteration", i + 1)
+        except Exception as exc:
+            log.warning("deep-query LLM round %d failed: %s", i + 1, exc)
             break
 
         follow_ups = parsed.get("queries", [])

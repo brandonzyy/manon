@@ -415,22 +415,49 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
     prefix_with_slash = (rel_prefix + "/") if rel_prefix else ""
 
     # 1. Get changed files from git diff
+    #    Monorepo fix: find last commit touching project files, not just HEAD~1
+    #    Also detect uncommitted/staged changes
+    base_commit = commit  # resolved base for unified diff later
     try:
         if commit == "HEAD":
-            diff_cmd = ["git", "diff", "HEAD~1", "--name-only"]
-            commit_msg_cmd = ["git", "log", "-1", "--format=%h %s"]
+            # In monorepo, HEAD~1 may not touch this project at all.
+            # Find the last commit that changed files under the project prefix.
+            if prefix_with_slash:
+                log_cmd = ["git", "log", "-1", "--format=%H", "--", prefix_with_slash]
+            else:
+                log_cmd = ["git", "log", "-1", "--format=%H"]
+            log_result = subprocess.run(log_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+            last_project_commit = log_result.stdout.strip() if log_result.returncode == 0 else ""
+
+            if last_project_commit:
+                base_commit = last_project_commit
+                diff_cmd = ["git", "diff", f"{last_project_commit}~1", last_project_commit, "--name-only"]
+                commit_msg_cmd = ["git", "log", "-1", "--format=%h %s", last_project_commit]
+            else:
+                diff_cmd = ["git", "diff", "HEAD~1", "--name-only"]
+                commit_msg_cmd = ["git", "log", "-1", "--format=%h %s"]
         else:
+            base_commit = commit
             diff_cmd = ["git", "diff", f"{commit}~1", commit, "--name-only"]
             commit_msg_cmd = ["git", "log", "-1", "--format=%h %s", commit]
 
-        msg_result = subprocess.run(commit_msg_cmd, cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        msg_result = subprocess.run(commit_msg_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
         commit_info = msg_result.stdout.strip() if msg_result.returncode == 0 else commit
 
-        diff_result = subprocess.run(diff_cmd, cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        diff_result = subprocess.run(diff_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
         if diff_result.returncode != 0:
             return f"git diff 失败: {diff_result.stderr.strip()}"
 
         raw_files = [f for f in diff_result.stdout.strip().split("\n") if f]
+
+        # Also detect uncommitted + staged changes (working tree vs HEAD)
+        wt_result = subprocess.run(
+            ["git", "diff", "HEAD", "--name-only"],
+            cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+        )
+        if wt_result.returncode == 0:
+            wt_files = [f for f in wt_result.stdout.strip().split("\n") if f]
+            raw_files = list(dict.fromkeys(raw_files + wt_files))  # dedupe, preserve order
 
         # Filter to project files and strip prefix
         changed_files = []
@@ -444,7 +471,8 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
         return f"git 操作失败: {e}"
 
     if not changed_files:
-        return "没有检测到文件变更。"
+        diag = f"commit={commit}, git_root={git_root}, project={root}, prefix={prefix_with_slash!r}"
+        return f"没有检测到文件变更。\n诊断: {diag}"
 
     parts.append(f"影响分析: {commit_info}")
     parts.append(f"变更文件 ({len(changed_files)}):")
@@ -458,11 +486,19 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
         if ext not in (".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php"):
             continue
         try:
-            # When cwd is project root (subdir of git root), -- paths are cwd-relative
+            # Use the resolved base_commit for unified diff
+            # Prepend prefix so git can find the file from git_root
+            git_file_path = (prefix_with_slash + cf) if prefix_with_slash else cf
+            if base_commit == commit and commit == "HEAD":
+                udiff_ref = f"{base_commit}~1"
+            elif commit == "HEAD":
+                udiff_ref = f"{base_commit}~1..{base_commit}"
+            else:
+                udiff_ref = f"{commit}~1..{commit}"
             udiff = subprocess.run(
-                ["git", "diff", "HEAD~1" if commit == "HEAD" else f"{commit}~1..{commit}",
-                 "--unified=0", "--", cf],
-                cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+                ["git", "diff", udiff_ref,
+                 "--unified=0", "--", git_file_path],
+                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
             )
             changed_lines: set[int] = set()
             for line in udiff.stdout.split("\n"):
@@ -473,6 +509,20 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
                     add_count = int(m.group(4)) if m.group(4) else 1
                     changed_lines.update(range(add_start, add_start + add_count))
                     # Deleted lines — use the deletion position in the new file
+                    if add_count == 0 and add_start > 0:
+                        changed_lines.add(add_start)
+
+            # Also check uncommitted changes for this file
+            wt_udiff = subprocess.run(
+                ["git", "diff", "HEAD", "--unified=0", "--", git_file_path],
+                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+            )
+            for line in wt_udiff.stdout.split("\n"):
+                m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+                if m:
+                    add_start = int(m.group(3))
+                    add_count = int(m.group(4)) if m.group(4) else 1
+                    changed_lines.update(range(add_start, add_start + add_count))
                     if add_count == 0 and add_start > 0:
                         changed_lines.add(add_start)
 
@@ -601,15 +651,16 @@ def manon_search(repo_id: str, query: str, top_k: int = 10, depth: int = 1) -> s
 
 
 @mcp.tool()
-def manon_graph(repo_id: str, symbol: str, depth: int = 1) -> str:
+def manon_graph(repo_id: str, symbol: str, depth: int = 1, direction: str = "both") -> str:
     """查询代码符号的调用关系和依赖图。
 
     Args:
         repo_id: 仓库 ID
         symbol: 代码符号名，如 "UserService"、"authenticate"
         depth: 遍历深度（默认 1，最大 3）
+        direction: 遍历方向 - "both"(双向), "callers"(只查上游调用者), "callees"(只查下游被调用者)
     """
-    result = _get(f"/api/v1/repos/{repo_id}/graph", symbol=symbol, depth=depth)
+    result = _get(f"/api/v1/repos/{repo_id}/graph", symbol=symbol, depth=depth, direction=direction)
     if result.get("context"):
         return _truncate(result["context"])
     return _format_graph(result)
