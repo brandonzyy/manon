@@ -119,11 +119,11 @@ def main():
         )
         if file_results or deleted:
             changed_names = [f["rel_path"] for f in file_results]
-            print(f"[manon]    变更 {len(file_results)} 个文件: {', '.join(changed_names[:5])}"
-                  + (f" 等" if len(changed_names) > 5 else ""))
+            print(f"[manon] 变更 {len(file_results)} 个文件: {', '.join(changed_names[:5])}"
+                  + (" 等" if len(changed_names) > 5 else ""))
             if deleted:
-                print(f"[manon]    删除 {len(deleted)} 个文件: {', '.join(deleted[:5])}"
-                      + (f" 等" if len(deleted) > 5 else ""))
+                print(f"[manon] 删除 {len(deleted)} 个文件: {', '.join(deleted[:5])}"
+                      + (" 等" if len(deleted) > 5 else ""))
             print("[manon] 上传 AST 并更新知识图谱...")
             for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
                 batch = file_results[i:i + SYNC_BATCH_SIZE]
