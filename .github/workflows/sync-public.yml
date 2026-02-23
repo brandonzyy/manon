@@ -24,12 +24,13 @@ jobs:
             --exclude='matrixone_graph/' \
             --exclude='.github/' \
             --exclude='tests/' \
-            --exclude='docs/' \
             --exclude='CLAUDE.md' \
             --exclude='README_CN.md' \
-            --exclude='scripts/manon-admin.py' \
-            --exclude='scripts/run-saas.py' \
-            --exclude='scripts/github-helper.py' \
+            --exclude='scripts/' \
+            --exclude='Dockerfile' \
+            --exclude='docker-compose.yml' \
+            --exclude='conftest.py' \
+            --exclude='requirements.txt' \
             --exclude='package.json' \
             --exclude='package-lock.json' \
             --exclude='.env' \
