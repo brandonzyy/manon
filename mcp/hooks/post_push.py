@@ -80,37 +80,12 @@ def _write_status(ok: bool, message: str) -> None:
         pass
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("[manon] usage: post_push.py <project_path>")
-        return
-
-    project_path = sys.argv[1]
-    result = _find_repo_id(project_path)
-    if not result:
-        print(f"[manon] 项目未注册: {project_path}")
-        return
-
-    repo_id, info = result
-    if not repo_id:
-        print("[manon] 未找到 repo_id，请重新运行 manon_init。")
-        return
-
+def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
+    """Scan and upload AST changes. Returns (sync_ok, summary_parts)."""
     import httpx
-    api_url = _api_url()
-    headers = _headers()
-
-    # Guard: if API key is still empty, skip HTTP calls entirely
-    if "Bearer " == headers.get("Authorization", "").strip():
-        print("[manon] MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
-        _write_status(False, "API key 未配置")
-        return
-
     summary_parts = []
-
-    # Step 1: Scan and upload AST changes
-    print("[manon] 扫描变更文件...")
     sync_ok = False
+    print("[manon] 扫描变更文件...")
     try:
         from shared.ast_sync import scan_and_parse, set_project
         old_hashes = info.get("file_hashes", {})
@@ -141,8 +116,6 @@ def main():
             msg += "）"
             print(f"[manon] {msg}")
             summary_parts.append(msg)
-            # Only record hashes for actually synced files
-            synced_set = {f["rel_path"] for f in file_results}
             partial_hashes = dict(old_hashes)
             for f in file_results:
                 rp = f["rel_path"]
@@ -161,8 +134,36 @@ def main():
     except Exception as e:
         print(f"[manon] FAIL 图谱更新失败: {e}")
         summary_parts.append(f"同步失败: {e}")
+    return sync_ok, summary_parts
 
-    # Step 2: Fetch health score
+
+def main():
+    if len(sys.argv) < 2:
+        print("[manon] usage: post_push.py <project_path>")
+        return
+
+    project_path = sys.argv[1]
+    result = _find_repo_id(project_path)
+    if not result:
+        print(f"[manon] 项目未注册: {project_path}")
+        return
+
+    repo_id, info = result
+    if not repo_id:
+        print("[manon] 未找到 repo_id，请重新运行 manon_init。")
+        return
+
+    import httpx
+    api_url = _api_url()
+    headers = _headers()
+
+    if "Bearer " == headers.get("Authorization", "").strip():
+        print("[manon] MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
+        _write_status(False, "API key 未配置")
+        return
+
+    sync_ok, summary_parts = _sync_ast_changes(repo_id, info, project_path, api_url, headers)
+
     print("[manon] 计算代码健康评分...")
     try:
         with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
@@ -176,7 +177,6 @@ def main():
     except Exception as e:
         print(f"[manon] FAIL 健康评分获取失败: {e}")
 
-    # Write status for LLM feedback
     _write_status(sync_ok, " | ".join(summary_parts))
 
 

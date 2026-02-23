@@ -25,59 +25,69 @@ import networkx as nx
 if TYPE_CHECKING:
     from .store import CodeGraph
 
+# Builtin/stdlib names excluded from fan-in counting — these inflate FI
+# because every module calls them, but they aren't meaningful coupling.
+_BUILTINS = frozenset({
+    "len", "str", "int", "float", "bool", "bytes", "list", "dict", "set",
+    "tuple", "range", "enumerate", "sorted", "reversed", "zip", "map",
+    "filter", "max", "min", "sum", "any", "all", "abs", "round", "pow",
+    "print", "repr", "format", "type", "isinstance", "issubclass",
+    "hasattr", "getattr", "setattr", "delattr", "callable", "super",
+    "open", "iter", "next", "id", "hash", "chr", "ord", "hex", "oct",
+    "bin", "vars", "dir", "staticmethod", "classmethod", "property",
+})
+
 
 def _entity_module(entity_id: str) -> str:
-    """Extract top-level module from entity ID (e.g. 'foo.bar.Baz' -> 'foo')."""
+    """Extract two-level module from entity ID (e.g. 'foo.bar.Baz' -> 'foo.bar')."""
     parts = entity_id.split(".")
-    return parts[0] if parts else ""
+    return ".".join(parts[:2]) if len(parts) >= 2 else parts[0] if parts else ""
 
 
-def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
-    """Compute all 8 health dimensions from the knowledge graph.
-
-    Returns dict with keys: mc, cd, fi, dc, tc, fs, id, and their details.
-    """
-    g = graph._g
-    nodes = dict(g.nodes(data=True))
-    edges = list(g.edges(data=True))
-
-    # ── MC: Module Coupling ──────────────────────────────
-    # Only count `calls` edges — imports are inherently cross-module in Python
-    # and don't reflect runtime coupling.
+def _compute_mc(edges: list) -> dict:
+    """MC: Module Coupling — cross-module call ratio."""
     call_edges = [e for e in edges if e[2].get("kind") == "calls"]
     cross_module = sum(
         1 for src, tgt, _ in call_edges
         if _entity_module(src) != _entity_module(tgt)
     )
-    mc_ratio = cross_module / max(len(call_edges), 1)
+    ratio = cross_module / max(len(call_edges), 1)
+    return {"ratio": round(ratio, 3), "cross_module": cross_module, "total": len(call_edges)}
 
-    # ── CD: Circular Dependencies ────────────────────────
-    # Build module-level import subgraph
+
+def _compute_cd(edges: list) -> dict:
+    """CD: Circular Dependencies — SCC detection on module import graph."""
     module_g = nx.DiGraph()
     for src, tgt, data in edges:
         if data.get("kind") != "imports":
             continue
-        src_mod = _entity_module(src)
-        tgt_mod = _entity_module(tgt)
+        src_mod, tgt_mod = _entity_module(src), _entity_module(tgt)
         if src_mod and tgt_mod and src_mod != tgt_mod:
             module_g.add_edge(src_mod, tgt_mod)
     sccs = [c for c in nx.strongly_connected_components(module_g) if len(c) > 1]
-    cycle_count = len(sccs)
-    cycle_modules = sorted({m for scc in sccs for m in scc})
+    return {"cycles": len(sccs), "modules": sorted({m for scc in sccs for m in scc})}
 
-    # ── FI: Fan-in Concentration ─────────────────────────
+
+def _compute_fi(edges: list) -> dict:
+    """FI: Fan-in Concentration — high in-degree entity ratio (excluding builtins)."""
     in_degrees: dict[str, int] = defaultdict(int)
     for src, tgt, data in edges:
         if data.get("kind") == "calls":
+            short_name = tgt.rsplit(".", 1)[-1] if "." in tgt else tgt
+            if short_name in _BUILTINS:
+                continue
             in_degrees[tgt] += 1
     high_fanin = [eid for eid, deg in in_degrees.items() if deg > 5]
     total_called = len(in_degrees)
-    fi_ratio = len(high_fanin) / max(total_called, 1)
+    ratio = len(high_fanin) / max(total_called, 1)
+    return {"ratio": round(ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called}
 
-    # ── DC: Dead Code ────────────────────────────────────
-    # Exclude known entry points: dunder methods (called by runtime),
-    # test entities (called by test runner), classes (structural containers),
-    # decorated functions (registered by frameworks like FastAPI, MCP, etc.).
+
+def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
+    """DC: Dead Code — zero in-degree non-entry-point entities.
+
+    Returns (dc_metrics, non_module_entities) since TC reuses the entity list.
+    """
     all_in_degrees = dict(g.in_degree())
     non_module_entities = [
         nid for nid, data in nodes.items()
@@ -87,8 +97,10 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
     for nid, data in nodes.items():
         kind = data.get("kind", "")
         name = nid.rsplit(".", 1)[-1] if "." in nid else nid
-        fp = data.get("file_path", "")
+        fp = data.get("file_path", "").replace("\\", "/")
         decorators = data.get("decorators", [])
+        is_script = fp.startswith("scripts/") or "/scripts/" in fp
+        is_main = fp.endswith("__main__.py")
         if name.startswith("__") and name.endswith("__"):
             entry_point_ids.add(nid)
         elif _is_test_file(fp):
@@ -97,57 +109,90 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
             entry_point_ids.add(nid)
         elif decorators:
             entry_point_ids.add(nid)
+        elif kind == "method" and not name.startswith("_"):
+            entry_point_ids.add(nid)
+        elif is_script or is_main:
+            entry_point_ids.add(nid)
+        elif kind == "function" and not name.startswith("_"):
+            entry_point_ids.add(nid)
     checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
     dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]
-    dc_ratio = len(dead) / max(len(checkable), 1)
+    ratio = len(dead) / max(len(checkable), 1)
+    metrics = {"ratio": round(ratio, 3), "dead_count": len(dead),
+               "total": len(checkable), "excluded_entry_points": len(entry_point_ids)}
+    return metrics, non_module_entities
 
-    # ── TC: Test Coverage ────────────────────────────────
+
+def _compute_tc(nodes: dict, edges: list, non_module_entities: list) -> dict:
+    """TC: Test Coverage — entities reachable from test files (transitive)."""
     test_entity_ids = set()
     for nid, data in nodes.items():
-        fp = data.get("file_path", "")
-        if _is_test_file(fp):
+        if _is_test_file(data.get("file_path", "")):
             test_entity_ids.add(nid)
-    # Entities referenced by test files (via imports or calls)
+    # Direct references from/to test entities
     tested_entities: set[str] = set()
-    for src, tgt, data in edges:
+    for src, tgt, _ in edges:
         if src in test_entity_ids and tgt not in test_entity_ids:
             tested_entities.add(tgt)
         if tgt in test_entity_ids and src not in test_entity_ids:
             tested_entities.add(src)
+    # Transitive: follow outgoing calls edges
+    calls_out: dict[str, list[str]] = defaultdict(list)
+    for src, tgt, data in edges:
+        if data.get("kind") == "calls":
+            calls_out[src].append(tgt)
+    queue = list(tested_entities)
+    visited = set(tested_entities)
+    while queue:
+        node = queue.pop()
+        for callee in calls_out.get(node, []):
+            if callee not in visited and callee not in test_entity_ids:
+                visited.add(callee)
+                tested_entities.add(callee)
+                queue.append(callee)
     testable = [nid for nid in non_module_entities if nid not in test_entity_ids]
-    tc_ratio = len(tested_entities & set(testable)) / max(len(testable), 1)
+    tested_count = len(tested_entities & set(testable))
+    ratio = tested_count / max(len(testable), 1)
+    return {"ratio": round(ratio, 3), "tested": tested_count, "testable": len(testable)}
 
-    # ── FS: Function Size ────────────────────────────────
-    functions = [
-        data for _, data in nodes.items()
-        if data.get("kind") in ("function", "method")
-    ]
-    oversized = [
-        f for f in functions
-        if (f.get("line_end", 0) - f.get("line_start", 0)) > 50
-    ]
-    fs_ratio = len(oversized) / max(len(functions), 1)
 
-    # ── ID: Inheritance Depth ────────────────────────────
+def _compute_fs(nodes: dict) -> dict:
+    """FS: Function Size — oversized function ratio (>50 lines)."""
+    functions = [d for _, d in nodes.items() if d.get("kind") in ("function", "method")]
+    oversized = [f for f in functions if (f.get("line_end", 0) - f.get("line_start", 0)) > 50]
+    ratio = len(oversized) / max(len(functions), 1)
+    return {"ratio": round(ratio, 3), "oversized": len(oversized), "total": len(functions)}
+
+
+def _compute_id(edges: list) -> dict:
+    """ID: Inheritance Depth — max inheritance chain length."""
     inherit_g = nx.DiGraph()
     for src, tgt, data in edges:
         if data.get("kind") == "inherits":
             inherit_g.add_edge(src, tgt)
     max_depth = 0
     for node in inherit_g.nodes():
-        if inherit_g.in_degree(node) == 0:  # root of chain
-            for _, lengths in nx.single_source_shortest_path_length(inherit_g, node).items():
-                if lengths > max_depth:
-                    max_depth = lengths
+        if inherit_g.in_degree(node) == 0:
+            for _, length in nx.single_source_shortest_path_length(inherit_g, node).items():
+                if length > max_depth:
+                    max_depth = length
+    return {"max_depth": max_depth}
 
+
+def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
+    """Compute all 8 health dimensions from the knowledge graph."""
+    g = graph._g
+    nodes = dict(g.nodes(data=True))
+    edges = list(g.edges(data=True))
+    dc, non_module_entities = _compute_dc(nodes, g)
     return {
-        "mc": {"ratio": round(mc_ratio, 3), "cross_module": cross_module, "total": len(call_edges)},
-        "cd": {"cycles": cycle_count, "modules": cycle_modules},
-        "fi": {"ratio": round(fi_ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called},
-        "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(checkable), "excluded_entry_points": len(entry_point_ids)},
-        "tc": {"ratio": round(tc_ratio, 3), "tested": len(tested_entities & set(testable)), "testable": len(testable)},
-        "fs": {"ratio": round(fs_ratio, 3), "oversized": len(oversized), "total": len(functions)},
-        "id": {"max_depth": max_depth},
+        "mc": _compute_mc(edges),
+        "cd": _compute_cd(edges),
+        "fi": _compute_fi(edges),
+        "dc": dc,
+        "tc": _compute_tc(nodes, edges, non_module_entities),
+        "fs": _compute_fs(nodes),
+        "id": _compute_id(edges),
         "entity_count": len(nodes),
         "relation_count": len(edges),
     }

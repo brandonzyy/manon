@@ -136,6 +136,27 @@ def _chunk_file(source: str, parse_result: ParseResult, module: str) -> list[Chu
     return chunks
 
 
+def _resolve_callee(
+    call_callee: str, local_names: set[str], imported_names: dict[str, str],
+    module: str, fp: str,
+) -> str:
+    """Resolve a callee reference to a fully qualified entity ID."""
+    if call_callee in local_names:
+        return _make_entity_id(module, call_callee)
+    if call_callee in imported_names:
+        return imported_names[call_callee]
+    if call_callee.startswith(("./", "../")):
+        return _resolve_import_by_filepath(fp, call_callee)
+    if "." in call_callee:
+        prefix, rest = call_callee.split(".", 1)
+        if prefix in imported_names:
+            return f"{imported_names[prefix]}.{rest}"
+        parent_module = module.rsplit(".", 1)[0] if "." in module else ""
+        if parent_module:
+            return f"{parent_module}.{prefix}.{rest}"
+    return call_callee
+
+
 def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[Relation]]:
     entities: list[Entity] = []
     relations: list[Relation] = []
@@ -167,22 +188,14 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
         for name in imp.names:
             imported_names[name] = f"{resolved_module}.{name}"
         if not imp.names:
-            # import of whole module — use last segment as short name
             short = resolved_module.rsplit(".", 1)[-1]
             imported_names[short] = resolved_module
+    # Resolve calls
     for call in pr.calls:
         if call.callee is None:
             continue
         caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
-        if call.callee in local_names:
-            callee_id = _make_entity_id(module, call.callee)
-        elif call.callee in imported_names:
-            callee_id = imported_names[call.callee]
-        elif call.callee.startswith(("./", "../")):
-            # TS parser resolved callee with relative module path — resolve to full entity ID
-            callee_id = _resolve_import_by_filepath(fp, call.callee)
-        else:
-            callee_id = call.callee
+        callee_id = _resolve_callee(call.callee, local_names, imported_names, module, fp)
         relations.append(Relation(
             src_id=caller_id, tgt_id=callee_id,
             kind="calls", description=f"{call.caller} -> {call.callee}",
@@ -284,6 +297,78 @@ def invalidate_kg_cache(kg_path: Path) -> None:
 # Index pipeline
 # ---------------------------------------------------------------------------
 
+def _process_file(
+    f: Path, repo_path: Path, graph: CodeGraph, vec_index: VectorIndex,
+    all_chunks: dict[str, Chunk],
+) -> tuple[list[Entity], list[Relation], list[Chunk]]:
+    """Parse one file and return entities, relations, chunks. Removes old data first."""
+    module = _module_prefix(f, repo_path)
+    fp_str = str(f)
+    graph.remove_by_file(fp_str)
+    old_chunk_ids = {cid for cid, c in all_chunks.items() if c.file_path == fp_str}
+    vec_index.remove_by_ids(old_chunk_ids)
+    for cid in old_chunk_ids:
+        del all_chunks[cid]
+
+    pr = parse_file(f)
+    if pr.error:
+        logger.warning("Parse error %s: %s", f, pr.error)
+        return [], [], []
+    entities, relations = _map_parse_result(pr, module)
+    try:
+        source = f.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        source = ""
+    chunks = _chunk_file(source, pr, module)
+    for c in chunks:
+        all_chunks[c.id] = c
+    return entities, relations, chunks
+
+
+async def _embed_and_save(
+    graph: CodeGraph, vec_index: VectorIndex, all_chunks: dict[str, Chunk],
+    all_entities: list[Entity], all_relations: list[Relation], new_chunks: list[Chunk],
+    embedder: EmbeddingClient, kg_path: Path, new_hashes: dict[str, str],
+    result: IndexResult, on_progress: Callable[[str], None] | None,
+) -> None:
+    """Add entities/relations to graph, embed, and save to disk."""
+    for ent in all_entities:
+        graph.add_entity(ent)
+        result.entities_added += 1
+    for rel in all_relations:
+        if graph.has_entity(rel.src_id) or graph.has_entity(rel.tgt_id):
+            graph.add_relation(rel)
+            result.relations_added += 1
+
+    if all_entities:
+        if on_progress:
+            on_progress(f"Embedding {len(all_entities)} entities...")
+        ent_vecs = await embedder.embed([e.description for e in all_entities])
+        vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
+
+    if new_chunks:
+        if on_progress:
+            on_progress(f"Embedding {len(new_chunks)} chunks...")
+        chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
+        vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
+        result.chunks_added = len(new_chunks)
+
+    if on_progress:
+        on_progress("Saving to disk...")
+    graph.save(kg_path / GRAPH_FILE)
+    vec_index.save(kg_path / VECTORS_FILE)
+    _save_chunks(kg_path, all_chunks)
+    invalidate_kg_cache(kg_path)
+    meta = _load_meta(kg_path)
+    meta.update({
+        "version": 1, "entity_count": graph.entity_count,
+        "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
+        "file_count": len(new_hashes), "embedding_url": embedder.base_url,
+        "hashes": new_hashes,
+    })
+    _save_meta(kg_path, meta)
+
+
 async def index_repo(
     repo_path: Path,
     embedder: EmbeddingClient,
@@ -327,75 +412,79 @@ async def index_repo(
     all_entities: list[Entity] = []
     all_relations: list[Relation] = []
     new_chunks: list[Chunk] = []
-
     for f in files_to_index:
-        module = _module_prefix(f, repo_path)
-        fp_str = str(f)
-        graph.remove_by_file(fp_str)
-        old_chunk_ids = {cid for cid, c in all_chunks.items() if c.file_path == fp_str}
-        vec_index.remove_by_ids(old_chunk_ids)
-        for cid in old_chunk_ids:
-            del all_chunks[cid]
-
-        pr = parse_file(f)
-        if pr.error:
-            logger.warning("Parse error %s: %s", f, pr.error)
-            continue
-        entities, relations = _map_parse_result(pr, module)
-        all_entities.extend(entities)
-        all_relations.extend(relations)
-        try:
-            source = f.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            source = ""
-        chunks = _chunk_file(source, pr, module)
+        ents, rels, chunks = _process_file(f, repo_path, graph, vec_index, all_chunks)
+        all_entities.extend(ents)
+        all_relations.extend(rels)
         new_chunks.extend(chunks)
-        for c in chunks:
-            all_chunks[c.id] = c
         result.files_indexed += 1
         if on_progress and result.files_indexed % 20 == 0:
             on_progress(f"Indexed {result.files_indexed}/{len(files_to_index)} files")
 
-    for ent in all_entities:
-        graph.add_entity(ent)
-        result.entities_added += 1
-    for rel in all_relations:
-        if graph.has_entity(rel.src_id) or graph.has_entity(rel.tgt_id):
-            graph.add_relation(rel)
-            result.relations_added += 1
-
-    if all_entities:
-        if on_progress:
-            on_progress(f"Embedding {len(all_entities)} entities...")
-        ent_vecs = await embedder.embed([e.description for e in all_entities])
-        vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
-
-    if new_chunks:
-        if on_progress:
-            on_progress(f"Embedding {len(new_chunks)} chunks...")
-        chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
-        vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
-        result.chunks_added = len(new_chunks)
-
-    if on_progress:
-        on_progress("Saving to disk...")
-    graph.save(kg_path / GRAPH_FILE)
-    vec_index.save(kg_path / VECTORS_FILE)
-    _save_chunks(kg_path, all_chunks)
-    invalidate_kg_cache(kg_path)  # force reload on next query
-    meta.update({
-        "version": 1, "entity_count": graph.entity_count,
-        "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
-        "file_count": len(new_hashes), "embedding_url": embedder.base_url,
-        "hashes": new_hashes,
-    })
-    _save_meta(kg_path, meta)
+    await _embed_and_save(
+        graph, vec_index, all_chunks, all_entities, all_relations, new_chunks,
+        embedder, kg_path, new_hashes, result, on_progress,
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
 # Query pipeline
 # ---------------------------------------------------------------------------
+
+def _traverse_neighbors(
+    graph: CodeGraph, ent_hits: list[tuple[str, float]],
+    matched_entities: list[dict[str, Any]], depth: int, direction: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Traverse graph neighbors for matched entities. Returns (relations, neighbor_entities)."""
+    all_rels: list[dict[str, Any]] = []
+    neighbor_entities: list[dict[str, Any]] = []
+    seen_rels: set[str] = set()
+    matched_ids = {e["id"] for e in matched_entities}
+    for eid, _ in ent_hits:
+        traverse_ids = [eid]
+        if not list(graph._g.edges(eid)) and not list(graph._g.in_edges(eid)):
+            prefix = eid + "."
+            traverse_ids.extend(
+                nid for nid in graph._g.nodes() if nid.startswith(prefix)
+            )
+        for tid in traverse_ids:
+            for ent, rels in graph.neighbors(tid, depth, direction=direction):
+                for r in rels:
+                    rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
+                    if rkey not in seen_rels:
+                        seen_rels.add(rkey)
+                        all_rels.append(r.to_dict())
+                if ent.id not in matched_ids:
+                    d = ent.to_dict()
+                    d["score"] = 0.0
+                    neighbor_entities.append(d)
+                    matched_ids.add(ent.id)
+    return all_rels, neighbor_entities
+
+
+def _format_query_context(
+    matched_entities: list[dict], all_rels: list[dict], matched_chunks: list[dict],
+) -> str:
+    """Build human-readable context string from query results."""
+    parts: list[str] = []
+    if matched_entities:
+        parts.append("=== Matched Entities ===")
+        for e in matched_entities:
+            parts.append(f"[{e['kind']}] {e['name']} ({e['file_path']}:{e['line_start']}) score={e['score']}")
+            if e.get("description"):
+                parts.append(f"  {e['description']}")
+    if all_rels:
+        parts.append("\n=== Relations ===")
+        for r in all_rels[:20]:
+            parts.append(f"  {r['src_id']} --{r['kind']}--> {r['tgt_id']}")
+    if matched_chunks:
+        parts.append("\n=== Code Snippets ===")
+        for c in matched_chunks[:5]:
+            parts.append(f"--- {c['file_path']}:{c['line_start']}-{c['line_end']} ({c.get('symbol_name','')}) score={c['score']} ---")
+            parts.append(c["content"][:500])
+    return "\n".join(parts)
+
 
 async def query(
     repo_path: Path, text: str, embedder: EmbeddingClient,
@@ -432,31 +521,9 @@ async def query(
             d["score"] = round(score, 4)
             matched_entities.append(d)
 
-    all_rels: list[dict[str, Any]] = []
-    neighbor_entities: list[dict[str, Any]] = []
-    seen_rels: set[str] = set()
-    matched_ids = {e["id"] for e in matched_entities}
-    for eid, _ in ent_hits:
-        # Collect entity IDs to traverse: the entity itself + its members (for class/module)
-        traverse_ids = [eid]
-        # If entity has no direct edges, also traverse its member entities
-        if not list(graph._g.edges(eid)) and not list(graph._g.in_edges(eid)):
-            prefix = eid + "."
-            traverse_ids.extend(
-                nid for nid in graph._g.nodes() if nid.startswith(prefix)
-            )
-        for tid in traverse_ids:
-            for ent, rels in graph.neighbors(tid, depth, direction=direction):
-                for r in rels:
-                    rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
-                    if rkey not in seen_rels:
-                        seen_rels.add(rkey)
-                        all_rels.append(r.to_dict())
-                if ent.id not in matched_ids:
-                    d = ent.to_dict()
-                    d["score"] = 0.0
-                    neighbor_entities.append(d)
-                    matched_ids.add(ent.id)
+    all_rels, neighbor_entities = _traverse_neighbors(
+        graph, ent_hits, matched_entities, depth, direction,
+    )
 
     matched_chunks: list[dict[str, Any]] = []
     for cid, score in chunk_hits:
@@ -465,26 +532,9 @@ async def query(
             d["score"] = round(score, 4)
             matched_chunks.append(d)
 
-    ctx_parts: list[str] = []
-    if matched_entities:
-        ctx_parts.append("=== Matched Entities ===")
-        for e in matched_entities:
-            ctx_parts.append(f"[{e['kind']}] {e['name']} ({e['file_path']}:{e['line_start']}) score={e['score']}")
-            if e.get("description"):
-                ctx_parts.append(f"  {e['description']}")
-    if all_rels:
-        ctx_parts.append("\n=== Relations ===")
-        for r in all_rels[:20]:
-            ctx_parts.append(f"  {r['src_id']} --{r['kind']}--> {r['tgt_id']}")
-    if matched_chunks:
-        ctx_parts.append("\n=== Code Snippets ===")
-        for c in matched_chunks[:5]:
-            ctx_parts.append(f"--- {c['file_path']}:{c['line_start']}-{c['line_end']} ({c.get('symbol_name','')}) score={c['score']} ---")
-            ctx_parts.append(c["content"][:500])
-
     return QueryResult(
         entities=matched_entities + neighbor_entities,
         relations=all_rels, chunks=matched_chunks,
-        context="\n".join(ctx_parts),
+        context=_format_query_context(matched_entities, all_rels, matched_chunks),
     )
 

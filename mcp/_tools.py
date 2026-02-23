@@ -518,6 +518,20 @@ def _build_hooks_lines(project_path: str) -> list[str]:
 
 def register(mcp):
     """Register all MCP tools on the given FastMCP instance."""
+    _register_repo_tools(mcp)
+    _register_search_tools(mcp)
+    _register_index_tools(mcp)
+    _register_repo_crud_tools(mcp)
+    _register_init_tools(mcp)
+    _register_config_tools(mcp)
+    _register_query_tools(mcp)
+    _register_utility_tools(mcp)
+    _register_health_tools(mcp)
+    _register_dynamic_tools(mcp)
+
+
+def _register_repo_tools(mcp):
+    """Repo CRUD tools."""
 
     @mcp.tool()
     def manon_repos_list() -> str:
@@ -531,6 +545,10 @@ def register(mcp):
             src = " [local]" if r.get("source_type") == "local" else ""
             lines.append(f"  {icon} {r['id']}  {r['name']:<20s}  {r['index_status']}{src}")
         return "\n".join(lines)
+
+
+def _register_search_tools(mcp):
+    """Search, graph, and impact tools."""
 
     @mcp.tool()
     def manon_search(repo_id: str, query: str, top_k: int = 10, depth: int = 1) -> str:
@@ -578,6 +596,10 @@ def register(mcp):
             return _local_impact(repo_id, found[0], commit, max_depth)
         result = _client._get(f"/api/v1/repos/{repo_id}/impact", commit=commit, max_depth=max_depth)
         return _client._format_impact(result)
+
+
+def _register_index_tools(mcp):
+    """Index, status, push-update, repo CRUD tools."""
 
     @mcp.tool()
     def manon_index(repo_id: str, incremental: bool = True) -> str:
@@ -635,6 +657,10 @@ def register(mcp):
             if ts:
                 msg += f"\n   更新于 {ts}"
         return msg
+
+
+def _register_repo_crud_tools(mcp):
+    """Repo create, get, delete, push-update tools."""
 
     @mcp.tool()
     def manon_repos_create(name: str, git_url: str = "", branch: str = "main", local_path: str = "") -> str:
@@ -723,6 +749,10 @@ def register(mcp):
         result = _client._post(f"/api/v1/repos/{repo_id}/push-update", {})
         return f"更新已触发: {result['status']}。用 manon_index_status 查看进度。"
 
+
+def _register_init_tools(mcp):
+    """Init and configure tools."""
+
     @mcp.tool()
     def manon_init(project_path: str, project_name: str = "") -> str:
         """初始化当前项目的 Manon 连接。检查 API 可达性、匹配或创建仓库、展示图谱状态。
@@ -793,6 +823,10 @@ def register(mcp):
         preview = preview_project_structure(project_path)
         return f"✅ 已设置 {len(exclude_patterns)} 条自定义排除规则\n\n📂 更新后的目录结构:\n{preview}"
 
+
+def _register_config_tools(mcp):
+    """Config and account tools."""
+
     @mcp.tool()
     def manon_config() -> str:
         """查看当前 Manon 配置和连接状态。
@@ -839,6 +873,10 @@ def register(mcp):
         ]
         return "\n".join(lines)
 
+
+def _register_query_tools(mcp):
+    """Deep query tools."""
+
     @mcp.tool()
     def manon_deep_query(repo_id: str, question: str, max_rounds: int = 3) -> str:
         """深度查询代码知识图谱。自动多轮迭代，确保覆盖问题的所有子方面。
@@ -872,6 +910,10 @@ def register(mcp):
             if r.get("queries"):
                 lines.append(f"  Round {r['round']}: 补充查询 {r['queries']}")
         return _client._truncate("\n".join(lines))
+
+
+def _register_utility_tools(mcp):
+    """Usage, embedding, and update tools."""
 
     @mcp.tool()
     def manon_usage(days: int = 30) -> str:
@@ -930,6 +972,10 @@ def register(mcp):
             )
         return "\n".join(parts)
 
+
+def _register_health_tools(mcp):
+    """Health, hooks, and dynamic merge tools."""
+
     @mcp.tool()
     def manon_code_health(repo_id: str) -> str:
         """分析代码库的健康状况。基于知识图谱计算 8 个维度的健康评分。
@@ -976,6 +1022,10 @@ def register(mcp):
         if result:
             return f"{result}\ngit push 后将自动更新知识图谱并输出代码健康评分。"
         return "pre-push hook 已存在，API 配置已更新。"
+
+
+def _register_dynamic_tools(mcp):
+    """Dynamic edge merge tools."""
 
     @mcp.tool()
     def manon_merge_dynamic(repo_id: str, deps_path: str = "dynamic-deps.json") -> str:

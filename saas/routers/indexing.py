@@ -176,6 +176,49 @@ def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
     )
 
 
+def _remove_deleted_files(body, graph, vec_index, all_chunks, meta):
+    """Remove deleted files from graph, vectors, and chunks."""
+    for rel_path in body.deleted_files:
+        graph.remove_by_file(rel_path)
+        old_cids = {cid for cid, c in all_chunks.items() if c.file_path == rel_path}
+        vec_index.remove_by_ids(old_cids)
+        for cid in old_cids:
+            del all_chunks[cid]
+        meta.get("hashes", {}).pop(rel_path, None)
+
+
+def _process_ast_files(body, graph, all_chunks, vec_index):
+    """Process each file's AST data. Returns (entities, relations, chunks, hashes)."""
+    all_entities = []
+    all_relations = []
+    new_chunks = []
+    new_hashes = {}
+    for f in body.files:
+        graph.remove_by_file(f.rel_path)
+        old_cids = {cid for cid, c in all_chunks.items() if c.file_path == f.rel_path}
+        vec_index.remove_by_ids(old_cids)
+        for cid in old_cids:
+            del all_chunks[cid]
+        pr = _reconstruct_parse_result(f.parse_result, f.rel_path)
+        if pr.error:
+            logger.warning("Skipping %s: parse error %s", f.rel_path, pr.error)
+            continue
+        rel = Path(f.rel_path)
+        parts = list(rel.with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        module = ".".join(parts)
+        entities, relations = _map_parse_result(pr, module)
+        all_entities.extend(entities)
+        all_relations.extend(relations)
+        chunks = _chunk_file(f.source, pr, module)
+        new_chunks.extend(chunks)
+        for c in chunks:
+            all_chunks[c.id] = c
+        new_hashes[f.rel_path] = f.hash
+    return all_entities, all_relations, new_chunks, new_hashes
+
+
 async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
     """Background task: process pre-parsed AST data from MCP client."""
     import sys
@@ -200,7 +243,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         )
         await db.commit()
 
-        # Resolve kg_path (tenant-isolated)
         kg_path = Path(settings.index_dir) / tenant_id / repo_name / "kg"
         kg_path.mkdir(parents=True, exist_ok=True)
 
@@ -211,61 +253,19 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         all_chunks = _load_chunks(kg_path)
         meta = _load_meta(kg_path)
 
-        # Handle full reindex — clear everything
         if body.full_reindex:
             graph = CodeGraph()
             vec_index = VectorIndex()
             all_chunks = {}
             meta = {"version": 1, "hashes": {}}
 
-        # Remove deleted files
-        for rel_path in body.deleted_files:
-            graph.remove_by_file(rel_path)
-            old_cids = {cid for cid, c in all_chunks.items() if c.file_path == rel_path}
-            vec_index.remove_by_ids(old_cids)
-            for cid in old_cids:
-                del all_chunks[cid]
-            meta.get("hashes", {}).pop(rel_path, None)
-
-        # Process each file's AST
-        all_entities: list[Entity] = []
-        all_relations = []
-        new_chunks: list[Chunk] = []
+        _remove_deleted_files(body, graph, vec_index, all_chunks, meta)
+        all_entities, all_relations, new_chunks, file_hashes = _process_ast_files(
+            body, graph, all_chunks, vec_index,
+        )
         new_hashes = dict(meta.get("hashes", {}))
+        new_hashes.update(file_hashes)
 
-        for f in body.files:
-            # Remove old data for this file
-            graph.remove_by_file(f.rel_path)
-            old_cids = {cid for cid, c in all_chunks.items() if c.file_path == f.rel_path}
-            vec_index.remove_by_ids(old_cids)
-            for cid in old_cids:
-                del all_chunks[cid]
-
-            # Reconstruct ParseResult
-            pr = _reconstruct_parse_result(f.parse_result, f.rel_path)
-            if pr.error:
-                logger.warning("Skipping %s: parse error %s", f.rel_path, pr.error)
-                continue
-
-            # Derive module prefix from relative path
-            rel = Path(f.rel_path)
-            parts = list(rel.with_suffix("").parts)
-            if parts and parts[-1] == "__init__":
-                parts = parts[:-1]
-            module = ".".join(parts)
-
-            entities, relations = _map_parse_result(pr, module)
-            all_entities.extend(entities)
-            all_relations.extend(relations)
-
-            chunks = _chunk_file(f.source, pr, module)
-            new_chunks.extend(chunks)
-            for c in chunks:
-                all_chunks[c.id] = c
-
-            new_hashes[f.rel_path] = f.hash
-
-        # Add to graph
         entities_added = 0
         relations_added = 0
         for ent in all_entities:
@@ -276,7 +276,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
                 graph.add_relation(rel)
                 relations_added += 1
 
-        # Embed
         embedder = EmbeddingClient(base_url=settings.embedding_url)
         try:
             if all_entities:
@@ -288,7 +287,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         finally:
             await embedder.close()
 
-        # Save
         graph.save(kg_path / GRAPH_FILE)
         vec_index.save(kg_path / VECTORS_FILE)
         _save_chunks(kg_path, all_chunks)
@@ -299,17 +297,13 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             "hashes": new_hashes,
         })
         _save_meta(kg_path, meta)
-        invalidate_kg_cache(kg_path)  # force reload on next query
+        invalidate_kg_cache(kg_path)
 
         stats = {
-            "files_synced": len(body.files),
-            "files_deleted": len(body.deleted_files),
-            "entities_added": entities_added,
-            "relations_added": relations_added,
-            "chunks_added": len(new_chunks),
-            "total_entities": graph.entity_count,
-            "total_relations": graph.relation_count,
-            "total_chunks": len(all_chunks),
+            "files_synced": len(body.files), "files_deleted": len(body.deleted_files),
+            "entities_added": entities_added, "relations_added": relations_added,
+            "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
+            "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
             "total_files": len(new_hashes),
         }
         await db.execute(

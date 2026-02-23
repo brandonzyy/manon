@@ -88,72 +88,67 @@ def _sync_to_server(repo_id: str, file_results: list, deleted_files: list,
     return last_result
 
 
+def _run_sync_loop(repo_id, project_path, current_hashes, max_files, full_reindex,
+                   _scan, _find_project, _set_project):
+    """Inner sync loop: scan → upload → update hashes. Returns (total_synced, total_deleted)."""
+    total_synced = 0
+    total_deleted = 0
+    while True:
+        file_results, deleted, new_hashes = _scan(
+            project_path, current_hashes,
+            max_files=0 if full_reindex else INLINE_SCAN_LIMIT,
+        )
+        if not file_results and not deleted:
+            break
+        n = len(file_results)
+        _write_sync_progress(
+            repo_id, "syncing",
+            f"上传 {n} 文件... (累计 {total_synced + n})",
+        )
+        _sync_to_server(repo_id, file_results, deleted, full_reindex=full_reindex)
+        full_reindex = False
+        if max_files == 0:
+            current_hashes.clear()
+            current_hashes.update(new_hashes)
+        else:
+            for f in file_results:
+                rp = f["rel_path"]
+                if rp in new_hashes:
+                    current_hashes[rp] = new_hashes[rp]
+            for d in deleted:
+                current_hashes.pop(d, None)
+        total_synced += len(file_results)
+        total_deleted += len(deleted)
+        found = _find_project(repo_id)
+        if found:
+            lp, info = found
+            info["file_hashes"] = current_hashes
+            info["last_sync"] = datetime.datetime.now().isoformat()
+            _set_project(lp, info)
+        log.info("BG sync batch: +%d synced, +%d deleted, total=%d",
+                 len(file_results), len(deleted), len(current_hashes))
+    return total_synced, total_deleted
+
+
 def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
                     max_files: int, full_reindex: bool):
     """Background thread: scan files, upload AST, loop until complete."""
     try:
-        # Reload shared.ast_sync to pick up code changes (e.g. _enrich_annotations)
-        # without requiring a full MCP process restart.
         import importlib
         import shared.ast_sync as _ast_mod
         importlib.reload(_ast_mod)
-        _scan = _ast_mod.scan_and_parse
-        _find_project = _ast_mod.find_project_by_repo_id
-        _set_project = _ast_mod.set_project
-
         _write_sync_progress(repo_id, "syncing", "扫描文件中...")
-        total_synced = 0
-        total_deleted = 0
         current_hashes = dict(old_hashes)
-
-        while True:
-            file_results, deleted, new_hashes = _scan(
-                project_path, current_hashes,
-                max_files=0 if full_reindex else INLINE_SCAN_LIMIT,
-            )
-
-            if not file_results and not deleted:
-                break
-
-            n = len(file_results)
-            _write_sync_progress(
-                repo_id, "syncing",
-                f"上传 {n} 文件... (累计 {total_synced + n})",
-            )
-            _sync_to_server(repo_id, file_results, deleted,
-                            full_reindex=full_reindex)
-            full_reindex = False
-
-            if max_files == 0:
-                current_hashes = new_hashes
-            else:
-                for f in file_results:
-                    rp = f["rel_path"]
-                    if rp in new_hashes:
-                        current_hashes[rp] = new_hashes[rp]
-                for d in deleted:
-                    current_hashes.pop(d, None)
-
-            total_synced += len(file_results)
-            total_deleted += len(deleted)
-
-            found = _find_project(repo_id)
-            if found:
-                lp, info = found
-                info["file_hashes"] = current_hashes
-                info["last_sync"] = datetime.datetime.now().isoformat()
-                _set_project(lp, info)
-
-            log.info("BG sync batch: +%d synced, +%d deleted, total=%d",
-                     len(file_results), len(deleted), len(current_hashes))
-
+        total_synced, total_deleted = _run_sync_loop(
+            repo_id, project_path, current_hashes, max_files, full_reindex,
+            _ast_mod.scan_and_parse, _ast_mod.find_project_by_repo_id, _ast_mod.set_project,
+        )
         _write_sync_progress(
             repo_id, "done",
             f"完成: {total_synced} 文件同步, {total_deleted} 文件删除",
         )
         log.info("BG sync done for %s: %d synced, %d deleted",
                  repo_id, total_synced, total_deleted)
-
     except Exception as e:
         log.error("BG sync error for %s: %s", repo_id, e)
         _write_sync_progress(repo_id, "error", str(e))
