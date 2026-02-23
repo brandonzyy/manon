@@ -8,11 +8,13 @@ Keeps sync HTTP helpers for MCP tool compatibility.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import httpx
@@ -42,6 +44,141 @@ log.setLevel(logging.DEBUG)
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 45
 INLINE_SCAN_LIMIT = 50  # must be ≤ SYNC_BATCH_SIZE to fit in one HTTP call
+
+# ── Background sync state ────────────────────────────
+_bg_sync_lock = threading.Lock()
+_bg_sync_threads: dict[str, threading.Thread] = {}  # repo_id -> thread
+_SYNC_PROGRESS_FILE = Path.home() / ".manon" / "sync_progress.json"
+
+
+def _write_sync_progress(repo_id: str, status: str, message: str):
+    """Write sync progress to JSON file (thread-safe via lock)."""
+    try:
+        _SYNC_PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _bg_sync_lock:
+            data = {}
+            if _SYNC_PROGRESS_FILE.exists():
+                try:
+                    data = json.loads(_SYNC_PROGRESS_FILE.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            data[repo_id] = {
+                "status": status,
+                "message": message,
+                "updated_at": datetime.datetime.now().isoformat(),
+            }
+            _SYNC_PROGRESS_FILE.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+    except Exception as e:
+        log.warning("Failed to write sync progress: %s", e)
+
+
+def _read_sync_progress(repo_id: str) -> dict | None:
+    """Read sync progress for a repo. Returns dict with status/message or None."""
+    try:
+        if _SYNC_PROGRESS_FILE.exists():
+            data = json.loads(_SYNC_PROGRESS_FILE.read_text(encoding="utf-8"))
+            return data.get(repo_id)
+    except Exception:
+        pass
+    return None
+
+
+def _is_syncing(repo_id: str) -> bool:
+    """Check if a background sync thread is running for this repo."""
+    with _bg_sync_lock:
+        t = _bg_sync_threads.get(repo_id)
+        return t is not None and t.is_alive()
+
+
+def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
+                    max_files: int, full_reindex: bool):
+    """Background thread: scan files, upload AST, loop until complete."""
+    try:
+        _write_sync_progress(repo_id, "syncing", "扫描文件中...")
+        total_synced = 0
+        total_deleted = 0
+        current_hashes = dict(old_hashes)
+
+        while True:
+            file_results, deleted, new_hashes = scan_and_parse(
+                project_path, current_hashes,
+                max_files=0 if full_reindex else INLINE_SCAN_LIMIT,
+            )
+
+            if not file_results and not deleted:
+                break
+
+            n = len(file_results)
+            _write_sync_progress(
+                repo_id, "syncing",
+                f"上传 {n} 文件... (累计 {total_synced + n})",
+            )
+            _sync_to_server(repo_id, file_results, deleted,
+                            full_reindex=full_reindex)
+            # full_reindex only applies to the first batch
+            full_reindex = False
+
+            # Update hashes incrementally
+            if max_files == 0:
+                # Full reindex: replace all hashes
+                current_hashes = new_hashes
+            else:
+                for f in file_results:
+                    rp = f["rel_path"]
+                    if rp in new_hashes:
+                        current_hashes[rp] = new_hashes[rp]
+                for d in deleted:
+                    current_hashes.pop(d, None)
+
+            total_synced += len(file_results)
+            total_deleted += len(deleted)
+
+            # Persist progress after each batch
+            found = find_project_by_repo_id(repo_id)
+            if found:
+                lp, info = found
+                info["file_hashes"] = current_hashes
+                info["last_sync"] = datetime.datetime.now().isoformat()
+                set_project(lp, info)
+
+            log.info("BG sync batch: +%d synced, +%d deleted, total=%d",
+                     len(file_results), len(deleted), len(current_hashes))
+
+        _write_sync_progress(
+            repo_id, "done",
+            f"完成: {total_synced} 文件同步, {total_deleted} 文件删除",
+        )
+        log.info("BG sync done for %s: %d synced, %d deleted",
+                 repo_id, total_synced, total_deleted)
+
+    except Exception as e:
+        log.error("BG sync error for %s: %s", repo_id, e)
+        _write_sync_progress(repo_id, "error", str(e))
+    finally:
+        with _bg_sync_lock:
+            _bg_sync_threads.pop(repo_id, None)
+
+
+def _start_bg_sync(repo_id: str, project_path: str, old_hashes: dict,
+                   max_files: int = INLINE_SCAN_LIMIT,
+                   full_reindex: bool = False) -> str:
+    """Start background sync if not already running. Returns status message."""
+    if _is_syncing(repo_id):
+        prog = _read_sync_progress(repo_id)
+        msg = prog["message"] if prog else "进行中"
+        return f"后台同步进行中: {msg}"
+
+    t = threading.Thread(
+        target=_bg_sync_worker,
+        args=(repo_id, project_path, old_hashes, max_files, full_reindex),
+        daemon=True,
+    )
+    with _bg_sync_lock:
+        _bg_sync_threads[repo_id] = t
+    t.start()
+    return "后台同步已启动，用 manon_index_status 查看进度。"
 
 def _get_client_version() -> str:
     """Read version from VERSION file, or fall back to git commit count."""
@@ -699,47 +836,17 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
         repo_id: 仓库 ID
         incremental: 增量索引（默认 True），设为 False 全量重建
     """
-    # For local repos, do a local scan + sync (with limit to avoid timeout)
+    # For local repos, do a local scan + sync in background
     found = find_project_by_repo_id(repo_id)
     if found:
         local_path, info = found
         old_hashes = {} if not incremental else info.get("file_hashes", {})
-        # Full reindex: no file limit (must upload all files before server clears old data)
         limit = 0 if not incremental else INLINE_SCAN_LIMIT
-        file_results, deleted, new_hashes = scan_and_parse(
-            local_path, old_hashes, max_files=limit,
+        bg_msg = _start_bg_sync(
+            repo_id, local_path, old_hashes,
+            max_files=limit, full_reindex=not incremental,
         )
-        if file_results or deleted:
-            _sync_to_server(repo_id, file_results, deleted, full_reindex=not incremental)
-        # Only record hashes for actually synced files; keep old hashes for
-        # unsynced files so the next call picks them up as changed.
-        # Exception: full reindex (non-incremental) writes all hashes since
-        # there's no file limit in that mode.
-        if not incremental:
-            info["file_hashes"] = new_hashes
-        else:
-            synced_set = {f["rel_path"] for f in file_results}
-            partial_hashes = dict(old_hashes)
-            for f in file_results:
-                rp = f["rel_path"]
-                if rp in new_hashes:
-                    partial_hashes[rp] = new_hashes[rp]
-            for d in deleted:
-                partial_hashes.pop(d, None)
-            info["file_hashes"] = partial_hashes
-        info["last_sync"] = __import__("datetime").datetime.now().isoformat()
-        set_project(local_path, info)
-
-        # Check if there are remaining unsynced files
-        synced_set = {f["rel_path"] for f in file_results}
-        unsynced = [k for k, v in new_hashes.items()
-                    if info["file_hashes"].get(k) != v and k not in synced_set]
-        msg = f"本地扫描完成: {len(file_results)} 文件已同步, {len(deleted)} 文件删除。"
-        if unsynced:
-            msg += f"\n还有 {len(unsynced)} 文件未同步（超出单次限制），请再次调用 manon_index {repo_id} 继续。"
-        else:
-            msg += "\n所有文件已同步。用 manon_index_status 查看索引进度。"
-        return msg
+        return f"本地索引已提交后台执行。{bg_msg}"
 
     result = _post(f"/api/v1/repos/{repo_id}/index", {"incremental": incremental})
     return f"索引已触发: {result['status']}。用 manon_index_status 查看进度。"
@@ -762,6 +869,24 @@ def manon_index_status(repo_id: str) -> str:
         msg += f"\n实体: {stats.get('total_entities', stats.get('entities_added', 0))}"
         msg += f", 关系: {stats.get('total_relations', stats.get('relations_added', 0))}"
         msg += f", 块: {stats.get('total_chunks', stats.get('chunks_added', 0))}"
+
+    # Show local background sync progress
+    prog = _read_sync_progress(repo_id)
+    if prog:
+        ps = prog.get("status", "")
+        pm = prog.get("message", "")
+        ts = prog.get("updated_at", "")
+        if ps == "syncing":
+            msg += f"\n\n🔄 本地同步: {pm}"
+            if _is_syncing(repo_id):
+                msg += " (进行中)"
+        elif ps == "done":
+            msg += f"\n\n✅ 本地同步: {pm}"
+        elif ps == "error":
+            msg += f"\n\n❌ 本地同步失败: {pm}"
+        if ts:
+            msg += f"\n   更新于 {ts}"
+
     return msg
 
 
@@ -854,34 +979,8 @@ def manon_push_update(repo_id: str) -> str:
     if found:
         local_path, info = found
         old_hashes = info.get("file_hashes", {})
-        file_results, deleted, new_hashes = scan_and_parse(
-            local_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
-        )
-        if not file_results and not deleted:
-            return "没有检测到文件变更。"
-        _sync_to_server(repo_id, file_results, deleted)
-        # Only record hashes for actually synced files; keep old hashes for
-        # unsynced files so the next call picks them up as changed.
-        synced_set = {f["rel_path"] for f in file_results}
-        partial_hashes = dict(old_hashes)
-        for f in file_results:
-            rp = f["rel_path"]
-            if rp in new_hashes:
-                partial_hashes[rp] = new_hashes[rp]
-        for d in deleted:
-            partial_hashes.pop(d, None)
-        info["file_hashes"] = partial_hashes
-        info["last_sync"] = __import__("datetime").datetime.now().isoformat()
-        set_project(local_path, info)
-
-        unsynced = [k for k, v in new_hashes.items()
-                    if partial_hashes.get(k) != v and k not in synced_set]
-        msg = f"增量同步: {len(file_results)} 文件已同步, {len(deleted)} 文件删除。"
-        if unsynced:
-            msg += f"\n还有 {len(unsynced)} 文件未同步，请再次调用 manon_push_update {repo_id} 继续。"
-        else:
-            msg += "\n用 manon_index_status 查看索引进度。"
-        return msg
+        bg_msg = _start_bg_sync(repo_id, local_path, old_hashes)
+        return f"增量同步已提交后台执行。{bg_msg}"
 
     # Not a registered local project — check if it's a local-type repo on server
     try:
@@ -899,81 +998,6 @@ def manon_push_update(repo_id: str) -> str:
     return f"更新已触发: {result['status']}。用 manon_index_status 查看进度。"
 
 
-# ── Graph completeness check ─────────────────────────
-
-def _ensure_graph_complete(project_path: str, repo_id: str, proj_info: dict) -> list[str]:
-    """Check if knowledge graph is complete; sync missing files if needed.
-
-    Compares local scannable file count against cached file_hashes.
-    If files are missing, loops scan_and_parse in batches until caught up.
-
-    Returns list of status lines to append to manon_init output.
-    """
-    import datetime
-
-    try:
-        local_count = count_scannable_files(project_path)
-    except Exception as e:
-        log.warning("count_scannable_files failed: %s", e)
-        return [f"  ⚠️ 文件扫描失败: {e}"]
-
-    synced_count = len(proj_info.get("file_hashes", {}))
-
-    if local_count <= synced_count:
-        return ["  ✅ 图谱完整"]
-
-    # Files are missing — loop sync
-    lines: list[str] = []
-    lines.append(f"  🔄 图谱不完整（本地 {local_count} / 已同步 {synced_count}），自动补齐中...")
-    total_synced = 0
-    total_deleted = 0
-
-    while True:
-        old_hashes = proj_info.get("file_hashes", {})
-        try:
-            file_results, deleted, new_hashes = scan_and_parse(
-                project_path, old_hashes, max_files=INLINE_SCAN_LIMIT,
-            )
-        except Exception as e:
-            log.warning("scan_and_parse failed during completeness check: %s", e)
-            lines.append(f"  ⚠️ 扫描失败: {e}")
-            break
-
-        if not file_results and not deleted:
-            break
-
-        try:
-            _sync_to_server(repo_id, file_results, deleted)
-        except Exception as e:
-            log.warning("sync failed during completeness check: %s", e)
-            lines.append(f"  ⚠️ 同步失败: {e}")
-            break
-
-        # Incremental hash update (same partial logic as manon_index)
-        partial_hashes = dict(old_hashes)
-        for f in file_results:
-            rp = f["rel_path"]
-            if rp in new_hashes:
-                partial_hashes[rp] = new_hashes[rp]
-        for d in deleted:
-            partial_hashes.pop(d, None)
-        proj_info["file_hashes"] = partial_hashes
-        proj_info["last_sync"] = datetime.datetime.now().isoformat()
-        set_project(project_path, proj_info)
-
-        total_synced += len(file_results)
-        total_deleted += len(deleted)
-        synced_count = len(partial_hashes)
-        log.info("Completeness sync batch: +%d synced, +%d deleted, total tracked=%d",
-                 len(file_results), len(deleted), synced_count)
-
-    if total_synced or total_deleted:
-        lines.append(f"  ✅ 补齐完成: +{total_synced} 文件同步, {total_deleted} 文件删除 (共 {synced_count} 文件)")
-    else:
-        # No new files but counts didn't match — hashes were stale
-        lines[-1] = "  ✅ 图谱完整"
-
-    return lines
 
 
 # ── Init / Config / Deep Query ────────────────────────
@@ -1028,8 +1052,10 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
             lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
             log.warning("Failed to fetch repo %s status: %s", rid, e)
-        # Check graph completeness and auto-sync missing files
-        lines.extend(_ensure_graph_complete(project_path, rid, proj))
+        # Start background sync instead of blocking
+        bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
+                                old_hashes=proj.get("file_hashes", {}))
+        lines.append(f"  🔄 {bg_msg}")
         return "\n".join(lines)
 
     # 3. Check server repos by name match
@@ -1067,7 +1093,9 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             }
             set_project(project_path, info)
             lines.append("  ✅ 已注册到本地项目表")
-            lines.extend(_ensure_graph_complete(project_path, rid, info))
+            bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
+                                    old_hashes=info.get("file_hashes", {}))
+            lines.append(f"  🔄 {bg_msg}")
     else:
         # 4. Create new local repo — fast path, no inline scanning
         try:
@@ -1101,7 +1129,9 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             except Exception:
                 pass
 
-            lines.extend(_ensure_graph_complete(project_path, rid, info))
+            bg_msg = _start_bg_sync(project_path=project_path, repo_id=rid,
+                                    old_hashes=info.get("file_hashes", {}))
+            lines.append(f"  🔄 {bg_msg}")
         except Exception as e:
             lines.append(f"\n  ❌ 创建仓库失败: {e}")
 
