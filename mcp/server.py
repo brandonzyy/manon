@@ -22,6 +22,7 @@ from shared.ast_sync import (
     load_projects, save_projects, get_project, set_project,
     find_project_by_repo_id, scan_and_parse, count_scannable_files,
     ensure_parsers, detect_languages,
+    preview_project_structure, set_custom_excludes,
     SYNC_BATCH_SIZE,
 )
 
@@ -58,7 +59,7 @@ def _get_client_version() -> str:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD"],
             cwd=str(install_dir),
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
         if result.returncode == 0:
             count = result.stdout.strip()
@@ -198,7 +199,7 @@ def _check_version() -> str:
                 install_dir = Path(__file__).resolve().parent.parent
                 result = subprocess.run(
                     ["git", "log", "-1", "--format=%cI"],
-                    cwd=str(install_dir), capture_output=True, text=True, timeout=3,
+                    cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", timeout=3,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     local_time = datetime.datetime.fromisoformat(result.stdout.strip())
@@ -704,7 +705,7 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
         local_path, info = found
         old_hashes = {} if not incremental else info.get("file_hashes", {})
         # Full reindex: no file limit (must upload all files before server clears old data)
-        limit = None if not incremental else INLINE_SCAN_LIMIT
+        limit = 0 if not incremental else INLINE_SCAN_LIMIT
         file_results, deleted, new_hashes = scan_and_parse(
             local_path, old_hashes, max_files=limit,
         )
@@ -1092,6 +1093,14 @@ def manon_init(project_path: str, project_name: str = "") -> str:
             except Exception:
                 pass
 
+            # Directory preview for LLM self-check
+            try:
+                preview = preview_project_structure(project_path)
+                lines.append(f"\n  📂 目录结构预览:\n{preview}")
+                lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
+            except Exception:
+                pass
+
             lines.extend(_ensure_graph_complete(project_path, rid, info))
         except Exception as e:
             lines.append(f"\n  ❌ 创建仓库失败: {e}")
@@ -1102,6 +1111,28 @@ def manon_init(project_path: str, project_name: str = "") -> str:
         lines.append(hook_msg)
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def manon_configure_excludes(project_path: str, exclude_patterns: list[str]) -> str:
+    """为项目设置自定义排除模式。在 manon_init 返回目录预览后，如果发现有非源码目录未被排除，调用此工具添加排除规则。
+
+    排除模式使用 glob 语法，例如:
+    - "**/data/**" 排除所有 data 目录
+    - "**/logs/**" 排除所有 logs 目录
+    - "scripts/_*" 排除 scripts 下以 _ 开头的文件
+
+    Args:
+        project_path: 项目在本机的绝对路径
+        exclude_patterns: glob 排除模式列表
+    """
+    proj = get_project(project_path)
+    if not proj:
+        return "❌ 项目未注册，请先调用 manon_init"
+    set_custom_excludes(project_path, exclude_patterns)
+    # Show updated preview
+    preview = preview_project_structure(project_path)
+    return f"✅ 已设置 {len(exclude_patterns)} 条自定义排除规则\n\n📂 更新后的目录结构:\n{preview}"
 
 
 @mcp.tool()
@@ -1232,7 +1263,7 @@ def _do_update() -> list[str]:
         result = subprocess.run(
             ["git", "pull", "--quiet", "origin", branch],
             cwd=str(install_dir),
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", timeout=15,
         )
         git_out = result.stdout.strip()
         if "Already up to date" in git_out or "Already up-to-date" in git_out or not git_out:
@@ -1319,7 +1350,7 @@ def manon_update() -> str:
         )
         behind = subprocess.run(
             ["git", "rev-list", "--count", f"HEAD..origin/{branch}"],
-            cwd=str(install_dir), capture_output=True, text=True, timeout=3,
+            cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", timeout=3,
         ).stdout.strip()
         if behind and int(behind) > 0:
             import threading
@@ -1398,7 +1429,7 @@ def _install_hook(project_path: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(resolved), capture_output=True, text=True, timeout=5,
+            cwd=str(resolved), capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
             git_root = Path(result.stdout.strip()).resolve()
@@ -1412,18 +1443,34 @@ def _install_hook(project_path: str) -> str | None:
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_file = hooks_dir / "pre-push"
-    # Skip if already installed by manon
-    if hook_file.exists() and "manon" in hook_file.read_text(encoding="utf-8", errors="replace"):
-        return None
     script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
     python_exe = sys.executable or "python3"
-    hook_content = f"""#!/bin/sh
-# Manon push hook — async knowledge graph update + health score
+    manon_line = f'"{python_exe}" "{script_path}" "{resolved}" &'
+    manon_marker = "# Manon push hook"
+
+    if hook_file.exists():
+        existing = hook_file.read_text(encoding="utf-8", errors="replace")
+        # Already installed — skip
+        if manon_marker in existing:
+            return None
+        # Append to existing hook: insert before final 'exit 0' or at end
+        lines = existing.rstrip().split("\n")
+        insert_idx = len(lines)
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].strip() == "exit 0":
+                insert_idx = i
+                break
+        lines.insert(insert_idx, f"\n{manon_marker} — async knowledge graph update + health score")
+        lines.insert(insert_idx + 1, manon_line)
+        hook_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        hook_content = f"""#!/bin/sh
+{manon_marker} — async knowledge graph update + health score
 # Runs in background so push is not blocked; output still prints to terminal
-"{python_exe}" "{script_path}" "{resolved}" &
+{manon_line}
 exit 0
 """
-    hook_file.write_text(hook_content, encoding="utf-8")
+        hook_file.write_text(hook_content, encoding="utf-8")
     try:
         hook_file.chmod(0o755)
     except Exception:
