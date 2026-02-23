@@ -467,16 +467,25 @@ async def query(
     neighbor_entities: list[dict[str, Any]] = []
     seen_rels: set[str] = set()
     for eid, _ in ent_hits:
-        for ent, rels in graph.neighbors(eid, depth, direction=direction):
-            for r in rels:
-                rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
-                if rkey not in seen_rels:
-                    seen_rels.add(rkey)
-                    all_rels.append(r.to_dict())
-            if ent.id not in {e["id"] for e in matched_entities}:
-                d = ent.to_dict()
-                d["score"] = 0.0
-                neighbor_entities.append(d)
+        # Collect entity IDs to traverse: the entity itself + its members (for class/module)
+        traverse_ids = [eid]
+        # If entity has no direct edges, also traverse its member entities
+        if not list(graph._g.edges(eid)) and not list(graph._g.in_edges(eid)):
+            prefix = eid + "."
+            traverse_ids.extend(
+                nid for nid in graph._g.nodes() if nid.startswith(prefix)
+            )
+        for tid in traverse_ids:
+            for ent, rels in graph.neighbors(tid, depth, direction=direction):
+                for r in rels:
+                    rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
+                    if rkey not in seen_rels:
+                        seen_rels.add(rkey)
+                        all_rels.append(r.to_dict())
+                if ent.id not in {e["id"] for e in matched_entities}:
+                    d = ent.to_dict()
+                    d["score"] = 0.0
+                    neighbor_entities.append(d)
 
     matched_chunks: list[dict[str, Any]] = []
     for cid, score in chunk_hits:

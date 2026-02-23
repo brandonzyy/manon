@@ -471,8 +471,14 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
         return f"git 操作失败: {e}"
 
     if not changed_files:
-        diag = f"commit={commit}, git_root={git_root}, project={root}, prefix={prefix_with_slash!r}"
-        return f"没有检测到文件变更。\n诊断: {diag}"
+        diag_parts = [
+            f"commit={commit}",
+            f"git_root={git_root}",
+            f"project={root}",
+            f"prefix={prefix_with_slash!r}",
+            f"raw_files={raw_files[:5]}",
+        ]
+        return f"没有检测到文件变更。\n诊断: {', '.join(diag_parts)}"
 
     parts.append(f"影响分析: {commit_info}")
     parts.append(f"变更文件 ({len(changed_files)}):")
