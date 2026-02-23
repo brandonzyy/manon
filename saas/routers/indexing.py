@@ -178,6 +178,17 @@ def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
 
 async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
     """Background task: process pre-parsed AST data from MCP client."""
+    # Debug: check raw request data
+    n_files = len(body.files)
+    n_with_ann = 0
+    for f in body.files:
+        pr = f.parse_result
+        for s in pr.get("symbols", []):
+            if s.get("annotations"):
+                n_with_ann += 1
+                break
+    print(f"DBG-RAW files={n_files} files_with_annotations={n_with_ann} full_reindex={body.full_reindex}", flush=True)
+
     import sys
     _project_root = str(Path(__file__).resolve().parents[2])
     if _project_root not in sys.path:
