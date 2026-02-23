@@ -98,3 +98,10 @@ class RegisterRequest(BaseModel):
 class DeepQueryRequest(BaseModel):
     question: str
     max_rounds: int = Field(3, ge=1, le=5)
+
+
+# ── Dynamic Merge ────────────────────────────────────
+class MergeDynamicRequest(BaseModel):
+    edges: dict[str, int] = {}  # {"caller->callee": count}
+    raw_edges: list[dict[str, str]] = []  # [{"from": path, "to": path}] — resolved server-side
+    project_root: str = ""  # required when raw_edges is used

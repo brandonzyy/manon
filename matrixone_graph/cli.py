@@ -121,3 +121,29 @@ def clear():
     MatrixoneGraph(Path(".").resolve()).clear()
     console.print("[green]Knowledge graph index cleared.[/green]")
 
+
+@kg.command("merge-dynamic")
+@click.argument("deps_path", default="dynamic-deps.json", type=click.Path(exists=True))
+def merge_dynamic(deps_path: str):
+    """Merge runtime-traced dynamic call edges into the knowledge graph."""
+    from matrixone_graph import MatrixoneGraph
+    from matrixone_graph.merge_dynamic import load_dynamic_deps, merge_dynamic_edges
+    from matrixone_graph.pipeline import GRAPH_FILE, invalidate_kg_cache
+
+    repo = Path(".").resolve()
+    mg = MatrixoneGraph(repo)
+    graph = mg._load_graph()
+
+    edges = load_dynamic_deps(deps_path)
+    if not edges:
+        console.print("[yellow]No dynamic edges found in file.[/yellow]")
+        return
+
+    stats = merge_dynamic_edges(graph, edges, replace=True)
+    graph.save(mg.kg_path / GRAPH_FILE)
+    invalidate_kg_cache(mg.kg_path)
+
+    console.print(f"[green]Done.[/green]  added={stats['added']}  "
+                  f"removed={stats['removed']}  skipped={stats['skipped']}")
+    console.print(f"  Source: {deps_path} ({len(edges)} edges)")
+

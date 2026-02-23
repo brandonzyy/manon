@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..auth import TenantContext, require_tenant
 from ..db import get_db
 from ..metering import record_usage
-from ..models import IndexTrigger, IndexStatus, SyncAstRequest
+from ..models import IndexTrigger, IndexStatus, SyncAstRequest, MergeDynamicRequest
 from ..services.graph import get_graph
 from ..services.git import clone_or_pull
 from ..config import settings
@@ -344,3 +344,61 @@ async def sync_ast(
     await _run_ast_sync(repo_id, ctx.tenant_id, repo_name, body)
     await record_usage(ctx.tenant_id, "indexing.sync_ast", repo_id)
     return {"repo_id": repo_id, "status": "done"}
+
+
+# ---------------------------------------------------------------------------
+# merge-dynamic — merge runtime-traced call edges into the graph
+# ---------------------------------------------------------------------------
+
+@router.post("/merge-dynamic")
+async def merge_dynamic(
+    repo_id: str,
+    body: MergeDynamicRequest,
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Merge dynamic call edges (from runtime tracing) into the knowledge graph.
+
+    Accepts two formats:
+    - edges: {"caller->callee": count} — pre-resolved entity IDs
+    - raw_edges: [{"from": path, "to": path}] + project_root — file paths resolved server-side
+    """
+    import sys
+    _project_root = str(Path(__file__).resolve().parents[2])
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+
+    from matrixone_graph.pipeline import GRAPH_FILE, invalidate_kg_cache
+    from matrixone_graph.store import CodeGraph
+    from matrixone_graph.merge_dynamic import merge_dynamic_edges
+
+    row = await _get_repo_row(repo_id, ctx.tenant_id)
+    repo_name = row["name"]
+    kg_path = Path(settings.index_dir) / ctx.tenant_id / repo_name / "kg"
+
+    graph = CodeGraph()
+    graph.load(kg_path / GRAPH_FILE)
+
+    edges = dict(body.edges)
+
+    # Resolve raw file-path edges if provided
+    resolved_count = 0
+    if body.raw_edges:
+        if not body.project_root:
+            raise HTTPException(400, "project_root is required when raw_edges is provided")
+        from matrixone_graph.resolve_runtime import resolve_js_edges
+        resolved = resolve_js_edges(body.raw_edges, body.project_root, graph=graph)
+        resolved_count = len(resolved)
+        # Merge resolved edges into the main edges dict
+        for k, v in resolved.items():
+            edges[k] = edges.get(k, 0) + v
+
+    if not edges:
+        return {"repo_id": repo_id, "status": "done", "removed": 0, "added": 0, "skipped": 0, "resolved": 0}
+
+    stats = merge_dynamic_edges(graph, edges, replace=True)
+
+    graph.save(kg_path / GRAPH_FILE)
+    invalidate_kg_cache(kg_path)
+
+    await record_usage(ctx.tenant_id, "indexing.merge_dynamic", repo_id)
+    return {"repo_id": repo_id, "status": "done", "resolved_from_raw": resolved_count, **stats}

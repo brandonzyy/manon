@@ -81,7 +81,7 @@ def _do_update() -> list[str]:
         result = subprocess.run(
             ["git", "pull", "--quiet", "origin", branch],
             cwd=str(install_dir),
-            capture_output=True, text=True, encoding="utf-8", timeout=15,
+            capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=15,
         )
         git_out = result.stdout.strip()
         if "Already up to date" in git_out or "Already up-to-date" in git_out or not git_out:
@@ -103,7 +103,7 @@ def _do_update() -> list[str]:
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
-            capture_output=True, timeout=30,
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=30,
         )
         lines.append("依赖已更新。")
         ok = True
@@ -124,7 +124,7 @@ def _detect_git_root(root: Path) -> tuple[Path, str]:
     try:
         git_root_result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(root), capture_output=True, text=True, encoding="utf-8", timeout=5,
+            cwd=str(root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=5,
         )
         git_root = Path(git_root_result.stdout.strip()).resolve() if git_root_result.returncode == 0 else root
     except Exception:
@@ -148,7 +148,7 @@ def _get_changed_files(
                 log_cmd = ["git", "log", "-1", "--format=%H", "--", prefix_with_slash]
             else:
                 log_cmd = ["git", "log", "-1", "--format=%H"]
-            log_result = subprocess.run(log_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+            log_result = subprocess.run(log_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10)
             last_project_commit = log_result.stdout.strip() if log_result.returncode == 0 else ""
             if last_project_commit:
                 base_commit = last_project_commit
@@ -162,16 +162,16 @@ def _get_changed_files(
             diff_cmd = ["git", "diff", f"{commit}~1", commit, "--name-only"]
             commit_msg_cmd = ["git", "log", "-1", "--format=%h %s", commit]
 
-        msg_result = subprocess.run(commit_msg_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        msg_result = subprocess.run(commit_msg_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10)
         commit_info = msg_result.stdout.strip() if msg_result.returncode == 0 else commit
-        diff_result = subprocess.run(diff_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10)
+        diff_result = subprocess.run(diff_cmd, cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10)
         if diff_result.returncode != 0:
             return f"git diff 失败: {diff_result.stderr.strip()}"
 
         raw_files = [f for f in diff_result.stdout.strip().split("\n") if f]
         wt_result = subprocess.run(
             ["git", "diff", "HEAD", "--name-only"],
-            cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+            cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
         )
         if wt_result.returncode == 0:
             wt_files = [f for f in wt_result.stdout.strip().split("\n") if f]
@@ -208,7 +208,7 @@ def _find_changed_symbols(
                 udiff_ref = f"{commit}~1..{commit}"
             udiff = subprocess.run(
                 ["git", "diff", udiff_ref, "--unified=0", "--", git_file_path],
-                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
             )
             changed_lines: set[int] = set()
             for line in udiff.stdout.split("\n"):
@@ -221,7 +221,7 @@ def _find_changed_symbols(
                         changed_lines.add(add_start)
             wt_udiff = subprocess.run(
                 ["git", "diff", "HEAD", "--unified=0", "--", git_file_path],
-                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", timeout=10,
+                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
             )
             for line in wt_udiff.stdout.split("\n"):
                 m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
@@ -367,6 +367,7 @@ def _fmt_stats(s: dict) -> str:
 
 def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
     """Handle init for an already-registered local project. Returns (rid, lines, graph_lines)."""
+    import time as _time
     rid = proj["repo_id"]
     log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
     lines = [f"  {proj['name']}  ({rid[:8]})"]
@@ -374,7 +375,9 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     sync = proj.get('last_sync', '') or '—'
     tracked = len(proj.get('file_hashes', {}))
     try:
+        t0 = _time.time()
         repo = _client._get(f"/api/v1/repos/{rid}")
+        log.info("Fetch repo status took %.1fs", _time.time() - t0)
         status = repo['index_status']
         status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
         graph_lines.append(f"  {status_icon} 索引 {status}  ·  🕐 同步 {sync}")
@@ -462,9 +465,12 @@ def _init_match_or_create(
 
 def _build_health_lines(rid: str) -> list[str]:
     """Build code health section lines."""
+    import time as _time
     lines = ["\n💊 代码健康"]
     try:
+        t0 = _time.time()
         health_result = _client._get(f"/api/v1/repos/{rid}/code-health", timeout=10)
+        log.info("Fetch code-health took %.1fs", _time.time() - t0)
         score = health_result.get("score", 0)
         grade = health_result.get("grade", "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D")
         if not health_result.get("reliable", True):
@@ -479,12 +485,32 @@ def _build_health_lines(rid: str) -> list[str]:
 
 
 def _build_hooks_lines(project_path: str) -> list[str]:
-    """Build hooks section lines."""
+    """Build hooks section lines with timeout protection."""
+    import concurrent.futures
+    import time as _time
     lines = ["\n🔗 钩子"]
-    hook_msg = _hooks._install_hook(project_path)
-    lines.append(f"  {hook_msg}" if hook_msg else "  ✅ Push hook 已就绪")
-    claude_hook_msg = _hooks._install_claude_hooks()
-    lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
+
+    def _do_hooks():
+        t0 = _time.time()
+        hook_msg = _hooks._install_hook(project_path)
+        log.info("Install git hook took %.1fs", _time.time() - t0)
+        t1 = _time.time()
+        claude_hook_msg = _hooks._install_claude_hooks()
+        log.info("Install claude hooks took %.1fs", _time.time() - t1)
+        return hook_msg, claude_hook_msg
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_hooks)
+            hook_msg, claude_hook_msg = future.result(timeout=10)
+        lines.append(f"  {hook_msg}" if hook_msg else "  ✅ Push hook 已就绪")
+        lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
+    except concurrent.futures.TimeoutError:
+        log.warning("Hooks installation timed out (10s), skipping")
+        lines.append("  ⚠️ 钩子安装超时，已跳过（下次 init 会重试）")
+    except Exception as e:
+        log.warning("Hooks installation failed: %s", e)
+        lines.append(f"  ⚠️ 钩子安装失败: {e}")
     return lines
 
 
@@ -882,11 +908,11 @@ def register(mcp):
             branch = _config._git_branch()
             subprocess.run(
                 ["git", "fetch", "--quiet", "origin", branch],
-                cwd=str(install_dir), capture_output=True, timeout=5,
+                cwd=str(install_dir), capture_output=True, stdin=subprocess.DEVNULL, timeout=5,
             )
             behind = subprocess.run(
                 ["git", "rev-list", "--count", f"HEAD..origin/{branch}"],
-                cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", timeout=3,
+                cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=3,
             ).stdout.strip()
             if behind and int(behind) > 0:
                 threading.Thread(target=_do_update, daemon=True).start()
@@ -950,3 +976,69 @@ def register(mcp):
         if result:
             return f"{result}\ngit push 后将自动更新知识图谱并输出代码健康评分。"
         return "pre-push hook 已存在，API 配置已更新。"
+
+    @mcp.tool()
+    def manon_merge_dynamic(repo_id: str, deps_path: str = "dynamic-deps.json") -> str:
+        """合并运行时追踪的动态调用边到知识图谱。
+
+        支持两种格式（自动检测）：
+        - Python 格式: {"caller->callee": count} — 由 pytest --trace-calls 生成
+        - JS/TS 格式: [{"from": path, "to": path}] — 由 Module._load hook 生成
+
+        动态边使用 file_path="__dynamic__" 标记，不会与静态 AST 边冲突。
+
+        Args:
+            repo_id: 仓库 ID
+            deps_path: 动态依赖文件路径（默认 dynamic-deps.json，也支持 .manon-runtime-deps.json）
+        """
+        # Try multiple default paths
+        p = Path(deps_path)
+        if not p.exists() and deps_path == "dynamic-deps.json":
+            alt = Path(".manon-runtime-deps.json")
+            if alt.exists():
+                p = alt
+        if not p.exists():
+            return f"文件不存在: {p.resolve()}\n请先运行 pytest --trace-calls 或 vitest 生成依赖文件"
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return f"读取 {p.name} 失败: {e}"
+        if not data:
+            return f"{p.name} 为空，没有动态边可合并。"
+
+        # Auto-detect format: list = raw file-path edges, dict = pre-resolved
+        body: dict = {}
+        if isinstance(data, list):
+            # JS/TS raw format: [{"from": ..., "to": ...}]
+            found = find_project_by_repo_id(repo_id)
+            project_root = found[0] if found else str(Path.cwd())
+            body = {"raw_edges": data, "project_root": project_root}
+            fmt = "JS/TS 文件路径"
+            count = len(data)
+        elif isinstance(data, dict):
+            body = {"edges": data}
+            fmt = "Python 实体 ID"
+            count = len(data)
+        else:
+            return f"不支持的格式: {type(data).__name__}，期望 dict 或 list"
+
+        try:
+            result = _client._post(
+                f"/api/v1/repos/{repo_id}/merge-dynamic",
+                body,
+                timeout=30,
+            )
+            added = result.get("added", 0)
+            removed = result.get("removed", 0)
+            skipped = result.get("skipped", 0)
+            resolved = result.get("resolved_from_raw", 0)
+            lines = [
+                "动态边合并完成。",
+                f"  格式: {fmt}  来源: {p.name} ({count} 条)",
+                f"  添加: {added}  移除旧边: {removed}  跳过: {skipped}",
+            ]
+            if resolved:
+                lines.append(f"  路径解析: {resolved} 条边从文件路径转换为实体 ID")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"合并失败: {e}"
