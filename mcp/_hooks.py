@@ -70,7 +70,11 @@ def _persist_api_config() -> None:
 
 
 def _install_claude_hooks() -> str | None:
-    """Install Claude Code PreToolUse hooks into ~/.claude/. Returns status or None."""
+    """Install Claude Code PreToolUse hooks into ~/.claude/. Returns status or None.
+
+    Idempotent: skips settings.json write if hooks already match,
+    avoiding Claude Code config-reload which can disrupt MCP connections.
+    """
     claude_dir = Path.home() / ".claude"
     hooks_dir = claude_dir / "hooks"
     settings_file = claude_dir / "settings.json"
@@ -82,8 +86,21 @@ def _install_claude_hooks() -> str | None:
         search_path = str(search_hook).replace("\\", "/")
         edit_path = str(edit_hook).replace("\\", "/")
 
+        # Write hook scripts (these don't trigger Claude Code reload)
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
+
+        # Build desired hooks entries
+        desired_entries = [
+            {
+                "matcher": "Grep|Glob",
+                "hooks": [{"type": "command", "command": f"python {search_path}"}],
+            },
+            {
+                "matcher": "Edit|Write",
+                "hooks": [{"type": "command", "command": f"python {edit_path}"}],
+            },
+        ]
 
         settings: dict = {}
         if settings_file.exists():
@@ -95,16 +112,17 @@ def _install_claude_hooks() -> str | None:
         hooks_cfg = settings.setdefault("hooks", {})
         pre_tool = hooks_cfg.setdefault("PreToolUse", [])
 
+        # Check if hooks already match — skip write to avoid triggering
+        # Claude Code config reload which disrupts the MCP connection.
+        existing_manon = [h for h in pre_tool
+                          if "pre_search.py" in str(h) or "pre_edit.py" in str(h)]
+        if existing_manon == desired_entries:
+            log.info("Claude Code hooks already up-to-date, skipping write")
+            return None
+
         pre_tool[:] = [h for h in pre_tool
                        if "pre_search.py" not in str(h) and "pre_edit.py" not in str(h)]
-        pre_tool.append({
-            "matcher": "Grep|Glob",
-            "hooks": [{"type": "command", "command": f"python {search_path}"}],
-        })
-        pre_tool.append({
-            "matcher": "Edit|Write",
-            "hooks": [{"type": "command", "command": f"python {edit_path}"}],
-        })
+        pre_tool.extend(desired_entries)
 
         settings_file.write_text(
             json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
@@ -119,18 +137,28 @@ def _install_claude_hooks() -> str | None:
 
 def _install_hook(project_path: str) -> str | None:
     """Install pre-push hook if .git exists. Returns status message or None."""
+    import time as _time
+    t0 = _time.time()
+
     resolved = Path(project_path).resolve()
+    log.debug("_install_hook: resolve path took %.2fs", _time.time() - t0)
+
+    t1 = _time.time()
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(resolved), capture_output=True, text=True, encoding="utf-8", timeout=5,
+            cwd=str(resolved), capture_output=True, text=True, encoding="utf-8",
+            stdin=subprocess.DEVNULL, timeout=5,
         )
+        log.debug("_install_hook: git rev-parse took %.2fs", _time.time() - t1)
         if result.returncode == 0 and result.stdout.strip():
             git_root = Path(result.stdout.strip()).resolve()
         else:
             return None
-    except Exception:
+    except Exception as e:
+        log.debug("_install_hook: git rev-parse failed after %.2fs: %s", _time.time() - t1, e)
         return None
+
     git_dir = git_root / ".git"
     if not git_dir.is_dir():
         return None
@@ -142,9 +170,11 @@ def _install_hook(project_path: str) -> str | None:
     manon_line = f'"{python_exe}" "{script_path}" "{resolved}"'
     manon_marker = "# Manon push hook"
 
+    t2 = _time.time()
     if hook_file.exists():
         existing = hook_file.read_text(encoding="utf-8", errors="replace")
         if manon_marker in existing:
+            log.debug("_install_hook: hook already exists, total %.2fs", _time.time() - t0)
             return None
         lines = existing.rstrip().split("\n")
         insert_idx = len(lines)
@@ -162,9 +192,18 @@ def _install_hook(project_path: str) -> str | None:
 exit 0
 """
         hook_file.write_text(hook_content, encoding="utf-8")
+    log.debug("_install_hook: write hook took %.2fs", _time.time() - t2)
+
+    t3 = _time.time()
     try:
         hook_file.chmod(0o755)
     except Exception:
         pass
+    log.debug("_install_hook: chmod took %.2fs", _time.time() - t3)
+
+    t4 = _time.time()
     _persist_api_config()
+    log.debug("_install_hook: persist config took %.2fs", _time.time() - t4)
+
+    log.info("_install_hook: total %.2fs", _time.time() - t0)
     return "🔗 Push hook 已安装"

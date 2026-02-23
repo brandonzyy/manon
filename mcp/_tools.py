@@ -171,16 +171,8 @@ def _get_changed_files(
             return f"git diff 失败: {diff_result.stderr.strip()}"
 
         raw_files = [f for f in diff_result.stdout.strip().split("\n") if f]
-        # Only merge working tree changes when analyzing HEAD (current state),
-        # not when analyzing a specific historical commit.
-        if commit == "HEAD":
-            wt_result = subprocess.run(
-                ["git", "diff", "HEAD", "--name-only"],
-                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
-            )
-            if wt_result.returncode == 0:
-                wt_files = [f for f in wt_result.stdout.strip().split("\n") if f]
-                raw_files = list(dict.fromkeys(raw_files + wt_files))
+        # Strict commit isolation: only include files from the specified commit.
+        # Working tree changes are NOT merged — they belong to a different scope.
 
         changed_files = []
         for f in raw_files:
@@ -196,9 +188,12 @@ def _get_changed_files(
 def _find_changed_symbols(
     changed_files: list[str], root: Path, git_root: Path,
     prefix_with_slash: str, base_commit: str, commit: str,
-) -> list[str]:
-    """Identify symbols affected by changed lines in each file."""
-    changed_symbols: list[str] = []
+) -> list[dict]:
+    """Identify symbols affected by changed lines in each file.
+
+    Returns list of dicts: {name, file, added, deleted} with per-symbol diff stats.
+    """
+    changed_symbols: list[dict] = []
     for cf in changed_files[:15]:
         ext = Path(cf).suffix.lower()
         if ext not in (".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php"):
@@ -215,43 +210,56 @@ def _find_changed_symbols(
                 ["git", "diff", udiff_ref, "--unified=0", "--", git_file_path],
                 cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
             )
-            changed_lines: set[int] = set()
+            # Parse hunks: track added/deleted line ranges
+            added_ranges: list[tuple[int, int]] = []
+            deleted_ranges: list[tuple[int, int]] = []
             for line in udiff.stdout.split("\n"):
                 m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
                 if m:
-                    add_start = int(m.group(3))
-                    add_count = int(m.group(4)) if m.group(4) else 1
-                    changed_lines.update(range(add_start, add_start + add_count))
-                    if add_count == 0 and add_start > 0:
-                        changed_lines.add(add_start)
-            wt_udiff = subprocess.run(
-                ["git", "diff", "HEAD", "--unified=0", "--", git_file_path],
-                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
-            ) if commit == "HEAD" else None
-            if wt_udiff and wt_udiff.returncode == 0:
-                for line in wt_udiff.stdout.split("\n"):
-                    m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
-                    if m:
-                        add_start = int(m.group(3))
-                        add_count = int(m.group(4)) if m.group(4) else 1
-                        changed_lines.update(range(add_start, add_start + add_count))
-                        if add_count == 0 and add_start > 0:
-                            changed_lines.add(add_start)
+                    del_start, del_count = int(m.group(1)), int(m.group(2)) if m.group(2) else 1
+                    add_start, add_count = int(m.group(3)), int(m.group(4)) if m.group(4) else 1
+                    if add_count > 0:
+                        added_ranges.append((add_start, add_start + add_count - 1))
+                    if del_count > 0:
+                        deleted_ranges.append((del_start, del_start + del_count - 1))
+            changed_lines = set()
+            for s, e in added_ranges:
+                changed_lines.update(range(s, e + 1))
+            for s, e in deleted_ranges:
+                changed_lines.add(s)  # deleted lines map to approximate position
             if not changed_lines:
                 continue
             full_path = root / cf
             if not full_path.exists():
                 continue
+            total_added = sum(e - s + 1 for s, e in added_ranges)
+            total_deleted = sum(e - s + 1 for s, e in deleted_ranges)
             from codeindex.parser import parse_file
             pr = parse_file(full_path)
             for sym in pr.symbols:
                 if hasattr(sym, "line_start") and hasattr(sym, "line_end"):
                     sym_lines = set(range(sym.line_start, sym.line_end + 1))
-                    if sym_lines & changed_lines:
-                        changed_symbols.append(sym.name)
+                    overlap = sym_lines & changed_lines
+                    if overlap:
+                        # Count added/deleted lines within this symbol's range
+                        sym_added = sum(
+                            min(e, sym.line_end) - max(s, sym.line_start) + 1
+                            for s, e in added_ranges if s <= sym.line_end and e >= sym.line_start
+                        )
+                        sym_deleted = sum(
+                            min(e, sym.line_end) - max(s, sym.line_start) + 1
+                            for s, e in deleted_ranges if s <= sym.line_end and e >= sym.line_start
+                        )
+                        changed_symbols.append({
+                            "name": sym.name, "file": cf,
+                            "added": sym_added, "deleted": sym_deleted,
+                        })
                 elif hasattr(sym, "line_number"):
                     if sym.line_number in changed_lines:
-                        changed_symbols.append(sym.name)
+                        changed_symbols.append({
+                            "name": sym.name, "file": cf,
+                            "added": total_added, "deleted": total_deleted,
+                        })
         except Exception as e:
             log.debug("Failed to analyze %s: %s", cf, e)
     return changed_symbols
@@ -321,11 +329,11 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
     for f in changed_files:
         parts.append(f"  {f}")
 
-    changed_symbols = _find_changed_symbols(
+    changed_symbols_raw = _find_changed_symbols(
         changed_files, root, git_root, prefix_with_slash, base_commit, commit,
     )
 
-    if not changed_symbols:
+    if not changed_symbols_raw:
         parts.append("\n未能精确定位变更符号，按文件级别分析。")
         for cf in changed_files:
             module = cf.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")
@@ -337,25 +345,38 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
                 pass
         return _client._truncate("\n".join(parts))
 
-    changed_symbols = list(dict.fromkeys(changed_symbols))
+    # Deduplicate by name, keep first occurrence (with diff stats)
+    seen_names: set[str] = set()
+    changed_symbols: list[dict] = []
+    for s in changed_symbols_raw:
+        if s["name"] not in seen_names:
+            seen_names.add(s["name"])
+            changed_symbols.append(s)
+
+    # --- Fix 3: Show diff stats per symbol ---
     parts.append(f"\n变更符号 ({len(changed_symbols)}):")
     for s in changed_symbols:
-        parts.append(f"  {s}")
+        added, deleted = s.get("added", 0), s.get("deleted", 0)
+        diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
+        loc = f" ({s['file']})" if s.get("file") else ""
+        parts.append(f"  {s['name']} {diff_stat}{loc}")
 
-    all_callers, affected_modules, chains = _query_symbol_callers(repo_id, changed_symbols, max_depth)
+    sym_names = [s["name"] for s in changed_symbols]
+    all_callers, affected_modules, chains = _query_symbol_callers(repo_id, sym_names, max_depth)
 
-    if all_callers:
-        callers_dedup = list(dict.fromkeys(all_callers))
+    callers_dedup = list(dict.fromkeys(all_callers)) if all_callers else []
+    if callers_dedup:
         parts.append(f"\n调用者 ({len(callers_dedup)}):")
         parts.extend(callers_dedup[:20])
 
-    if affected_modules:
-        parts.append(f"\n受影响模块 ({len(affected_modules)}):")
-        for m in sorted(affected_modules):
+    non_test_modules = sorted(m for m in affected_modules if "test" not in m.lower())
+    test_modules = sorted(m for m in affected_modules if "test" in m.lower())
+
+    if non_test_modules:
+        parts.append(f"\n受影响模块 ({len(non_test_modules)}):")
+        for m in non_test_modules:
             parts.append(f"  {m}")
 
-    # Separate affected tests
-    test_modules = sorted(m for m in affected_modules if "test" in m.lower())
     if test_modules:
         parts.append(f"\n受影响测试 ({len(test_modules)}):")
         for t in test_modules[:10]:
@@ -368,31 +389,78 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
         for c in chains_dedup[:15]:
             parts.append(f"  {c}")
 
-    # Enhanced risk assessment
-    public_changed = [s for s in changed_symbols if not s.startswith("_")]
+    # --- Fix 4: Depth boundary warning ---
+    # Check if any caller was found at the max depth boundary
+    at_boundary = any("→" * max_depth in c for c in chains) if chains else False
+    # Simpler heuristic: if we have indirect callers, they're at depth 2+
+    has_deep_callers = len(chains) > 0 and max_depth <= 2
+    if has_deep_callers:
+        parts.append(f"\n⚠ 当前追踪深度 {max_depth} 跳。部分调用者可能位于更深层，可用 max_depth={max_depth + 1} 扩大范围。")
+
+    # --- Fix 2: Quantitative risk assessment ---
+    total_callers = len(callers_dedup)
+    total_modules = len(affected_modules)
+    total_tests = len(test_modules)
+    public_changed = [s for s in changed_symbols if not s["name"].startswith("_")]
+    total_added = sum(s.get("added", 0) for s in changed_symbols)
+    total_deleted = sum(s.get("deleted", 0) for s in changed_symbols)
     is_core = any(
         any(c in f.lower() for c in ("auth", "security", "payment", "database", "db", "core", "config"))
         for f in changed_files
     )
 
-    risk = "low"
+    # Score-based risk (0-100)
+    score = 0
     reasons: list[str] = []
-    if is_core:
-        risk = "high"
-        reasons.append("涉及核心模块")
-    if len(affected_modules) > 5:
-        risk = "high"
-        reasons.append(f"波及 {len(affected_modules)} 个模块")
-    elif len(affected_modules) > 2 and risk != "high":
-        risk = "medium"
-        reasons.append(f"{len(affected_modules)} 个模块受影响")
-    if len(public_changed) > 5 and risk == "low":
-        risk = "medium"
-        reasons.append(f"{len(public_changed)} 个公共符号变更")
-    if not reasons:
-        reasons.append("变更范围有限" if risk == "low" else "")
+    suggestions: list[str] = []
 
-    parts.append(f"\n风险评估: {risk} — {'; '.join(r for r in reasons if r)}; {len(changed_symbols)} 个符号变更")
+    if is_core:
+        score += 30
+        reasons.append("涉及核心模块")
+        suggestions.append("核心模块变更需 code review")
+    if total_callers >= 10:
+        score += 25
+        reasons.append(f"{total_callers} 个调用者受影响")
+    elif total_callers >= 3:
+        score += 15
+        reasons.append(f"{total_callers} 个调用者受影响")
+    if total_modules >= 5:
+        score += 20
+        reasons.append(f"波及 {total_modules} 个模块")
+    elif total_modules >= 3:
+        score += 10
+        reasons.append(f"{total_modules} 个模块受影响")
+    if len(public_changed) > 0:
+        score += min(len(public_changed) * 5, 15)
+        reasons.append(f"{len(public_changed)} 个公共 API 变更")
+    if total_added + total_deleted > 50:
+        score += 10
+        reasons.append(f"改动量大 (+{total_added}/-{total_deleted})")
+
+    if score >= 50:
+        risk = "high"
+    elif score >= 25:
+        risk = "medium"
+    else:
+        risk = "low"
+
+    if not reasons:
+        reasons.append("变更范围有限")
+
+    # Test coverage assessment
+    if total_tests > 0:
+        suggestions.append(f"运行受影响测试: {', '.join(test_modules[:3])}")
+    elif total_callers > 0:
+        suggestions.append("未发现关联测试，建议补充测试覆盖")
+
+    if len(public_changed) > 0:
+        suggestions.append("检查公共 API 向后兼容性")
+
+    parts.append(f"\n风险评估: {risk} (score {score}/100)")
+    parts.append(f"  指标: 调用者 {total_callers} | 模块 {total_modules} | 测试 {total_tests} | 公共API {len(public_changed)} | 改动 +{total_added}/-{total_deleted}")
+    parts.append(f"  原因: {'; '.join(reasons)}")
+    if suggestions:
+        parts.append(f"  建议: {'; '.join(suggestions)}")
 
     return _client._truncate("\n".join(parts))
 

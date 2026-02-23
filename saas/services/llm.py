@@ -44,7 +44,10 @@ async def llm_chat(
     )
     resp.raise_for_status()
     data = resp.json()
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    msg = data.get("choices", [{}])[0].get("message", {})
+    # Reasoning models (e.g. glm-4.7-fp8) may put output in reasoning_content
+    # when max_tokens is insufficient for both reasoning + content
+    return msg.get("content") or msg.get("reasoning_content") or ""
 
 
 def parse_json(text: str) -> dict | list:

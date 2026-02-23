@@ -28,7 +28,7 @@ def _get_client_version() -> str:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD"],
             cwd=str(install_dir),
-            capture_output=True, text=True, encoding="utf-8", timeout=5,
+            capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=5,
         )
         if result.returncode == 0:
             count = result.stdout.strip()
@@ -69,7 +69,7 @@ def _detect_region() -> str:
             import subprocess as _sp
             tz = _sp.run(
                 ["powershell", "-c", "(Get-TimeZone).Id"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True, text=True, stdin=_sp.DEVNULL, timeout=3,
             ).stdout.strip()
             if "China" in tz or "Beijing" in tz or "Shanghai" in tz:
                 return "CN"
@@ -156,7 +156,7 @@ def _check_version() -> str:
                 install_dir = Path(__file__).resolve().parent.parent
                 result = subprocess.run(
                     ["git", "log", "-1", "--format=%cI"],
-                    cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", timeout=3,
+                    cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=3,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     local_time = datetime.datetime.fromisoformat(result.stdout.strip())

@@ -150,12 +150,25 @@ def _format_impact(result: dict) -> str:
     commit = result.get("commit", "?")
     parts.append(f"影响分析: commit {commit[:12]}")
 
+    # Changed files
+    changed_files = result.get("changed_files", [])
+    if changed_files:
+        parts.append(f"\n变更文件 ({len(changed_files)}):")
+        for f in changed_files[:15]:
+            if isinstance(f, dict):
+                parts.append(f"  {f.get('path', '?')} [{f.get('change_type', '?')}]")
+            else:
+                parts.append(f"  {f}")
+
     changed = result.get("changed_symbols", [])
     if changed:
         parts.append(f"\n变更符号 ({len(changed)}):")
         for s in changed[:15]:
             if isinstance(s, dict):
-                parts.append(f"  {s.get('name', '?')} [{s.get('kind', '?')}] {s.get('file_path', '')}")
+                diff_stat = ""
+                if s.get("lines_changed"):
+                    diff_stat = f" (+{s['lines_changed']})"
+                parts.append(f"  {s.get('name', '?')} [{s.get('change_type', s.get('kind', '?'))}]{diff_stat} {s.get('file', s.get('file_path', ''))}")
             else:
                 parts.append(f"  {s}")
         if len(changed) > 15:
@@ -178,8 +191,20 @@ def _format_impact(result: dict) -> str:
             if len(items) > limit:
                 parts.append(f"  ... 还有 {len(items) - limit} 个")
 
+    # Propagation chains
+    chains = result.get("propagation_chains", [])
+    if chains:
+        parts.append(f"\n传播链路 ({len(chains)}):")
+        for c in chains[:15]:
+            parts.append(f"  {c}")
+
     risk = result.get("risk", {})
     if risk:
-        parts.append(f"\n风险评估: {risk.get('level', '?')} — {risk.get('reason', '')}")
+        level = risk.get("level", "?")
+        reason = risk.get("reason", "")
+        parts.append(f"\n风险评估: {level} — {reason}")
+        suggestions = risk.get("suggestions", [])
+        if suggestions:
+            parts.append(f"  建议: {'; '.join(suggestions)}")
 
     return _truncate("\n".join(parts))

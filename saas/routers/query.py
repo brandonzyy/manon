@@ -192,14 +192,16 @@ async def deep_query(
 
     # iterative refinement
     for i in range(body.max_rounds):
+        analysis = None
         try:
             analysis = await llm_chat([
                 {"role": "system", "content": _DEEPQUERY_SYSTEM},
                 {"role": "user", "content": f"## 用户问题\n{body.question}\n\n## 已有上下文\n{accumulated[:12000]}"},
-            ], max_tokens=1024)
+            ], max_tokens=2048)
+            log.info("deep-query round %d LLM response (%d chars): %.200s", i + 1, len(analysis), analysis)
             parsed = parse_json(analysis)
         except Exception as exc:
-            log.warning("deep-query LLM round %d failed: %s", i + 1, exc)
+            log.warning("deep-query LLM round %d failed: %s (analysis=%r)", i + 1, exc, analysis[:200] if isinstance(analysis, str) else analysis)
             break
 
         follow_ups = parsed.get("queries", [])

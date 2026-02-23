@@ -98,6 +98,20 @@ async def delete_repo(repo_id: str, ctx: TenantContext = Depends(require_tenant)
 
     # cleanup index
     idx = Path(settings.index_dir) / ctx.tenant_id / row["name"]
+    kg_path = idx / "kg"
+
+    # Invalidate in-memory caches BEFORE deleting files
+    try:
+        from matrixone_graph.pipeline import invalidate_kg_cache
+        invalidate_kg_cache(kg_path)
+    except Exception:
+        pass
+    try:
+        from matrixone_graph import MatrixoneGraph
+        MatrixoneGraph._pool.pop(str(kg_path.resolve()), None)
+    except Exception:
+        pass
+
     if idx.exists():
         shutil.rmtree(idx, ignore_errors=True)
 
