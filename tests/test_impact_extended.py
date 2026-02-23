@@ -256,3 +256,54 @@ class TestImpactAnalyzerHelpers:
         modules = analyzer._affected_modules(syms, callers, [])
         assert "mod" in modules
         assert "util" in modules
+
+
+class TestLazyImportCallers:
+    """Tests for _find_lazy_import_callers and _find_containing_function."""
+
+    def test_find_containing_function(self, tmp_path):
+        # Create a file with a lazy import inside a function
+        (tmp_path / "caller.py").write_text(
+            "def top_level():\n"
+            "    from mod import foo\n"
+            "    foo()\n"
+        )
+        g = CodeGraph()
+        analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
+        assert analyzer._find_containing_function("caller.py", 2) == "top_level"
+
+    def test_find_containing_async_function(self, tmp_path):
+        (tmp_path / "caller.py").write_text(
+            "async def handler():\n"
+            "    from mod import foo\n"
+            "    await foo()\n"
+        )
+        g = CodeGraph()
+        analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
+        assert analyzer._find_containing_function("caller.py", 2) == "handler"
+
+    def test_find_containing_function_nested(self, tmp_path):
+        (tmp_path / "caller.py").write_text(
+            "class MyClass:\n"
+            "    def method(self):\n"
+            "        from mod import foo\n"
+            "        foo()\n"
+        )
+        g = CodeGraph()
+        analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
+        assert analyzer._find_containing_function("caller.py", 3) == "method"
+
+    def test_find_containing_function_module_level(self, tmp_path):
+        # Module-level import — no containing function
+        (tmp_path / "caller.py").write_text(
+            "from mod import foo\n"
+            "foo()\n"
+        )
+        g = CodeGraph()
+        analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
+        assert analyzer._find_containing_function("caller.py", 1) == ""
+
+    def test_find_containing_function_missing_file(self, tmp_path):
+        g = CodeGraph()
+        analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
+        assert analyzer._find_containing_function("nonexistent.py", 1) == ""

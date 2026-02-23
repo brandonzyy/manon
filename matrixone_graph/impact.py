@@ -401,6 +401,12 @@ class ImpactAnalyzer:
         files: list[ChangedFile] | None = None,
     ) -> ImpactResult:
         direct, indirect, chains, boundary_count = self._find_callers(symbols)
+
+        # Supplement with lazy import callers (function-body imports)
+        seen = {f"{c.file}:{c.name}" for c in direct + indirect}
+        lazy_callers = self._find_lazy_import_callers(symbols, seen)
+        direct.extend(lazy_callers)
+
         modules = self._affected_modules(symbols, direct, indirect)
         tests = [c.file for c in direct + indirect if self._is_test(c.file)]
         result = ImpactResult(
@@ -479,6 +485,86 @@ class ImpactAnalyzer:
                                                 boundary_count += 1
 
         return direct, indirect, chains, boundary_count
+
+    def _find_lazy_import_callers(
+        self, symbols: list[ChangedSymbol], seen: set[str],
+    ) -> list[Caller]:
+        """Find callers via lazy (function-body) imports not in the AST graph.
+
+        Scans for indented 'from <module> import <symbol>' patterns which
+        indicate imports inside function bodies — invisible to static AST.
+        """
+        extra: list[Caller] = []
+
+        # Group symbols by module path
+        mod_syms: dict[str, list[str]] = {}
+        for sym in symbols:
+            if not sym.file.endswith(".py"):
+                continue
+            mod = sym.file[:-3].replace("/", ".").replace("\\", ".")
+            if sym.name.startswith("_") or sym.name.startswith("<") or "." in sym.name:
+                continue
+            mod_syms.setdefault(mod, []).append(sym.name)
+
+        if not mod_syms:
+            return extra
+
+        for mod_path, sym_names in mod_syms.items():
+            sym_alt = "|".join(re.escape(n) for n in sym_names)
+            pattern = f"^\\s+from\\s+{re.escape(mod_path)}\\s+import\\s+.*\\b({sym_alt})\\b"
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "grep", "-n", "-E",
+                     pattern, "--", "*.py"],
+                    capture_output=True, text=True, timeout=10,
+                )
+            except Exception:
+                continue
+            if result.returncode != 0 or not result.stdout.strip():
+                continue
+
+            for line in result.stdout.strip().split("\n"):
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                grep_file, line_no_str = parts[0], parts[1]
+                try:
+                    line_no = int(line_no_str)
+                except ValueError:
+                    continue
+
+                func_name = self._find_containing_function(grep_file, line_no)
+                if not func_name:
+                    continue
+
+                key = f"{grep_file}:{func_name}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                extra.append(Caller(
+                    name=func_name, file=grep_file, line=line_no, depth=1,
+                ))
+        return extra
+
+    def _find_containing_function(self, file_path: str, line_no: int) -> str:
+        """Find the function/method enclosing a given line number."""
+        fp = self.repo_path / file_path
+        try:
+            lines = fp.read_text(encoding="utf-8", errors="replace").split("\n")
+        except Exception:
+            return ""
+        if line_no < 1 or line_no > len(lines):
+            return ""
+        import_indent = len(lines[line_no - 1]) - len(lines[line_no - 1].lstrip())
+        for i in range(line_no - 2, -1, -1):
+            stripped = lines[i].lstrip()
+            if not stripped.startswith("def ") and not stripped.startswith("async def "):
+                continue
+            func_indent = len(lines[i]) - len(lines[i].lstrip())
+            if func_indent < import_indent:
+                m = re.match(r"(?:async\s+)?def\s+(\w+)", stripped)
+                return m.group(1) if m else ""
+        return ""
 
     def _find_entity_ids(self, symbol_name: str) -> list[str]:
         """Find entity IDs in the graph that match a symbol name."""

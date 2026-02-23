@@ -265,6 +265,121 @@ def _find_changed_symbols(
     return changed_symbols
 
 
+def _find_lazy_import_callers(
+    changed_symbols: list[dict], git_root: Path, root: Path,
+    prefix_with_slash: str, existing_callers: list[str],
+) -> tuple[list[str], set[str], list[str]]:
+    """Find callers via lazy (function-body) imports not captured by AST graph.
+
+    Scans for indented 'from <module> import <symbol>' patterns which indicate
+    imports inside function bodies — these are invisible to static AST analysis.
+    """
+    extra_callers: list[str] = []
+    extra_modules: set[str] = set()
+    extra_chains: list[str] = []
+
+    # Build set of already-known caller keys for dedup
+    known: set[str] = set()
+    for c in existing_callers:
+        # Format: "  src --calls--> tgt"
+        parts = c.strip().split(" --calls--> ")
+        if len(parts) == 2:
+            known.add(parts[0].strip())
+
+    # Group symbol names by their module path
+    mod_syms: dict[str, list[str]] = {}
+    for s in changed_symbols:
+        f = s.get("file", "")
+        if not f.endswith(".py"):
+            continue
+        mod = f[:-3].replace("/", ".").replace("\\", ".")
+        name = s["name"]
+        # Skip private, dunder, and class-internal names
+        if name.startswith("_") or name.startswith("<") or "." in name:
+            continue
+        mod_syms.setdefault(mod, []).append(name)
+
+    if not mod_syms:
+        return extra_callers, extra_modules, extra_chains
+
+    # Build combined grep pattern for all symbols per module
+    for mod_path, sym_names in mod_syms.items():
+        sym_alt = "|".join(re.escape(n) for n in sym_names)
+        # Match indented "from <mod> import ... <sym>" (lazy import)
+        pattern = f"^\\s+from\\s+{re.escape(mod_path)}\\s+import\\s+.*\\b({sym_alt})\\b"
+        try:
+            result = subprocess.run(
+                ["git", "grep", "-n", "-E", pattern, "--", "*.py"],
+                cwd=str(git_root), capture_output=True, text=True,
+                encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+
+        for line in result.stdout.strip().split("\n"):
+            # Format: "file:lineno:content"
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            grep_file, line_no_str = parts[0], parts[1]
+            try:
+                line_no = int(line_no_str)
+            except ValueError:
+                continue
+
+            # Strip git prefix to get project-relative path
+            if prefix_with_slash and grep_file.startswith(prefix_with_slash):
+                rel_file = grep_file[len(prefix_with_slash):]
+            else:
+                rel_file = grep_file
+
+            # Find containing function by scanning backwards
+            full_path = root / rel_file
+            if not full_path.exists():
+                continue
+            try:
+                file_lines = full_path.read_text(encoding="utf-8", errors="replace").split("\n")
+            except Exception:
+                continue
+
+            import_indent = len(file_lines[line_no - 1]) - len(file_lines[line_no - 1].lstrip())
+            func_name = ""
+            for i in range(line_no - 2, -1, -1):
+                stripped = file_lines[i].lstrip()
+                if not stripped.startswith("def ") and not stripped.startswith("async def "):
+                    continue
+                func_indent = len(file_lines[i]) - len(file_lines[i].lstrip())
+                if func_indent < import_indent:
+                    m = re.match(r"(?:async\s+)?def\s+(\w+)", stripped)
+                    if m:
+                        func_name = m.group(1)
+                    break
+
+            if not func_name:
+                continue
+
+            # Build entity-style ID for the caller
+            caller_mod = rel_file[:-3].replace("/", ".").replace("\\", ".") if rel_file.endswith(".py") else rel_file
+            caller_id = f"{caller_mod}.{func_name}"
+
+            if caller_id in known:
+                continue
+            known.add(caller_id)
+
+            # Match which symbol was imported
+            for sym_name in sym_names:
+                if sym_name in parts[2]:
+                    tgt_id = f"{mod_path}.{sym_name}"
+                    extra_callers.append(f"  {caller_id} --calls--> {tgt_id}")
+                    extra_modules.add(caller_mod)
+                    extra_chains.append(f"{sym_name} → {func_name}")
+                    break
+
+    return extra_callers, extra_modules, extra_chains
+
+
 def _query_symbol_callers(
     repo_id: str, changed_symbols: list[str], max_depth: int,
 ) -> tuple[list[str], set[str], list[str]]:
@@ -380,6 +495,14 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
 
     sym_names = [s["name"] for s in changed_symbols]
     all_callers, affected_modules, chains = _query_symbol_callers(repo_id, sym_names, max_depth)
+
+    # Supplement with lazy import callers (function-body imports missed by AST graph)
+    lazy_callers, lazy_modules, lazy_chains = _find_lazy_import_callers(
+        changed_symbols, git_root, root, prefix_with_slash, all_callers,
+    )
+    all_callers.extend(lazy_callers)
+    affected_modules.update(lazy_modules)
+    chains.extend(lazy_chains)
 
     callers_dedup = list(dict.fromkeys(all_callers)) if all_callers else []
     callers_limit = 10 if summary_mode else 20
