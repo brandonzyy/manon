@@ -223,6 +223,41 @@ Every step queries the knowledge graph for relevant context. Every step's output
 
 ---
 
+## 📊 Measured Effectiveness
+
+Evaluated with 20 real-world queries across 4 tools, benchmarked against native tools (Grep/Glob/Read/git) on the same tasks. Full report: [`docs/manon-query-tools-evaluation.md`](docs/manon-query-tools-evaluation.md)
+
+### Key Results
+
+| Metric | Manon | Native Tools | Improvement |
+|--------|-------|-------------|-------------|
+| Avg tool calls per task | 1 | 13.7 | **91% fewer** |
+| Total tokens (20 queries) | ~19.5K | ~350K | **94% savings** |
+| Avg quality score | 4.3/5 | 3.2/5 | **+34%** |
+
+### Per-Tool Breakdown
+
+| Tool | Use Case | Calls Saved | Quality (Manon → Native) |
+|------|----------|-------------|--------------------------|
+| `manon_search` | Semantic code search | 86% | 4.2 vs 2.6 |
+| `manon_graph` | Call graph traversal | 90% | 4.6 vs 2.6 |
+| `manon_deep_query` | Multi-round architecture analysis | 94% | 4.6 vs 2.6 |
+| `manon_impact` | Commit impact analysis | 95% | 3.8 vs 4.8 ¹ |
+
+> ¹ `impact` trades depth for speed — it delivers 80% of the insight in 1/66 of the tokens. For high-risk commits (score ≥ 60), pair with manual review.
+
+### When to Use What
+
+```
+Don't know the keyword?          → manon_search
+Know the symbol, need callers?   → manon_graph
+Cross-module architecture?       → manon_deep_query
+Commit risk assessment?          → manon_impact
+Exact string match?              → Grep (still faster)
+```
+
+---
+
 ## 🛠️ MCP Tools
 
 ### Repository Management
