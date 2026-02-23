@@ -146,3 +146,36 @@ class TestRiskAssessor:
         )
         risk = assessor.assess(ir)
         assert risk.level in ("medium", "high")
+
+    def test_test_only_low_risk(self):
+        """All symbols in test files → level must be 'low'."""
+        assessor = RiskAssessor()
+        syms = [
+            ChangedSymbol(name="test_foo", file="tests/test_foo.py", change_type=ChangeType.MODIFIED, lines_changed=50),
+            ChangedSymbol(name="test_bar", file="tests/test_bar.py", change_type=ChangeType.MODIFIED, lines_changed=30),
+        ]
+        callers = [Caller(name=f"c{i}", file="b.py") for i in range(15)]
+        ir = ImpactResult(
+            commit="x", changed_symbols=syms,
+            direct_callers=callers,
+            affected_modules=[f"m{i}" for i in range(6)],
+        )
+        risk = assessor.assess(ir)
+        assert risk.level == "low"
+        assert "测试" in risk.reason
+
+    def test_mixed_test_and_core(self):
+        """Mixed test + core files → normal scoring (not capped)."""
+        assessor = RiskAssessor()
+        syms = [
+            ChangedSymbol(name="test_foo", file="tests/test_foo.py", change_type=ChangeType.MODIFIED),
+            ChangedSymbol(name="auth_check", file="auth/login.py", change_type=ChangeType.MODIFIED, lines_changed=25),
+        ]
+        callers = [Caller(name=f"c{i}", file="b.py") for i in range(12)]
+        ir = ImpactResult(
+            commit="x", changed_symbols=syms,
+            direct_callers=callers,
+            affected_modules=["auth", "tests"],
+        )
+        risk = assessor.assess(ir)
+        assert risk.level in ("medium", "high")

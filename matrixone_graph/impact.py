@@ -88,8 +88,18 @@ class ImpactResult:
     affected_tests: list[str] = field(default_factory=list)
     propagation_chains: list[str] = field(default_factory=list)
     risk: RiskAssessment | None = None
+    boundary_callers_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        # Derive directly_changed_modules from changed_files
+        direct_modules: set[str] = set()
+        for f in self.changed_files:
+            m = f.path
+            if m.endswith(".py"):
+                m = m[:-3].replace("/", ".").replace("\\", ".").lstrip(".")
+                if m:
+                    direct_modules.add(m)
+
         d: dict[str, Any] = {
             "commit": self.commit,
             "changed_files": [
@@ -100,12 +110,15 @@ class ImpactResult:
             "direct_callers": [c.to_dict() for c in self.direct_callers],
             "indirect_callers": [c.to_dict() for c in self.indirect_callers],
             "affected_modules": self.affected_modules,
+            "directly_changed_modules": sorted(direct_modules),
             "affected_tests": self.affected_tests,
         }
         if self.propagation_chains:
             d["propagation_chains"] = self.propagation_chains
         if self.risk:
             d["risk"] = self.risk.to_dict()
+        if self.boundary_callers_count > 0:
+            d["boundary_callers_count"] = self.boundary_callers_count
         return d
 
 
@@ -259,7 +272,26 @@ class RiskAssessor:
         self.low = low
         self.high = high
 
+    @staticmethod
+    def _is_test_file(fp: str) -> bool:
+        """Check if a file path is a test file."""
+        if not fp:
+            return False
+        fp_lower = fp.replace("\\", "/")
+        return (
+            fp_lower.startswith("tests/") or fp_lower.startswith("test/")
+            or "/tests/" in fp_lower or "/test/" in fp_lower
+            or fp_lower.endswith("_test.py")
+            or "test_" in Path(fp_lower).name
+        )
+
     def assess(self, result: ImpactResult) -> RiskAssessment:
+        # Check if all changed symbols are in test files
+        test_only = (
+            len(result.changed_symbols) > 0
+            and all(self._is_test_file(s.file) for s in result.changed_symbols)
+        )
+
         total = len(result.direct_callers) + len(result.indirect_callers)
         is_core = any(
             any(c in s.file.lower() for c in CORE_MODULES)
@@ -267,8 +299,14 @@ class RiskAssessor:
         )
         many_modules = len(result.affected_modules) >= 5
 
-        # Severity extras: public symbols with heavy changes
-        public_changed = [s for s in result.changed_symbols if not s.name.startswith("_")]
+        # For mixed commits, exclude test-file symbols from public_changed
+        if test_only:
+            public_changed: list[ChangedSymbol] = []
+        else:
+            public_changed = [
+                s for s in result.changed_symbols
+                if not s.name.startswith("_") and not self._is_test_file(s.file)
+            ]
         has_heavy_public = any(s.lines_changed > 20 for s in public_changed)
 
         reasons: list[str] = []
@@ -309,6 +347,12 @@ class RiskAssessor:
 
         if not suggestions:
             suggestions.append("运行变更代码的单元测试")
+
+        # Test-only commit: cap risk to low
+        if test_only:
+            level = "low"
+            reasons = ["仅测试变更，风险有限"]
+            suggestions = ["运行变更代码的单元测试"]
 
         return RiskAssessment(
             level=level,
@@ -356,7 +400,7 @@ class ImpactAnalyzer:
         self, commit: str, symbols: list[ChangedSymbol],
         files: list[ChangedFile] | None = None,
     ) -> ImpactResult:
-        direct, indirect, chains = self._find_callers(symbols)
+        direct, indirect, chains, boundary_count = self._find_callers(symbols)
         modules = self._affected_modules(symbols, direct, indirect)
         tests = [c.file for c in direct + indirect if self._is_test(c.file)]
         result = ImpactResult(
@@ -366,22 +410,25 @@ class ImpactAnalyzer:
             affected_modules=sorted(set(modules)),
             affected_tests=sorted(set(tests)),
             propagation_chains=chains,
+            boundary_callers_count=boundary_count,
         )
         result.risk = self._risk.assess(result)
         return result
 
     def _find_callers(
         self, symbols: list[ChangedSymbol],
-    ) -> tuple[list[Caller], list[Caller], list[str]]:
+    ) -> tuple[list[Caller], list[Caller], list[str], int]:
         """Find callers by traversing CodeGraph predecessors (CALLS edges).
 
-        Returns (direct_callers, indirect_callers, propagation_chains).
+        Returns (direct_callers, indirect_callers, propagation_chains, boundary_callers_count).
         Chains are formatted as "A → B → C" showing the call propagation path.
+        boundary_callers_count is the number of callers found at max_depth that may have more upstream callers.
         """
         direct: list[Caller] = []
         indirect: list[Caller] = []
         chains: list[str] = []
         seen: set[str] = set()
+        boundary_count = 0
 
         for sym in symbols:
             # Find entity IDs matching this symbol name
@@ -423,8 +470,15 @@ class ImpactAnalyzer:
                                 chains.append(
                                     f"{sym.name} → {neighbor_ent.name} → {n_ent.name}"
                                 )
+                                # Probe next hop to count boundary callers
+                                for probe_eid in self._find_entity_ids(n_ent.name):
+                                    for b_ent, b_rels in self.graph.neighbors(probe_eid, depth=1):
+                                        if any(r.kind == "calls" and r.tgt_id == probe_eid for r in b_rels):
+                                            bkey = f"{b_ent.file_path}:{b_ent.name}"
+                                            if bkey not in seen:
+                                                boundary_count += 1
 
-        return direct, indirect, chains
+        return direct, indirect, chains, boundary_count
 
     def _find_entity_ids(self, symbol_name: str) -> list[str]:
         """Find entity IDs in the graph that match a symbol name."""

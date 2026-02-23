@@ -354,27 +354,60 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
             changed_symbols.append(s)
 
     # --- Fix 3: Show diff stats per symbol ---
-    parts.append(f"\n变更符号 ({len(changed_symbols)}):")
-    for s in changed_symbols:
-        added, deleted = s.get("added", 0), s.get("deleted", 0)
-        diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
-        loc = f" ({s['file']})" if s.get("file") else ""
-        parts.append(f"  {s['name']} {diff_stat}{loc}")
+    # Summary mode for large commits
+    summary_mode = len(changed_symbols) > 30
+    if summary_mode:
+        parts.append(f"\n[摘要模式 — 符号过多，按文件聚合]")
+        # Aggregate symbols by file
+        file_agg: dict[str, dict] = {}
+        for s in changed_symbols:
+            f = s.get("file", "?")
+            if f not in file_agg:
+                file_agg[f] = {"count": 0, "added": 0, "deleted": 0}
+            file_agg[f]["count"] += 1
+            file_agg[f]["added"] += s.get("added", 0)
+            file_agg[f]["deleted"] += s.get("deleted", 0)
+        parts.append(f"\n变更符号 ({len(changed_symbols)}, 按文件聚合):")
+        for f, agg in sorted(file_agg.items()):
+            parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['added']}/-{agg['deleted']})")
+    else:
+        parts.append(f"\n变更符号 ({len(changed_symbols)}):")
+        for s in changed_symbols:
+            added, deleted = s.get("added", 0), s.get("deleted", 0)
+            diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
+            loc = f" ({s['file']})" if s.get("file") else ""
+            parts.append(f"  {s['name']} {diff_stat}{loc}")
 
     sym_names = [s["name"] for s in changed_symbols]
     all_callers, affected_modules, chains = _query_symbol_callers(repo_id, sym_names, max_depth)
 
     callers_dedup = list(dict.fromkeys(all_callers)) if all_callers else []
+    callers_limit = 10 if summary_mode else 20
     if callers_dedup:
         parts.append(f"\n调用者 ({len(callers_dedup)}):")
-        parts.extend(callers_dedup[:20])
+        parts.extend(callers_dedup[:callers_limit])
 
     non_test_modules = sorted(m for m in affected_modules if "test" not in m.lower())
     test_modules = sorted(m for m in affected_modules if "test" in m.lower())
 
-    if non_test_modules:
-        parts.append(f"\n受影响模块 ({len(non_test_modules)}):")
-        for m in non_test_modules:
+    # Derive directly changed modules from changed_files
+    direct_modules: set[str] = set()
+    for cf in changed_files:
+        m = cf.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".") if "." in cf else cf
+        if m:
+            direct_modules.add(m)
+
+    direct_non_test = sorted(m for m in non_test_modules if m in direct_modules)
+    indirect_non_test = sorted(m for m in non_test_modules if m not in direct_modules)
+
+    if direct_non_test:
+        parts.append(f"\n直接变更模块 ({len(direct_non_test)}):")
+        for m in direct_non_test:
+            parts.append(f"  {m}")
+
+    if indirect_non_test:
+        parts.append(f"\n间接波及模块 ({len(indirect_non_test)}):")
+        for m in indirect_non_test:
             parts.append(f"  {m}")
 
     if test_modules:
@@ -385,23 +418,48 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
     # Propagation chains
     if chains:
         chains_dedup = list(dict.fromkeys(chains))
+        chains_limit = 5 if summary_mode else 15
         parts.append(f"\n传播链路 ({len(chains_dedup)}):")
-        for c in chains_dedup[:15]:
+        for c in chains_dedup[:chains_limit]:
             parts.append(f"  {c}")
 
-    # --- Fix 4: Depth boundary warning ---
-    # Check if any caller was found at the max depth boundary
-    at_boundary = any("→" * max_depth in c for c in chains) if chains else False
-    # Simpler heuristic: if we have indirect callers, they're at depth 2+
+    # --- Fix 4: Depth boundary warning with next-hop estimate ---
     has_deep_callers = len(chains) > 0 and max_depth <= 2
     if has_deep_callers:
-        parts.append(f"\n⚠ 当前追踪深度 {max_depth} 跳。部分调用者可能位于更深层，可用 max_depth={max_depth + 1} 扩大范围。")
+        # Count unique callers at the boundary (last node in each chain)
+        boundary_nodes: set[str] = set()
+        chains_dedup_all = list(dict.fromkeys(chains)) if chains else []
+        for c in chains_dedup_all:
+            parts_chain = c.split(" → ")
+            if len(parts_chain) >= max_depth + 1:
+                boundary_nodes.add(parts_chain[-1])
+        boundary_count = len(boundary_nodes) if boundary_nodes else len(chains_dedup_all)
+        parts.append(f"\n⚠ 当前追踪深度 {max_depth} 跳，边界有 {boundary_count} 个调用者。可用 max_depth={max_depth + 1} 扩大范围。")
 
     # --- Fix 2: Quantitative risk assessment ---
     total_callers = len(callers_dedup)
     total_modules = len(affected_modules)
     total_tests = len(test_modules)
-    public_changed = [s for s in changed_symbols if not s["name"].startswith("_")]
+
+    # Detect test-only commits
+    def _is_test_path(fp: str) -> bool:
+        fp_l = fp.replace("\\", "/").lower()
+        return (
+            fp_l.startswith("tests/") or fp_l.startswith("test/")
+            or "/tests/" in fp_l or "/test/" in fp_l
+            or fp_l.endswith("_test.py") or "test_" in fp_l.split("/")[-1]
+        )
+
+    test_only = bool(changed_files) and all(_is_test_path(f) for f in changed_files)
+
+    # For mixed commits, exclude test-file symbols from public_changed
+    if test_only:
+        public_changed = []
+    else:
+        public_changed = [
+            s for s in changed_symbols
+            if not s["name"].startswith("_") and not _is_test_path(s.get("file", ""))
+        ]
     total_added = sum(s.get("added", 0) for s in changed_symbols)
     total_deleted = sum(s.get("deleted", 0) for s in changed_symbols)
     is_core = any(
@@ -446,6 +504,12 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
 
     if not reasons:
         reasons.append("变更范围有限")
+
+    # Test-only commit: cap score and level
+    if test_only:
+        score = min(score, 20)
+        risk = "low"
+        reasons = ["仅测试文件变更"]
 
     # Test coverage assessment
     if total_tests > 0:

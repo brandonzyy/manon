@@ -98,8 +98,36 @@ class TestImpactResultEdgeCases:
         assert len(d["affected_modules"]) == 2
         assert d["risk"]["level"] == "medium"
 
+    def test_directly_changed_modules(self):
+        """to_dict should include directly_changed_modules derived from changed_files."""
+        sym = ChangedSymbol(name="f", file="src/core.py", change_type=ChangeType.MODIFIED)
+        files = [
+            ChangedFile(path="src/core.py", change_type=ChangeType.MODIFIED),
+            ChangedFile(path="src/utils.py", change_type=ChangeType.MODIFIED),
+        ]
+        ir = ImpactResult(
+            commit="abc", changed_symbols=[sym],
+            changed_files=files,
+            affected_modules=["src.core", "src.utils", "src.api"],
+        )
+        d = ir.to_dict()
+        assert "directly_changed_modules" in d
+        assert "src.core" in d["directly_changed_modules"]
+        assert "src.utils" in d["directly_changed_modules"]
+        # src.api is not in changed_files, so not in directly_changed_modules
+        assert "src.api" not in d["directly_changed_modules"]
 
-class TestGitDiffParserEdgeCases:
+    def test_boundary_callers_count_in_dict(self):
+        """boundary_callers_count > 0 should appear in to_dict."""
+        ir = ImpactResult(commit="abc", changed_symbols=[], boundary_callers_count=5)
+        d = ir.to_dict()
+        assert d["boundary_callers_count"] == 5
+
+    def test_boundary_callers_count_zero_omitted(self):
+        """boundary_callers_count == 0 should not appear in to_dict."""
+        ir = ImpactResult(commit="abc", changed_symbols=[], boundary_callers_count=0)
+        d = ir.to_dict()
+        assert "boundary_callers_count" not in d
     def test_parse_multiple_files(self):
         diff = """diff --git a/foo.py b/foo.py
 @@ -1,3 +1,4 @@
@@ -164,6 +192,20 @@ class TestRiskAssessorEdgeCases:
         ir = ImpactResult(commit="x", changed_symbols=[], direct_callers=callers)
         risk = assessor.assess(ir)
         assert risk.level == "medium"
+
+
+class TestRiskAssessorIsTestFile:
+    def test_test_paths(self):
+        assert RiskAssessor._is_test_file("tests/test_foo.py")
+        assert RiskAssessor._is_test_file("test/test_bar.py")
+        assert RiskAssessor._is_test_file("src/tests/test_baz.py")
+        assert RiskAssessor._is_test_file("foo_test.py")
+        assert RiskAssessor._is_test_file("src/test_utils.py")
+
+    def test_non_test_paths(self):
+        assert not RiskAssessor._is_test_file("src/core.py")
+        assert not RiskAssessor._is_test_file("auth/login.py")
+        assert not RiskAssessor._is_test_file("")
 
 
 class TestCoreModules:
