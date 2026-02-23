@@ -259,10 +259,11 @@ def _find_changed_symbols(
 
 def _query_symbol_callers(
     repo_id: str, changed_symbols: list[str], max_depth: int,
-) -> tuple[list[str], set[str]]:
-    """Query graph for callers of changed symbols. Returns (all_callers, affected_modules)."""
+) -> tuple[list[str], set[str], list[str]]:
+    """Query graph for callers of changed symbols. Returns (all_callers, affected_modules, chains)."""
     all_callers: list[str] = []
     affected_modules: set[str] = set()
+    chains: list[str] = []
     syms_to_query = changed_symbols[:8]
 
     def _query_sym(sym):
@@ -288,7 +289,10 @@ def _query_symbol_callers(
                     all_callers.append(f"  {src} --calls--> {tgt}")
                     mod = ".".join(src.split(".")[:-1]) if "." in src else src
                     affected_modules.add(mod)
-    return all_callers, affected_modules
+                    # Build propagation chain: sym → direct_caller
+                    caller_name = src.split(".")[-1] if "." in src else src
+                    chains.append(f"{sym} → {caller_name}")
+    return all_callers, affected_modules, chains
 
 
 # ── Local impact (orchestrator) ───────────────────────
@@ -338,7 +342,7 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
     for s in changed_symbols:
         parts.append(f"  {s}")
 
-    all_callers, affected_modules = _query_symbol_callers(repo_id, changed_symbols, max_depth)
+    all_callers, affected_modules, chains = _query_symbol_callers(repo_id, changed_symbols, max_depth)
 
     if all_callers:
         callers_dedup = list(dict.fromkeys(all_callers))
@@ -350,12 +354,45 @@ def _local_impact(repo_id: str, local_path: str, commit: str, max_depth: int) ->
         for m in sorted(affected_modules):
             parts.append(f"  {m}")
 
+    # Separate affected tests
+    test_modules = sorted(m for m in affected_modules if "test" in m.lower())
+    if test_modules:
+        parts.append(f"\n受影响测试 ({len(test_modules)}):")
+        for t in test_modules[:10]:
+            parts.append(f"  {t}")
+
+    # Propagation chains
+    if chains:
+        chains_dedup = list(dict.fromkeys(chains))
+        parts.append(f"\n传播链路 ({len(chains_dedup)}):")
+        for c in chains_dedup[:15]:
+            parts.append(f"  {c}")
+
+    # Enhanced risk assessment
+    public_changed = [s for s in changed_symbols if not s.startswith("_")]
+    is_core = any(
+        any(c in f.lower() for c in ("auth", "security", "payment", "database", "db", "core", "config"))
+        for f in changed_files
+    )
+
     risk = "low"
+    reasons: list[str] = []
+    if is_core:
+        risk = "high"
+        reasons.append("涉及核心模块")
     if len(affected_modules) > 5:
         risk = "high"
-    elif len(affected_modules) > 2:
+        reasons.append(f"波及 {len(affected_modules)} 个模块")
+    elif len(affected_modules) > 2 and risk != "high":
         risk = "medium"
-    parts.append(f"\n风险评估: {risk} — 影响 {len(affected_modules)} 个模块, {len(changed_symbols)} 个符号变更")
+        reasons.append(f"{len(affected_modules)} 个模块受影响")
+    if len(public_changed) > 5 and risk == "low":
+        risk = "medium"
+        reasons.append(f"{len(public_changed)} 个公共符号变更")
+    if not reasons:
+        reasons.append("变更范围有限" if risk == "low" else "")
+
+    parts.append(f"\n风险评估: {risk} — {'; '.join(r for r in reasons if r)}; {len(changed_symbols)} 个符号变更")
 
     return _client._truncate("\n".join(parts))
 
