@@ -1,6 +1,10 @@
 """Coach pipeline state machine — orchestrates clarify → spec → design → decompose → execute.
 
 Mirrors donnie/agent/lib/coach-feature.js but in async Python.
+
+Sub-modules:
+  chat     — _handle_manon_chat (conversational AI)
+  compact  — _microcompact / _auto_compact (context compaction)
 """
 
 from __future__ import annotations
@@ -47,9 +51,8 @@ class FeatureState:
     current_task_idx: int = -1
     failed_attempts: int = 0
     evaluation: dict | None = None
-    _failed_phase: str | None = None  # "spec" | "decompose" — retryable phase
+    _failed_phase: str | None = None
     _task_result_future: asyncio.Future | None = None
-
 
 # Active sessions: dev_id → FeatureState
 _sessions: dict[str, FeatureState] = {}
@@ -77,7 +80,7 @@ async def _send_chat(dev_id: str, content: str, role: str = "manon") -> None:
     await _send_dev(dev_id, {"type": "coach-chat", "role": role, "content": content})
 
 
-# Manon chat history per dev (separate from pipeline state)
+# ── Chat history persistence ─────────────────────────
 _chat_history: dict[str, list[dict]] = {}
 
 
@@ -119,532 +122,7 @@ async def _save_chat_history(dev_id: str, project_id: str = "") -> None:
     except Exception as exc:
         log.debug("Failed to save chat history for %s: %s", dev_id, exc)
 
-_MANON_SYSTEM = """你是 Manon（马浓），一个 AI 架构师助手。你可以：
-- 回答关于项目代码的问题（基于知识图谱上下文）
-- 分析代码结构、依赖关系、技术债务
-- 讨论架构设计和最佳实践
-- 提供重构建议、简化方案、替代设计
-- 帮助理解代码逻辑和调用链
-
-## 回答原则
-
-你的回答应结合「项目知识图谱上下文」和你的专业知识。遵守以下规则：
-
-1. **代码事实用上下文**：涉及项目中具体的函数实现、调用链、配置值、文件结构等事实性问题，必须基于知识图谱上下文回答。如果上下文中有明确信息，直接引用。
-2. **架构建议用专业知识**：当用户询问设计方案、重构建议、简化思路、最佳实践、替代方案时，你应该结合上下文中的项目现状，运用你的软件工程专业知识给出建议。这类问题不需要拘泥于上下文。
-3. **明确区分事实与建议**：回答中涉及项目代码的部分标注为事实（"根据代码..."），涉及你的建议的部分标注为建议（"建议..."或"可以考虑..."）。
-4. **给出完整答案**：系统已经为你做了多轮检索确保上下文完整。你应该充分利用所有提供的上下文，给出全面、详尽的回答。不要遗漏上下文中已有的关键信息。
-5. **不要编造代码事实**：不要假设项目中存在某个函数、配置或文件。如果上下文中没有，说明"当前上下文未覆盖"即可，但仍然可以基于已有信息给出架构层面的分析和建议。
-
-回答简洁、专业，用中文。"""
-
-_DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的任务是确保收集到的上下文能够完整回答用户的问题。
-
-## 分析步骤
-
-1. **拆解问题**：把用户的问题拆成具体的子问题/信息需求。例如用户问"审计报告是怎么生成的"，子问题可能包括：
-   - 审计流程的入口函数是什么？
-   - 报告生成用了哪些数据源？
-   - 具体的 Prompt 是怎么构造的？
-   - 输出格式是什么？
-
-2. **逐项检查**：对每个子问题，检查已有上下文是否包含足够的代码细节（函数实现、调用链、参数、配置）。仅仅出现函数名不算覆盖，必须有实际的代码逻辑或实现细节。
-
-3. **生成补充查询**：对未覆盖的子问题，提取最精确的查询词（函数名、类名、文件名、模块名）。优先使用已有上下文中出现但未展开的标识符。
-
-## 关键规则
-
-- **有 missing 就必须有 queries**：只要 missing 不为空，queries 也不能为空。从已有上下文中提取相关的函数名、类名、变量名作为查询词。
-- **不要假设查不到**：即使你觉得知识图谱可能没有某个信息，也要尝试查询。宁可查了没结果，也不要跳过。
-- **从上下文提取线索**：如果上下文中提到了某个类名/函数名但没有展开实现，用它作为查询词。
-
-## 输出格式
-
-只返回 JSON：
-```json
-{
-  "sub_questions": ["子问题1", "子问题2", ...],
-  "covered": ["已覆盖的子问题"],
-  "missing": ["未覆盖的子问题"],
-  "queries": ["查询词1", "查询词2"],
-  "reason": "简要说明"
-}
-```
-
-如果所有子问题都已覆盖：
-```json
-{"sub_questions": [...], "covered": [...], "missing": [], "queries": [], "reason": "上下文已完整覆盖所有子问题"}
-```"""
-
-_COMPACT_PROMPT = """请将以下对话历史压缩为结构化摘要（800字以内），严格按以下格式输出：
-
-## 讨论主题
-- 列出讨论过的主要话题（每个一行）
-
-## 关键结论
-- 已达成的结论和决策
-
-## 提到的代码
-- 文件名、函数名、类名（原样保留，不要改写或翻译）
-
-## 待处理
-- 未完成的事项或用户提出但未解决的问题
-
-对话历史：
-"""
-
-# Compact model — always use glm-4.7-fp8 regardless of coach model config
-_COMPACT_MODEL = "glm-4.7-fp8"
-
-# Thresholds (characters)
-_COMPACT_TRIGGER = 100_000   # auto-compact check threshold
-_COMPACT_TARGET = 80_000     # if still above this after microcompact → LLM summarize
-_MICRO_KEEP_RECENT = 5       # assistant messages in hot tail (full)
-_MICRO_TRUNCATE_AT = 2000    # truncate older assistant msgs longer than this
-_MICRO_KEEP_CHARS = 1500     # keep first N chars when truncating
-_AUTO_KEEP_RECENT = 10       # messages kept intact during LLM compaction
-_AUTO_FALLBACK_KEEP = 20     # fallback: keep recent N if LLM fails
-
-
-def _history_chars(history: list[dict]) -> int:
-    """Total character count of all messages in history."""
-    return sum(len(m.get("content", "")) for m in history)
-
-
-def _microcompact(history: list[dict]) -> int:
-    """Layer 1: truncate old long assistant messages, return number truncated."""
-    truncated = 0
-    # Count assistant messages from the end to find the hot-tail boundary
-    assistant_count = 0
-    hot_indices: set[int] = set()
-    for i in range(len(history) - 1, -1, -1):
-        if history[i]["role"] == "assistant":
-            assistant_count += 1
-            if assistant_count <= _MICRO_KEEP_RECENT:
-                hot_indices.add(i)
-
-    for i, m in enumerate(history):
-        if m["role"] != "assistant":
-            continue
-        if i in hot_indices:
-            continue  # hot tail — keep full
-        content = m.get("content", "")
-        if len(content) > _MICRO_TRUNCATE_AT:
-            history[i] = {
-                "role": "assistant",
-                "content": content[:_MICRO_KEEP_CHARS]
-                + f"\n...[已压缩，原文 {len(content)} 字符]",
-            }
-            truncated += 1
-    return truncated
-
-
-async def _auto_compact(
-    dev_id: str,
-    history: list[dict],
-    *,
-    force: bool = False,
-    focus_hint: str = "",
-) -> None:
-    """Layer 2 (+ layer 1): auto-compaction with LLM structured summary.
-
-    Args:
-        force: if True, skip threshold check (used by /compact).
-        focus_hint: optional focus instruction appended to summary prompt.
-    """
-    total = _history_chars(history)
-
-    # Always run microcompact first
-    n_trunc = _microcompact(history)
-    if n_trunc:
-        log.info("Microcompact: truncated %d old assistant messages", n_trunc)
-
-    total = _history_chars(history)
-
-    # Check if LLM compaction is needed
-    if not force and total <= _COMPACT_TRIGGER:
-        return
-    if not force and total <= _COMPACT_TARGET:
-        return
-
-    # Not enough messages to compact
-    if len(history) <= _AUTO_KEEP_RECENT:
-        return
-
-    from ..services.llm import llm_chat
-
-    keep_recent = history[-_AUTO_KEEP_RECENT:]
-    old_messages = history[:-_AUTO_KEEP_RECENT]
-
-    # Build text for LLM
-    lines = []
-    for m in old_messages:
-        if m["role"] == "system" and m.get("content", "").startswith("[历史摘要]"):
-            lines.append(f"[之前的摘要]: {m['content']}")
-        else:
-            role = "用户" if m["role"] == "user" else "Manon"
-            lines.append(f"{role}: {m['content']}")
-    old_text = "\n".join(lines)
-
-    prompt = _COMPACT_PROMPT + old_text
-    if focus_hint:
-        prompt += f"\n\n重点保留以下方面的信息：{focus_hint}"
-
-    try:
-        await _send_thinking(dev_id, True, "压缩对话历史...")
-        result = await llm_chat(
-            [{"role": "user", "content": prompt}],
-            model=_COMPACT_MODEL,
-            max_tokens=1200,
-            timeout=30.0,
-        )
-        summary = result.get("content", "").strip()
-        if summary:
-            history[:] = [
-                {"role": "system", "content": f"[历史摘要] {summary}"},
-            ] + keep_recent
-            old_chars = sum(len(m.get("content", "")) for m in old_messages)
-            new_chars = _history_chars(history)
-            log.info(
-                "Auto-compact: %d msgs → summary + %d recent (chars %d → %d)",
-                len(old_messages), len(keep_recent), old_chars, new_chars,
-            )
-            await _save_chat_history(dev_id)
-        await _send_thinking(dev_id, False)
-    except Exception as exc:
-        log.warning("Auto-compact LLM failed (%s), falling back to truncation", exc)
-        await _send_thinking(dev_id, False)
-        # Fallback: microcompact already done, just keep recent N
-        if len(history) > _AUTO_FALLBACK_KEEP:
-            history[:] = history[-_AUTO_FALLBACK_KEEP:]
-            log.info("Fallback: kept last %d messages", _AUTO_FALLBACK_KEEP)
-
-
-async def _iterative_graph_query(
-    dev_id: str, prompt: str, repo_id: str, initial_context: str, max_rounds: int = 3,
-) -> str:
-    """Perform iterative graph queries via saas/ — LLM analyzes gaps and triggers follow-up searches."""
-    import json as _json
-    from ..services.llm import llm_chat
-    from shared import saas_client
-
-    accumulated = initial_context
-    for round_idx in range(max_rounds):
-        # Ask LLM what additional info is needed
-        plan_messages = [
-            {"role": "system", "content": _DEEPQUERY_SYSTEM},
-            {"role": "user", "content": f"## 用户问题\n{prompt}\n\n## 已有知识图谱上下文\n{accumulated}"},
-        ]
-        try:
-            await _send_thinking(dev_id, True, f"完整性检查：第 {round_idx + 1} 轮自检...")
-            result = await llm_chat(plan_messages, max_tokens=2048, timeout=30.0)
-            text = result.get("content", "").strip()
-            log.info("Deep query LLM response (round %d): %s", round_idx + 1, text[:1000])
-            # Parse JSON from response
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start >= 0 and end > start:
-                parsed = _json.loads(text[start:end])
-            else:
-                log.warning("Deep query: no JSON found in response")
-                break
-            log.info("Deep query parsed: missing=%s, queries=%s", parsed.get("missing", []), parsed.get("queries", []))
-            follow_ups = parsed.get("queries", [])
-            missing = parsed.get("missing", [])
-            # Fallback: if LLM reports missing but no queries, use missing items as queries
-            if not follow_ups and missing:
-                follow_ups = [m.split("（")[0].split("(")[0].strip() for m in missing[:3]]
-                log.info("Auto-generated queries from missing: %s", follow_ups)
-            if not follow_ups:
-                await _send_thinking(dev_id, True, "完整性检查：上下文已完整覆盖所有子问题")
-                break
-            reason = parsed.get("reason", "")
-            missing_str = "、".join(missing[:3]) if missing else reason
-            await _send_thinking(dev_id, True, f"完整性检查：缺失 [{missing_str}]，补充查询 {follow_ups}")
-        except Exception as exc:
-            log.warning("Deep query planning failed: %s", exc)
-            break
-
-        # Execute follow-up queries via saas/
-        for q in follow_ups[:3]:
-            try:
-                import time as _time
-                t0 = _time.monotonic()
-                r = await saas_client.search(repo_id, q, top_k=5, depth=1)
-                q_ms = int((_time.monotonic() - t0) * 1000)
-                ctx = r.get("context", "")
-                if ctx:
-                    accumulated += f"\n\n## 补充查询: {q}\n{ctx}"
-                    ctx_tok = len(ctx) // 2
-                    await _send_dev(dev_id, {
-                        "type": "llm-query", "caller": "manon.deep",
-                        "command": f"补充检索 (round {round_idx + 1})",
-                        "query": q, "ts": datetime.now().isoformat(),
-                        "duration_ms": q_ms,
-                        "context_tokens": ctx_tok,
-                    })
-            except Exception as exc:
-                log.warning("Follow-up query '%s' failed: %s", q, exc)
-
-    return accumulated
-
-
-def _is_feature_request(prompt: str) -> bool:
-    """Heuristic: detect if the prompt is an explicit code-change / feature request."""
-    p = prompt.strip()
-    # Explicit pipeline trigger
-    if p.startswith("/feature") or p.startswith("/pipeline") or p.startswith("/do"):
-        return True
-    # Chinese keywords that signal code modification intent (startswith)
-    action_starts = (
-        "实现", "添加", "新增", "开发", "创建", "搭建", "构建",
-        "修改", "改一下", "改成", "改为", "重构", "优化",
-        "删除", "移除", "去掉",
-        "修复", "修bug", "修一下", "fix",
-        "写一个", "写个", "帮我写", "帮我实现", "帮我添加", "帮我开发", "帮我给",
-        "帮我修改", "帮我修复", "帮我重构", "帮我优化", "帮我创建",
-        "请实现", "请添加", "请修改", "请开发", "请创建",
-        "把这个", "把它", "开始实现", "开始开发", "开始执行", "开始做",
-    )
-    for kw in action_starts:
-        if p.startswith(kw):
-            return True
-    # Chinese keywords that can appear anywhere (contains) — confirmation & action
-    action_contains = (
-        "帮我实现", "帮我做", "帮我开发", "帮我写", "帮我修改",
-        "帮我添加", "帮我创建", "帮我修复", "帮我重构", "帮我优化",
-        "按方案", "按这个方案", "按你说的", "就这样做", "就这么做",
-        "那就做", "那就实现", "那就开发", "那就写",
-        "来实现", "去实现", "去做", "来做",
-        "开始吧", "做吧", "实现吧", "开发吧", "写吧",
-        "动手吧", "搞吧", "干吧", "整吧",
-        "进入开发", "进入pipeline", "启动pipeline",
-    )
-    for kw in action_contains:
-        if kw in p:
-            return True
-    # English keywords for code changes
-    p_lower = p.lower()
-    en_starts = (
-        "implement", "add ", "create ", "build ", "develop ",
-        "modify ", "change ", "update ", "refactor ", "optimize ",
-        "delete ", "remove ",
-        "fix ", "write ",
-    )
-    for kw in en_starts:
-        if p_lower.startswith(kw):
-            return True
-    # English confirmation keywords (contains)
-    en_contains = ("let's do it", "go ahead", "start coding", "do it", "let's implement")
-    for kw in en_contains:
-        if kw in p_lower:
-            return True
-    return False
-
-
-async def _handle_manon_chat(dev_id: str, msg: dict) -> None:
-    """Unified Manon handler — answers questions or auto-starts pipeline."""
-    import time
-    from datetime import datetime
-    from shared import saas_client
-    from shared.ast_sync import find_project_by_repo_id
-    from ..services.llm import llm_chat_stream
-
-    prompt = msg.get("content", "").strip()
-    if not prompt:
-        return
-    project_id = msg.get("projectId", "")
-
-    # /reset or /cancel — force-reset pipeline state
-    if prompt.lower() in ("/reset", "/cancel", "取消", "重置"):
-        state = get_session(dev_id)
-        if state and state.status not in (Status.IDLE, Status.DONE, Status.FAILED):
-            state.status = Status.IDLE
-            await _send_chat(dev_id, "Pipeline 已重置，回到正常对话模式。", role="system")
-            await _send_dev(dev_id, {"type": "coach-thinking", "active": False})
-            await _send_dev(dev_id, {"type": "coach-stage", "stage": "idle"})
-            return
-        await _send_chat(dev_id, "当前没有进行中的 pipeline。", role="system")
-        return
-
-    # /do — manual pipeline trigger from chat context
-    if prompt.lower().startswith("/do"):
-        extra = prompt[3:].strip()
-        history = await _load_chat_history(dev_id)
-        context_desc = extra if extra else ""
-        if history:
-            recent = history[-10:]
-            lines = []
-            for h in recent:
-                role = "用户" if h["role"] == "user" else "Manon"
-                lines.append(f"{role}: {h['content']}")
-            history_block = "\n".join(lines)
-            if context_desc:
-                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n{context_desc}"
-            else:
-                context_desc = f"## 对话上下文\n{history_block}\n\n## 当前需求\n请根据以上对话内容，自动识别需要执行的任务，进入工作流程。"
-        elif not context_desc:
-            await _send_chat(dev_id, "没有对话上下文，请先描述你的需求，或使用 `/do <需求描述>`。", role="system")
-            return
-        await _start_feature(dev_id, {
-            "description": context_desc,
-            "projectId": project_id,
-            "prompt": extra or None,
-        })
-        return
-
-    # /compact — manual compaction (layer 3)
-    if prompt.lower().startswith("/compact"):
-        hint = prompt[8:].strip()
-        history = await _load_chat_history(dev_id)
-        if not history:
-            await _send_chat(dev_id, "当前没有对话历史。", role="system")
-            return
-        before_chars = _history_chars(history)
-        before_msgs = len(history)
-        await _auto_compact(dev_id, history, force=True, focus_hint=hint)
-        after_chars = _history_chars(history)
-        after_msgs = len(history)
-        await _save_chat_history(dev_id, project_id)
-        await _send_chat(
-            dev_id,
-            f"对话历史已压缩：{before_msgs} 条消息 ({before_chars:,} 字符) → "
-            f"{after_msgs} 条 ({after_chars:,} 字符)"
-            + (f"\n重点保留：{hint}" if hint else ""),
-            role="system",
-        )
-        return
-
-    # If pipeline is active, route as user-response
-    state = get_session(dev_id)
-    if state and state.status not in (Status.IDLE, Status.DONE, Status.FAILED):
-        await _handle_user_response(dev_id, {"content": prompt})
-        return
-
-    # Query graph for context via saas/
-    graph_context = ""
-    context_tokens = 0
-    project_name = ""
-    project_path = ""
-    repo_id = ""
-    if project_id:
-        # Look up repo_id from local project cache or use project_id directly
-        found = find_project_by_repo_id(project_id)
-        if found:
-            project_path, proj_info = found
-            project_name = proj_info.get("name", "")
-            repo_id = project_id
-        else:
-            # project_id might be the repo_id itself
-            repo_id = project_id
-            try:
-                repo = await saas_client.repos_get(repo_id)
-                project_name = repo.get("name", "")
-            except Exception:
-                pass
-        if repo_id:
-            try:
-                await _send_thinking(dev_id, True, "查询知识图谱...")
-                t0 = time.monotonic()
-                result = await saas_client.search(repo_id, prompt, top_k=10, depth=1)
-                graph_ms = int((time.monotonic() - t0) * 1000)
-                ctx = result.get("context", "")
-                context_tokens = len(ctx) // 2 if ctx else 0
-                await _send_dev(dev_id, {
-                    "type": "llm-query", "caller": "manon",
-                    "command": "saas_client.search(hybrid)",
-                    "query": prompt[:120], "ts": datetime.now().isoformat(),
-                    "duration_ms": graph_ms,
-                    "context_tokens": context_tokens,
-                })
-                if ctx:
-                    graph_context = ctx
-                    await _send_thinking(dev_id, True, f"知识图谱返回 ~{context_tokens/1000:.1f}k tokens ({graph_ms}ms)")
-                    try:
-                        graph_context = await _iterative_graph_query(
-                            dev_id, prompt, repo_id, graph_context, max_rounds=2,
-                        )
-                        context_tokens = len(graph_context) // 2
-                    except Exception as exc:
-                        log.warning("Iterative graph query failed: %s", exc)
-                else:
-                    await _send_thinking(dev_id, True, f"知识图谱无匹配结果 ({graph_ms}ms)")
-                await _send_thinking(dev_id, False)
-            except Exception as exc:
-                await _send_thinking(dev_id, False)
-                log.warning("saas_client.search failed: %s", exc)
-                await _send_chat(dev_id, f"⚠ 知识图谱查询失败: {exc}", role="system")
-
-    # Classify intent: explicit task request → pipeline, otherwise → chat
-    if _is_feature_request(prompt):
-        # Include recent chat history so pipeline LLM understands context
-        history = await _load_chat_history(dev_id)
-        context_desc = prompt
-        if history:
-            recent = history[-10:]
-            lines = []
-            for h in recent:
-                role = "用户" if h["role"] == "user" else "Manon"
-                lines.append(f"{role}: {h['content']}")
-            context_desc = "## 对话上下文\n" + "\n".join(lines) + f"\n\n## 当前需求\n{prompt}"
-        await _start_feature(dev_id, {
-            "description": context_desc,
-            "projectId": project_id,
-            "prompt": prompt,
-        })
-        return
-
-    # Chat mode (default) — answer directly with graph context
-    history = await _load_chat_history(dev_id)
-    history.append({"role": "user", "content": prompt})
-    await _save_chat_history(dev_id, project_id)
-
-    # Three-layer compaction: auto-compact before LLM call
-    await _auto_compact(dev_id, history)
-
-    system = _MANON_SYSTEM
-    if project_name or project_path:
-        system += f"\n\n## 当前工作项目\n你正在为「{project_name}」项目提供服务。\n项目路径: {project_path}\n\n请始终记住你当前所处的项目是「{project_name}」，你的所有回答都应该围绕这个项目。当用户提问时，默认是在问关于「{project_name}」项目的问题。"
-    if graph_context:
-        system += f"\n\n## 项目知识图谱上下文\n\n{graph_context}"
-    elif project_path:
-        system += "\n\n（知识图谱未返回相关上下文。请告知用户当前查询未匹配到项目代码信息，建议用更具体的关键词（如函数名、类名、文件名）重新提问。不要基于假设回答项目相关问题。）"
-
-    messages = [{"role": "system", "content": system}] + history
-
-    await _send_thinking(dev_id, True, f"调用 LLM (~{context_tokens/1000:.1f}k tokens 上下文)...")
-    try:
-        t0 = time.monotonic()
-        await _send_dev(dev_id, {"type": "coach-stream-start"})
-        full_reasoning = ""
-        full_content = ""
-        async for chunk in llm_chat_stream(messages, max_tokens=4096):
-            if chunk["type"] == "reasoning":
-                full_reasoning += chunk["delta"]
-                await _send_dev(dev_id, {"type": "coach-reasoning-delta", "delta": chunk["delta"]})
-            else:
-                full_content += chunk["delta"]
-                await _send_dev(dev_id, {"type": "coach-content-delta", "delta": chunk["delta"]})
-            await asyncio.sleep(0)  # flush WS between chunks
-        llm_ms = int((time.monotonic() - t0) * 1000)
-        log.info("Stream done: reasoning=%d chars, content=%d chars, %.1fs", len(full_reasoning), len(full_content), llm_ms/1000)
-        # Append timing info to the end of the response
-        time_suffix = f"\n\n---\n*⏱ {llm_ms/1000:.1f}s*"
-        await _send_dev(dev_id, {"type": "coach-content-delta", "delta": time_suffix})
-        full_content += time_suffix
-        history.append({"role": "assistant", "content": full_content})
-        _microcompact(history)  # Layer 1: truncate old long assistant replies
-        await _save_chat_history(dev_id, project_id)
-        await _send_thinking(dev_id, True, f"LLM 响应完成 ({llm_ms/1000:.1f}s)")
-        await _send_thinking(dev_id, False)
-        await _send_dev(dev_id, {"type": "coach-stream-end"})
-    except Exception as exc:
-        await _send_thinking(dev_id, False)
-        await _send_dev(dev_id, {"type": "coach-stream-end"})
-        await _send_chat(dev_id, f"LLM 调用失败：{exc}", role="system")
-
-
-# ---- Report generation ----
+# ── Report generation ─────────────────────────────────
 
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "static" / "reports"
 
@@ -694,16 +172,13 @@ async def generate_report(state: FeatureState) -> None:
     title = (state.spec or {}).get("title", state.description[:40]) or state.feature_id
     safe_name = f"{state.feature_id}_{date_str}"
 
-    # ── Build HTML sections ──
     parts: list[str] = []
     parts.append(f"<h1>{_esc(title)}</h1>")
     parts.append(f'<div class="meta">Task #{_esc(state.feature_id)} · {now.strftime("%Y-%m-%d %H:%M")}</div>')
 
-    # Description
     parts.append("<h2>需求描述</h2>")
     parts.append(f"<p>{_esc(state.description)}</p>")
 
-    # Clarification Q&A
     if state.conversation_history:
         parts.append("<h2>需求对齐</h2>")
         parts.append("<table><tr><th>问题</th><th>回答</th></tr>")
@@ -711,7 +186,6 @@ async def generate_report(state: FeatureState) -> None:
             parts.append(f"<tr><td>{_esc(qa.get('question',''))}</td><td>{_esc(qa.get('answer',''))}</td></tr>")
         parts.append("</table>")
 
-    # Spec
     spec = state.spec or {}
     if spec:
         parts.append("<h2>任务规格</h2>")
@@ -723,7 +197,6 @@ async def generate_report(state: FeatureState) -> None:
                 parts.append(f"<li>[{_esc(r.get('priority','MUST'))}] {_esc(r.get('title',''))}</li>")
             parts.append("</ul>")
 
-    # Design
     design = state.design or {}
     if design:
         parts.append("<h2>架构设计</h2>")
@@ -735,7 +208,6 @@ async def generate_report(state: FeatureState) -> None:
                 parts.append(f"<tr><td>{_esc(f.get('file',''))}</td><td>{_esc(f.get('action',''))}</td><td>{_esc(f.get('description',''))}</td></tr>")
             parts.append("</table>")
 
-    # Tasks with diffs, self-test, and token usage
     total_prompt = 0
     total_completion = 0
     if state.tasks:
@@ -762,13 +234,11 @@ async def generate_report(state: FeatureState) -> None:
             )
         parts.append("</table>")
 
-        # Per-task diffs and self-test
         for t in state.tasks:
             task_diffs = t.get("diffs") or {}
             task_st = t.get("selfTest") or {}
             if task_diffs or task_st:
                 parts.append(f'<h2>任务 #{t.get("id","")} — {_esc(t.get("title",""))}</h2>')
-                # Self-test result
                 if task_st:
                     passed = task_st.get("passed", True)
                     badge = '<span class="badge badge-ok">PASS</span>' if passed else '<span class="badge badge-fail">FAIL</span>'
@@ -779,13 +249,11 @@ async def generate_report(state: FeatureState) -> None:
                         for iss in issues:
                             parts.append(f"<li>{_esc(str(iss))}</li>")
                         parts.append("</ul>")
-                # Diffs
                 if task_diffs:
                     for fp, diff_content in task_diffs.items():
                         parts.append(f"<p><strong>{_esc(fp)}</strong></p>")
                         parts.append(f"<pre>{_render_diff_html(diff_content)}</pre>")
 
-    # Evaluation section
     ev = state.evaluation
     if ev:
         parts.append("<h2>整体评价</h2>")
@@ -800,7 +268,6 @@ async def generate_report(state: FeatureState) -> None:
                 parts.append(f"<li>{_esc(str(iss))}</li>")
             parts.append("</ul>")
 
-    # Token statistics
     total_all = total_prompt + total_completion
     parts.append("<h2>Token 统计</h2>")
     parts.append('<table class="token-table"><tr><th>类型</th><th>数量</th></tr>')
@@ -809,14 +276,12 @@ async def generate_report(state: FeatureState) -> None:
     parts.append(f"<tr><td><strong>Total</strong></td><td><strong>{total_all:,}</strong></td></tr>")
     parts.append("</table>")
 
-    # Result summary
     parts.append("<h2>执行结果</h2>")
     parts.append(f"<p><strong>状态:</strong> {state.status.value}</p>")
 
     body = "\n".join(parts)
     html = f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{_esc(title)}</title><style>{_REPORT_CSS}</style></head><body>{body}</body></html>"
 
-    # Write PDF (fallback to HTML if xhtml2pdf unavailable)
     report_url = ""
     try:
         from xhtml2pdf import pisa
@@ -835,7 +300,6 @@ async def generate_report(state: FeatureState) -> None:
         report_url = f"/static/reports/{safe_name}.html"
         log.info("HTML report generated: %s", html_path)
 
-    # Notify frontend
     await _send_dev(state.dev_id, {
         "type": "feature-report",
         "featureId": state.feature_id,
@@ -845,8 +309,7 @@ async def generate_report(state: FeatureState) -> None:
         "ts": now.isoformat(),
     })
 
-
-# ---- Entry points called from main.py ----
+# ── Entry points called from main.py ─────────────────
 
 async def handle_dev_message(dev_id: str, msg: dict) -> None:
     """Route incoming developer WebSocket messages."""
@@ -855,6 +318,7 @@ async def handle_dev_message(dev_id: str, msg: dict) -> None:
     if msg_type == "feature-request":
         await _start_feature(dev_id, msg)
     elif msg_type == "manon-chat":
+        from .chat import _handle_manon_chat
         await _handle_manon_chat(dev_id, msg)
     elif msg_type == "user-response":
         await _handle_user_response(dev_id, msg)
@@ -887,7 +351,7 @@ async def handle_upstream_message(msg: dict) -> None:
     await handle_agent_result(msg)
 
 
-# ---- Feature review handlers ----
+# ── Feature review handlers ──────────────────────────
 
 async def handle_feature_approved(dev_id: str) -> None:
     """Handle report approval — git add + commit + push."""
@@ -941,9 +405,7 @@ async def handle_feature_rejected(dev_id: str, reason: str) -> None:
     await _send_dev(dev_id, {"type": "coach-stage", "stage": "executing"})
     await _send_chat(dev_id, f"收到驳回意见：{reason}\n正在重新调整...", role="system")
 
-    # Inject feedback and re-run task loop
     state.description += f"\n\n## 用户驳回意见\n{reason}"
-    # Reset failed tasks to pending for re-execution
     for t in state.tasks:
         if t.get("status") in ("completed", "failed"):
             t["status"] = "pending"
@@ -952,7 +414,7 @@ async def handle_feature_rejected(dev_id: str, reason: str) -> None:
     await execute_task_loop(state)
 
 
-# ---- Internal handlers ----
+# ── Internal handlers ────────────────────────────────
 
 async def _start_feature(dev_id: str, msg: dict) -> None:
     from .clarify import clarify_intent
@@ -998,7 +460,6 @@ async def _handle_user_response(dev_id: str, msg: dict) -> None:
         await clarify_intent(state)
 
     elif state.status == Status.EXECUTING:
-        # User guidance for failed task or failed phase
         content = msg.get("content", "").strip()
         if content == "重试":
             if state._failed_phase:
@@ -1016,7 +477,6 @@ async def _handle_user_response(dev_id: str, msg: dict) -> None:
                 await _retry_with_guidance(state, content)
 
     elif state.status == Status.REVIEWING:
-        # User can type feedback during review
         content = msg.get("content", "").strip()
         if content in ("通过", "approve", "ok"):
             await handle_feature_approved(dev_id)
@@ -1121,4 +581,3 @@ async def _retry_with_guidance(state: FeatureState, guidance: str) -> None:
     state.failed_attempts = 0
     await _send_chat(state.dev_id, "收到指导，正在重试...", role="system")
     await execute_task_loop(state)
-

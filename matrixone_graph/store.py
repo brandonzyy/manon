@@ -234,8 +234,11 @@ class VectorIndex:
         q_norm = np.linalg.norm(q).clip(min=1e-10)
         scores = (matrix @ q.T).squeeze() / (norms.squeeze() * q_norm)
         k = min(top_k, len(ids))
-        top_idx = np.argpartition(-scores, k)[:k]
-        top_idx = top_idx[np.argsort(-scores[top_idx])]
+        if k >= len(ids):
+            top_idx = np.argsort(-scores)[:k]
+        else:
+            top_idx = np.argpartition(-scores, k)[:k]
+            top_idx = top_idx[np.argsort(-scores[top_idx])]
         return [(ids[i], float(scores[i])) for i in top_idx]
 
     def search_entities(self, query_vec, top_k=10):

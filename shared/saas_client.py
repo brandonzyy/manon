@@ -102,14 +102,6 @@ async def impact(repo_id: str, *, commit: str = "HEAD", max_depth: int = 3) -> d
     return await _get(f"/api/v1/repos/{repo_id}/impact", commit=commit, max_depth=max_depth)
 
 
-async def deep_query(repo_id: str, question: str, *, max_rounds: int = 3) -> dict:
-    return await _post(
-        f"/api/v1/repos/{repo_id}/deep-query",
-        {"question": question, "max_rounds": max_rounds},
-        timeout=50,
-    )
-
-
 # ── Indexing / Sync ──────────────────────────────────
 
 async def sync_ast(repo_id: str, files: list[dict], deleted_files: list[str], *, full_reindex: bool = False) -> dict:

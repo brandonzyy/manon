@@ -268,32 +268,6 @@ async def call_glm5(
         raise
 
 
-async def call_glm5_full(
-    system_prompt: str | None,
-    user_prompt: str | None,
-    *,
-    messages: list[dict] | None = None,
-    model: str | None = None,
-    max_tokens: int = 4096,
-    timeout: float = 120.0,
-) -> dict:
-    """Like call_glm5 but returns {"content": str, "reasoning": str}."""
-    model = model or _active_model()
-    msgs = messages or [
-        {"role": "system", "content": system_prompt or ""},
-        {"role": "user", "content": user_prompt or ""},
-    ]
-    try:
-        return await llm_chat(msgs, model=model, max_tokens=max_tokens, timeout=timeout)
-    except Exception as exc:
-        fallback = _active_fallback()
-        if fallback and fallback != model:
-            log.warning("%s failed (%s), falling back to %s", model, exc, fallback)
-            await _broadcast_model_status("coach", fallback)
-            return await llm_chat(msgs, model=fallback, max_tokens=max_tokens, timeout=timeout)
-        raise
-
-
 def parse_json_from_llm(text: str) -> dict | list:
     """Extract JSON from LLM output, stripping markdown fences."""
     cleaned = re.sub(r"```(?:json)?\s*", "", text)

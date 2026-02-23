@@ -72,46 +72,10 @@ def _make_entity_id(module: str, symbol_name: str) -> str:
     return f"{module}.{symbol_name}" if module else symbol_name
 
 
-def _resolve_relative_module(current_module: str, import_path: str) -> str:
-    """Resolve a relative import path against the current module.
-
-    Examples:
-        ("electron.orchestrator.skill-router", "./tool-executor")
-        → "electron.orchestrator.tool-executor"
-
-        ("electron.orchestrator.skill-router", "../utils/helper")
-        → "electron.utils.helper"
-
-    WARNING: This function splits module IDs by '.' to count directory levels.
-    Filenames with dots (e.g., 'foo.test.ts' → module 'dir.foo.test') will
-    produce incorrect results.  Prefer _resolve_import_by_filepath() when the
-    original file path is available.
-    """
-    if not import_path.startswith("."):
-        return import_path
-    parts = current_module.split(".")
-    # Start from parent directory (drop the file-level module name)
-    parts = parts[:-1]
-    # Consume leading ../ or ./
-    path = import_path
-    while path.startswith("../"):
-        path = path[3:]
-        if parts:
-            parts.pop()
-    if path.startswith("./"):
-        path = path[2:]
-    # Convert remaining slashes to dots
-    resolved = path.replace("/", ".")
-    if parts:
-        return ".".join(parts) + "." + resolved
-    return resolved
-
-
 def _resolve_import_by_filepath(file_path: str, import_path: str) -> str:
     """Resolve a relative import using the actual file path.
 
-    Unlike _resolve_relative_module (which splits module IDs by '.'),
-    this uses the file path with '/' separators so that filenames
+    Uses the file path with '/' separators so that filenames
     containing dots (e.g., 'intent-detector.test.ts') are treated as
     a single path component.
 
