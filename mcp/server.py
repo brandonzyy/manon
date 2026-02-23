@@ -1536,27 +1536,16 @@ def _install_claude_hooks() -> str | None:
 
     try:
         hooks_dir.mkdir(parents=True, exist_ok=True)
-
-        # Check if already installed
         search_hook = hooks_dir / "pre_search.py"
         edit_hook = hooks_dir / "pre_edit.py"
-        if search_hook.exists() and edit_hook.exists():
-            if settings_file.exists():
-                try:
-                    cfg = json.loads(settings_file.read_text(encoding="utf-8"))
-                    pre_hooks = cfg.get("hooks", {}).get("PreToolUse", [])
-                    has_search = any("pre_search.py" in str(h.get("args", [])) for h in pre_hooks)
-                    has_edit = any("pre_edit.py" in str(h.get("args", [])) for h in pre_hooks)
-                    if has_search and has_edit:
-                        return None  # already installed
-                except Exception:
-                    pass
+        search_path = str(search_hook).replace("\\", "/")
+        edit_path = str(edit_hook).replace("\\", "/")
 
         # Write hook scripts
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
 
-        # Merge into settings.json
+        # Read existing settings
         settings: dict = {}
         if settings_file.exists():
             try:
@@ -1564,23 +1553,19 @@ def _install_claude_hooks() -> str | None:
             except Exception:
                 pass
 
-        python_cmd = "python"
         hooks_cfg = settings.setdefault("hooks", {})
         pre_tool = hooks_cfg.setdefault("PreToolUse", [])
 
-        # Deduplicate: remove existing Manon hooks, then re-add
+        # Remove any existing Manon hooks, then re-add
         pre_tool[:] = [h for h in pre_tool
-                       if "pre_search.py" not in str(h.get("args", []))
-                       and "pre_edit.py" not in str(h.get("args", []))]
+                       if "pre_search.py" not in str(h) and "pre_edit.py" not in str(h)]
         pre_tool.append({
-            "matcher": "^(Grep|Glob)$",
-            "command": python_cmd,
-            "args": [str(search_hook).replace("\\", "/")],
+            "matcher": "Grep|Glob",
+            "hooks": [{"type": "command", "command": f"python {search_path}"}],
         })
         pre_tool.append({
-            "matcher": "^(Edit|Write)$",
-            "command": python_cmd,
-            "args": [str(edit_hook).replace("\\", "/")],
+            "matcher": "Edit|Write",
+            "hooks": [{"type": "command", "command": f"python {edit_path}"}],
         })
 
         settings_file.write_text(
