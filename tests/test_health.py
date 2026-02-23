@@ -61,10 +61,11 @@ class TestScoreFunctions:
         assert _score_fi(0.5) == 4
 
     def test_score_dc(self):
-        assert _score_dc(0.02) == 10
-        assert _score_dc(0.1) == 8
-        assert _score_dc(0.25) == 6
+        assert _score_dc(0.05) == 10
+        assert _score_dc(0.2) == 8
+        assert _score_dc(0.4) == 6
         assert _score_dc(0.5) == 4
+        assert _score_dc(0.8) == 2
 
     def test_score_tc(self):
         assert _score_tc(0.9) == 10

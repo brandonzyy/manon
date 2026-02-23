@@ -42,16 +42,14 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
     edges = list(g.edges(data=True))
 
     # ── MC: Module Coupling ──────────────────────────────
-    total_edges = len(edges)
-    cross_module = 0
-    for src, tgt, data in edges:
-        kind = data.get("kind", "")
-        if kind not in ("imports", "calls"):
-            continue
-        if _entity_module(src) != _entity_module(tgt):
-            cross_module += 1
-    import_call_edges = [e for e in edges if e[2].get("kind") in ("imports", "calls")]
-    mc_ratio = cross_module / max(len(import_call_edges), 1)
+    # Only count `calls` edges — imports are inherently cross-module in Python
+    # and don't reflect runtime coupling.
+    call_edges = [e for e in edges if e[2].get("kind") == "calls"]
+    cross_module = sum(
+        1 for src, tgt, _ in call_edges
+        if _entity_module(src) != _entity_module(tgt)
+    )
+    mc_ratio = cross_module / max(len(call_edges), 1)
 
     # ── CD: Circular Dependencies ────────────────────────
     # Build module-level import subgraph
@@ -139,7 +137,7 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
                     max_depth = lengths
 
     return {
-        "mc": {"ratio": round(mc_ratio, 3), "cross_module": cross_module, "total": len(import_call_edges)},
+        "mc": {"ratio": round(mc_ratio, 3), "cross_module": cross_module, "total": len(call_edges)},
         "cd": {"cycles": cycle_count, "modules": cycle_modules},
         "fi": {"ratio": round(fi_ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called},
         "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(checkable), "excluded_entry_points": len(entry_point_ids)},
@@ -232,10 +230,13 @@ def _score_fi(ratio: float) -> int:
 
 
 def _score_dc(ratio: float) -> int:
-    if ratio <= 0.05: return 10
-    if ratio <= 0.15: return 8
-    if ratio <= 0.3: return 6
-    return 4
+    # Thresholds account for framework entry points (decorators, callbacks)
+    # that static analysis cannot detect as "called".
+    if ratio <= 0.1: return 10
+    if ratio <= 0.25: return 8
+    if ratio <= 0.45: return 6
+    if ratio <= 0.65: return 4
+    return 2
 
 
 def _score_tc(ratio: float) -> int:
