@@ -39,9 +39,9 @@ _BUILTINS = frozenset({
 
 
 def _entity_module(entity_id: str) -> str:
-    """Extract two-level module from entity ID (e.g. 'foo.bar.Baz' -> 'foo.bar')."""
+    """Extract top-level module from entity ID (e.g. 'foo.bar.Baz' -> 'foo')."""
     parts = entity_id.split(".")
-    return ".".join(parts[:2]) if len(parts) >= 2 else parts[0] if parts else ""
+    return parts[0] if parts else ""
 
 
 def _compute_mc(edges: list) -> dict:
