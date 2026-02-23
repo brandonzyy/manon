@@ -22,7 +22,7 @@ web/static/reports/
 web/static/test-results/
 
 # internal docs (business plans, etc.)
-docs/
+docs/_*.md
 .last-deploy-hash
 .mcp.json
 scripts/deploy-r760.py
