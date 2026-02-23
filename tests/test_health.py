@@ -101,11 +101,11 @@ class TestComputeGraphMetrics:
         g.add_entity(Entity(id="mod_b", kind="module", name="mod_b", file_path="mod_b.py"))
         # Functions
         g.add_entity(Entity(id="mod_a.foo", kind="function", name="foo", file_path="mod_a.py", line_start=1, line_end=10))
-        g.add_entity(Entity(id="mod_a.bar", kind="function", name="bar", file_path="mod_a.py", line_start=12, line_end=80))
+        g.add_entity(Entity(id="mod_a._bar", kind="function", name="_bar", file_path="mod_a.py", line_start=12, line_end=80))
         g.add_entity(Entity(id="mod_b.baz", kind="function", name="baz", file_path="mod_b.py", line_start=1, line_end=5))
         # Relations
         g.add_relation(Relation(src_id="mod_a.foo", tgt_id="mod_b.baz", kind="calls"))
-        g.add_relation(Relation(src_id="mod_a.bar", tgt_id="mod_a.foo", kind="calls"))
+        g.add_relation(Relation(src_id="mod_a._bar", tgt_id="mod_a.foo", kind="calls"))
         g.add_relation(Relation(src_id="mod_a", tgt_id="mod_b", kind="imports"))
         return g
 
@@ -120,10 +120,10 @@ class TestComputeGraphMetrics:
     def test_dead_code_detection(self):
         g = self._build_graph()
         m = compute_graph_metrics(g)
-        # mod_a.bar has no callers (zero in-degree) → dead
-        # mod_a.foo is called by bar → alive
+        # mod_a._bar has no callers (zero in-degree), private → dead
+        # mod_a.foo is called by _bar → alive
         # mod_b.baz is called by foo → alive
-        assert m["dc"]["dead_count"] == 1  # only bar
+        assert m["dc"]["dead_count"] == 1  # only _bar
 
     def test_dc_excludes_entry_points(self):
         """Dunder methods, test entities, and classes should not count as dead code."""
@@ -135,15 +135,15 @@ class TestComputeGraphMetrics:
         g.add_entity(Entity(id="mod.Cls", kind="class", name="Cls", file_path="mod.py"))
         # Test entity — excluded
         g.add_entity(Entity(id="tests.test_mod.test_foo", kind="function", name="test_foo", file_path="tests/test_mod.py"))
-        # Regular function with zero in-degree — dead
-        g.add_entity(Entity(id="mod.orphan", kind="function", name="orphan", file_path="mod.py"))
-        # Regular function with caller — alive
-        g.add_entity(Entity(id="mod.used", kind="function", name="used", file_path="mod.py"))
-        g.add_relation(Relation(src_id="mod.orphan", tgt_id="mod.used", kind="calls"))
+        # Private function with zero in-degree — dead
+        g.add_entity(Entity(id="mod._orphan", kind="function", name="_orphan", file_path="mod.py"))
+        # Private function with caller — alive
+        g.add_entity(Entity(id="mod._used", kind="function", name="_used", file_path="mod.py"))
+        g.add_relation(Relation(src_id="mod._orphan", tgt_id="mod._used", kind="calls"))
         m = compute_graph_metrics(g)
-        assert m["dc"]["dead_count"] == 1  # only mod.orphan
+        assert m["dc"]["dead_count"] == 1  # only mod._orphan
         assert m["dc"]["excluded_entry_points"] == 3  # __init__, Cls, test_foo
-        assert m["dc"]["total"] == 2  # only orphan + used are checkable
+        assert m["dc"]["total"] == 2  # only _orphan + _used are checkable
 
     def test_dc_excludes_decorated(self):
         """Decorated functions (framework entry points) should not count as dead code."""
@@ -152,10 +152,10 @@ class TestComputeGraphMetrics:
         # Decorated route handler — excluded
         g.add_entity(Entity(id="mod.get_users", kind="function", name="get_users",
                             file_path="mod.py", decorators=["router.get"]))
-        # Plain function with zero in-degree — dead
-        g.add_entity(Entity(id="mod.helper", kind="function", name="helper", file_path="mod.py"))
+        # Private function with zero in-degree — dead
+        g.add_entity(Entity(id="mod._helper", kind="function", name="_helper", file_path="mod.py"))
         m = compute_graph_metrics(g)
-        assert m["dc"]["dead_count"] == 1  # only helper
+        assert m["dc"]["dead_count"] == 1  # only _helper
         assert m["dc"]["excluded_entry_points"] == 1  # get_users
 
     def test_oversized_functions(self):
