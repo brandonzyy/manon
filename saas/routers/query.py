@@ -68,7 +68,7 @@ async def graph_traverse(
     repo_id: str,
     symbol: str = Query(..., min_length=1),
     depth: int = Query(1, ge=0, le=3),
-    direction: str = Query("both", regex="^(both|callers|callees)$"),
+    direction: str = Query("both", pattern="^(both|callers|callees)$"),
     ctx: TenantContext = Depends(require_tenant),
 ):
     row = await _require_indexed_repo(repo_id, ctx.tenant_id)
