@@ -131,6 +131,8 @@ def _detect_git_root(root: Path) -> tuple[Path, str]:
         git_root = root
     try:
         rel_prefix = root.relative_to(git_root).as_posix()
+        if rel_prefix == ".":
+            rel_prefix = ""
     except ValueError:
         rel_prefix = ""
     prefix_with_slash = (rel_prefix + "/") if rel_prefix else ""
@@ -169,13 +171,16 @@ def _get_changed_files(
             return f"git diff 失败: {diff_result.stderr.strip()}"
 
         raw_files = [f for f in diff_result.stdout.strip().split("\n") if f]
-        wt_result = subprocess.run(
-            ["git", "diff", "HEAD", "--name-only"],
-            cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
-        )
-        if wt_result.returncode == 0:
-            wt_files = [f for f in wt_result.stdout.strip().split("\n") if f]
-            raw_files = list(dict.fromkeys(raw_files + wt_files))
+        # Only merge working tree changes when analyzing HEAD (current state),
+        # not when analyzing a specific historical commit.
+        if commit == "HEAD":
+            wt_result = subprocess.run(
+                ["git", "diff", "HEAD", "--name-only"],
+                cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
+            )
+            if wt_result.returncode == 0:
+                wt_files = [f for f in wt_result.stdout.strip().split("\n") if f]
+                raw_files = list(dict.fromkeys(raw_files + wt_files))
 
         changed_files = []
         for f in raw_files:
@@ -222,15 +227,16 @@ def _find_changed_symbols(
             wt_udiff = subprocess.run(
                 ["git", "diff", "HEAD", "--unified=0", "--", git_file_path],
                 cwd=str(git_root), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=10,
-            )
-            for line in wt_udiff.stdout.split("\n"):
-                m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
-                if m:
-                    add_start = int(m.group(3))
-                    add_count = int(m.group(4)) if m.group(4) else 1
-                    changed_lines.update(range(add_start, add_start + add_count))
-                    if add_count == 0 and add_start > 0:
-                        changed_lines.add(add_start)
+            ) if commit == "HEAD" else None
+            if wt_udiff and wt_udiff.returncode == 0:
+                for line in wt_udiff.stdout.split("\n"):
+                    m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+                    if m:
+                        add_start = int(m.group(3))
+                        add_count = int(m.group(4)) if m.group(4) else 1
+                        changed_lines.update(range(add_start, add_start + add_count))
+                        if add_count == 0 and add_start > 0:
+                            changed_lines.add(add_start)
             if not changed_lines:
                 continue
             full_path = root / cf

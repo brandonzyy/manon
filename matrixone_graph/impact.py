@@ -81,21 +81,29 @@ class RiskAssessment:
 class ImpactResult:
     commit: str
     changed_symbols: list[ChangedSymbol]
+    changed_files: list[ChangedFile] = field(default_factory=list)
     direct_callers: list[Caller] = field(default_factory=list)
     indirect_callers: list[Caller] = field(default_factory=list)
     affected_modules: list[str] = field(default_factory=list)
     affected_tests: list[str] = field(default_factory=list)
+    propagation_chains: list[str] = field(default_factory=list)
     risk: RiskAssessment | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "commit": self.commit,
+            "changed_files": [
+                {"path": f.path, "change_type": f.change_type.value}
+                for f in self.changed_files
+            ],
             "changed_symbols": [s.to_dict() for s in self.changed_symbols],
             "direct_callers": [c.to_dict() for c in self.direct_callers],
             "indirect_callers": [c.to_dict() for c in self.indirect_callers],
             "affected_modules": self.affected_modules,
             "affected_tests": self.affected_tests,
         }
+        if self.propagation_chains:
+            d["propagation_chains"] = self.propagation_chains
         if self.risk:
             d["risk"] = self.risk.to_dict()
         return d
@@ -241,7 +249,11 @@ CORE_MODULES = {
 
 
 class RiskAssessor:
-    """Assess risk level from impact analysis results."""
+    """Assess risk level from impact analysis results.
+
+    Considers: caller count, module count, core module changes,
+    public vs private symbols, and change severity.
+    """
 
     def __init__(self, low: int = 3, high: int = 10) -> None:
         self.low = low
@@ -255,30 +267,53 @@ class RiskAssessor:
         )
         many_modules = len(result.affected_modules) >= 5
 
+        # Severity extras: public symbols with heavy changes
+        public_changed = [s for s in result.changed_symbols if not s.name.startswith("_")]
+        has_heavy_public = any(s.lines_changed > 20 for s in public_changed)
+
+        reasons: list[str] = []
+        suggestions: list[str] = []
+
+        # Determine base level using caller thresholds (backward-compatible)
         if is_core or total >= self.high or many_modules:
-            reasons = []
+            level = "high"
             if is_core:
-                reasons.append("core module change")
+                reasons.append("涉及核心模块")
+                suggestions.append("核心模块变更需 code review")
             if total >= self.high:
-                reasons.append(f"{total} callers affected")
+                reasons.append(f"{total} 个调用者受影响")
             if many_modules:
-                reasons.append(f"{len(result.affected_modules)} modules impacted")
-            return RiskAssessment(
-                level="high", reason="High risk: " + ", ".join(reasons),
-                suggestions=["Code review before merging",
-                              "Run full integration tests",
-                              "Verify backward compatibility"],
-            )
-        if total >= self.low:
-            return RiskAssessment(
-                level="medium",
-                reason=f"Medium risk: {total} callers, {len(result.affected_modules)} modules",
-                suggestions=["Review direct callers", "Run tests for affected modules"],
-            )
+                reasons.append(f"波及 {len(result.affected_modules)} 个模块")
+            suggestions.append("建议完整集成测试")
+        elif total >= self.low:
+            level = "medium"
+            reasons.append(f"{total} 个调用者, {len(result.affected_modules)} 个模块")
+        else:
+            level = "low"
+            reasons.append("变更范围有限")
+
+        # Severity upgrade: heavy public API changes bump low→medium
+        if has_heavy_public and level == "low":
+            level = "medium"
+            reasons.append(f"{len(public_changed)} 个公共符号有大幅改动")
+
+        if has_heavy_public:
+            suggestions.append("检查公共 API 向后兼容性")
+
+        # Specific test suggestions
+        if result.affected_tests:
+            test_list = ", ".join(result.affected_tests[:5])
+            suggestions.append(f"运行受影响测试: {test_list}")
+        elif total > 0:
+            suggestions.append("未发现直接关联测试，建议补充测试覆盖")
+
+        if not suggestions:
+            suggestions.append("运行变更代码的单元测试")
+
         return RiskAssessment(
-            level="low",
-            reason=f"Low risk: {total} caller(s), limited blast radius",
-            suggestions=["Run unit tests for changed code"],
+            level=level,
+            reason=f"{level.capitalize()} risk: " + "; ".join(reasons),
+            suggestions=suggestions,
         )
 
 
@@ -305,41 +340,47 @@ class ImpactAnalyzer:
         files = self._diff.for_commit(commit)
         symbols = self._extractor.extract(files)
         commit_hash = self._diff.current_commit() if commit == "HEAD" else commit[:7]
-        return self._build_result(commit_hash, symbols)
+        return self._build_result(commit_hash, symbols, files)
 
     def analyze_staged(self) -> ImpactResult:
         files = self._diff.staged()
         symbols = self._extractor.extract(files)
-        return self._build_result("staged", symbols)
+        return self._build_result("staged", symbols, files)
 
     def analyze_branch(self, base: str, head: str = "HEAD") -> ImpactResult:
         files = self._diff.branch_diff(base, head)
         symbols = self._extractor.extract(files)
-        return self._build_result(f"{base}..{head}", symbols)
+        return self._build_result(f"{base}..{head}", symbols, files)
 
-    def _build_result(self, commit: str, symbols: list[ChangedSymbol]) -> ImpactResult:
-        direct, indirect = self._find_callers(symbols)
+    def _build_result(
+        self, commit: str, symbols: list[ChangedSymbol],
+        files: list[ChangedFile] | None = None,
+    ) -> ImpactResult:
+        direct, indirect, chains = self._find_callers(symbols)
         modules = self._affected_modules(symbols, direct, indirect)
         tests = [c.file for c in direct + indirect if self._is_test(c.file)]
         result = ImpactResult(
             commit=commit, changed_symbols=symbols,
+            changed_files=files or [],
             direct_callers=direct, indirect_callers=indirect,
             affected_modules=sorted(set(modules)),
             affected_tests=sorted(set(tests)),
+            propagation_chains=chains,
         )
         result.risk = self._risk.assess(result)
         return result
 
     def _find_callers(
         self, symbols: list[ChangedSymbol],
-    ) -> tuple[list[Caller], list[Caller]]:
+    ) -> tuple[list[Caller], list[Caller], list[str]]:
         """Find callers by traversing CodeGraph predecessors (CALLS edges).
 
-        This replaces loomgraph's approach of sending NL queries to LightRAG.
-        Direct graph traversal is precise and instant.
+        Returns (direct_callers, indirect_callers, propagation_chains).
+        Chains are formatted as "A → B → C" showing the call propagation path.
         """
         direct: list[Caller] = []
         indirect: list[Caller] = []
+        chains: list[str] = []
         seen: set[str] = set()
 
         for sym in symbols:
@@ -361,27 +402,29 @@ class ImpactAnalyzer:
                         line=neighbor_ent.line_start, depth=1,
                     ))
 
-                # Indirect callers (depth 2+)
-                if self.max_depth > 1:
-                    for d_caller in list(direct):
-                        for d_eid in self._find_entity_ids(d_caller.name):
+                    # Indirect callers (depth 2+) — track chains
+                    if self.max_depth > 1:
+                        for d_eid in self._find_entity_ids(neighbor_ent.name):
                             for n_ent, n_rels in self.graph.neighbors(d_eid, depth=1):
-                                has_call = any(
+                                has_call2 = any(
                                     r.kind == "calls" and r.tgt_id == d_eid
                                     for r in n_rels
                                 )
-                                if not has_call:
+                                if not has_call2:
                                     continue
-                                key = f"{n_ent.file_path}:{n_ent.name}"
-                                if key in seen:
+                                key2 = f"{n_ent.file_path}:{n_ent.name}"
+                                if key2 in seen:
                                     continue
-                                seen.add(key)
+                                seen.add(key2)
                                 indirect.append(Caller(
                                     name=n_ent.name, file=n_ent.file_path,
                                     line=n_ent.line_start, depth=2,
                                 ))
+                                chains.append(
+                                    f"{sym.name} → {neighbor_ent.name} → {n_ent.name}"
+                                )
 
-        return direct, indirect
+        return direct, indirect, chains
 
     def _find_entity_ids(self, symbol_name: str) -> list[str]:
         """Find entity IDs in the graph that match a symbol name."""
