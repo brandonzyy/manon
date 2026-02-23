@@ -139,7 +139,7 @@ def main():
             if deleted:
                 msg += f", {len(deleted)} 个文件移除"
             msg += "）"
-            print(f"[manon] OK {msg}")
+            print(f"[manon] {msg}")
             summary_parts.append(msg)
             # Only record hashes for actually synced files
             synced_set = {f["rel_path"] for f in file_results}
@@ -155,7 +155,7 @@ def main():
             set_project(project_path, info)
             sync_ok = True
         else:
-            print("[manon] OK 无文件变更，图谱已是最新")
+            print("[manon] 无文件变更，图谱已是最新")
             summary_parts.append("无文件变更")
             sync_ok = True
     except Exception as e:
