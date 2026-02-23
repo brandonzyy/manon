@@ -129,6 +129,8 @@ def deploy(c):
 
     print("\n=== 部署 ===")
     run(c, f"mkdir -p {REMOTE_DIR} && cd {REMOTE_DIR} && tar xzf {remote_tar} && rm -f {remote_tar}")
+    # Strip Windows \r from Python files (tarball created on Windows has CRLF)
+    run(c, f"find {REMOTE_DIR}/saas {REMOTE_DIR}/matrixone_graph -name '*.py' -exec sed -i 's/\\r$//' {{}} + 2>/dev/null || true")
 
     # Write VERSION file on server and locally
     result = subprocess.run(

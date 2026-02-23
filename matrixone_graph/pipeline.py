@@ -466,6 +466,7 @@ async def query(
     all_rels: list[dict[str, Any]] = []
     neighbor_entities: list[dict[str, Any]] = []
     seen_rels: set[str] = set()
+    matched_ids = {e["id"] for e in matched_entities}
     for eid, _ in ent_hits:
         # Collect entity IDs to traverse: the entity itself + its members (for class/module)
         traverse_ids = [eid]
@@ -476,16 +477,31 @@ async def query(
                 nid for nid in graph._g.nodes() if nid.startswith(prefix)
             )
         for tid in traverse_ids:
+            # Collect relations from neighbors() (only works for proper entities)
             for ent, rels in graph.neighbors(tid, depth, direction=direction):
                 for r in rels:
                     rkey = f"{r.src_id}->{r.tgt_id}:{r.kind}"
                     if rkey not in seen_rels:
                         seen_rels.add(rkey)
                         all_rels.append(r.to_dict())
-                if ent.id not in {e["id"] for e in matched_entities}:
+                if ent.id not in matched_ids:
                     d = ent.to_dict()
                     d["score"] = 0.0
                     neighbor_entities.append(d)
+                    matched_ids.add(ent.id)
+            # Also collect edges directly (catches phantom target nodes)
+            for u, v, edata in graph._g.edges(tid, data=True):
+                if "src_id" in edata:
+                    rkey = f"{edata['src_id']}->{edata['tgt_id']}:{edata.get('kind','')}"
+                    if rkey not in seen_rels:
+                        seen_rels.add(rkey)
+                        all_rels.append({k: edata[k] for k in ("src_id", "tgt_id", "kind", "description", "file_path", "weight") if k in edata})
+            for u, v, edata in graph._g.in_edges(tid, data=True):
+                if "src_id" in edata:
+                    rkey = f"{edata['src_id']}->{edata['tgt_id']}:{edata.get('kind','')}"
+                    if rkey not in seen_rels:
+                        seen_rels.add(rkey)
+                        all_rels.append({k: edata[k] for k in ("src_id", "tgt_id", "kind", "description", "file_path", "weight") if k in edata})
 
     matched_chunks: list[dict[str, Any]] = []
     for cid, score in chunk_hits:
