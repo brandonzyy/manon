@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -123,6 +123,7 @@ class _Symbol:
     docstring: str = ""
     line_start: int = 0
     line_end: int = 0
+    annotations: list = field(default_factory=list)
 
 @dataclass
 class _Call:
@@ -186,6 +187,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         _map_parse_result, _chunk_file, _module_prefix,
         GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
         _load_meta, _save_meta, _load_chunks, _save_chunks,
+        invalidate_kg_cache,
     )
     from matrixone_graph.store import CodeGraph, VectorIndex, Entity, Chunk
     from matrixone_graph.embed import EmbeddingClient
@@ -297,6 +299,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             "hashes": new_hashes,
         })
         _save_meta(kg_path, meta)
+        invalidate_kg_cache(kg_path)  # force reload on next query
 
         stats = {
             "files_synced": len(body.files),

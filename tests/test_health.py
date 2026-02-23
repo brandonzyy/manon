@@ -145,6 +145,19 @@ class TestComputeGraphMetrics:
         assert m["dc"]["excluded_entry_points"] == 3  # __init__, Cls, test_foo
         assert m["dc"]["total"] == 2  # only orphan + used are checkable
 
+    def test_dc_excludes_decorated(self):
+        """Decorated functions (framework entry points) should not count as dead code."""
+        g = CodeGraph()
+        g.add_entity(Entity(id="mod", kind="module", name="mod", file_path="mod.py"))
+        # Decorated route handler — excluded
+        g.add_entity(Entity(id="mod.get_users", kind="function", name="get_users",
+                            file_path="mod.py", decorators=["router.get"]))
+        # Plain function with zero in-degree — dead
+        g.add_entity(Entity(id="mod.helper", kind="function", name="helper", file_path="mod.py"))
+        m = compute_graph_metrics(g)
+        assert m["dc"]["dead_count"] == 1  # only helper
+        assert m["dc"]["excluded_entry_points"] == 1  # get_users
+
     def test_oversized_functions(self):
         g = self._build_graph()
         m = compute_graph_metrics(g)

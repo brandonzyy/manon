@@ -76,7 +76,8 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
 
     # ── DC: Dead Code ────────────────────────────────────
     # Exclude known entry points: dunder methods (called by runtime),
-    # test entities (called by test runner), classes (structural containers).
+    # test entities (called by test runner), classes (structural containers),
+    # decorated functions (registered by frameworks like FastAPI, MCP, etc.).
     all_in_degrees = dict(g.in_degree())
     non_module_entities = [
         nid for nid, data in nodes.items()
@@ -87,11 +88,14 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
         kind = data.get("kind", "")
         name = nid.rsplit(".", 1)[-1] if "." in nid else nid
         fp = data.get("file_path", "")
+        decorators = data.get("decorators", [])
         if name.startswith("__") and name.endswith("__"):
             entry_point_ids.add(nid)
         elif _is_test_file(fp):
             entry_point_ids.add(nid)
         elif kind == "class":
+            entry_point_ids.add(nid)
+        elif decorators:
             entry_point_ids.add(nid)
     checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
     dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]

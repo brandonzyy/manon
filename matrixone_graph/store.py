@@ -30,6 +30,7 @@ class Entity:
     file_path: str = ""
     line_start: int = 0
     line_end: int = 0
+    decorators: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
