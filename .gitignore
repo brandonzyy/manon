@@ -26,3 +26,10 @@ docs/
 .last-deploy-hash
 .mcp.json
 scripts/deploy-r760.py
+
+# not public
+web/
+tests/
+scripts/run-saas.py
+scripts/_*.py
+tests/_*.py

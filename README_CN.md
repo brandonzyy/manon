@@ -10,7 +10,7 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-[快速开始](#-快速开始) · [工作原理](#-工作原理) · [MCP 工具](#-mcp-工具) · [Web 界面](#-web-界面) · [API 参考](#-api-参考)
+[快速开始](#-快速开始) · [工作原理](#-工作原理) · [MCP 工具](#-mcp-工具) · [API 参考](#-api-参考)
 
 </div>
 
@@ -55,49 +55,6 @@ Manon 是基于自研 **MatrixOneGraph 知识图谱引擎**的 MCP 服务，为 
 
 > ¹ `impact` 以深度换速度 — 用 1/66 的 token 获取 80% 的洞察。高风险提交建议配合人工审查。
 
-## 使用方式
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 🖥️ MCP — 面向开发者
-
-接入你的 IDE，AI 助手获得项目级智能，不改变你的工作流。
-
-**适合：**
-- 使用 Claude Code、Cursor、Windsurf 的开发者
-- 接手陌生代码库的工程师
-- 评审变更影响的技术负责人
-
-**改变：**
-- AI 回答基于真实调用图
-- 重构时完整可见影响范围
-- 语义搜索替代盲目 Grep
-
-</td>
-<td width="50%" valign="top">
-
-### 🌐 Web — 面向所有人
-
-浏览器即用，无需 IDE、终端或编程经验。
-
-**适合：**
-- 理解技术架构的产品经理
-- 评审代码变更影响的项目经理
-- 体验 AI 开发的学习者
-
-**改变：**
-- 用自然语言提问代码库
-- 可视化查看调用关系和依赖
-- 知识图谱支撑的精准回答
-
-</td>
-</tr>
-</table>
-
----
-
 ## ⚡ 快速开始
 
 ### MCP 安装（Claude Code / Cursor / Windsurf）
@@ -139,15 +96,6 @@ install.bat
 API Key 在 `~/.manon/config.json` 中自动管理，无需手动设置。
 
 </details>
-
-### Web 安装
-
-```bash
-python -m web
-# 打开 http://localhost:3600
-```
-
-浏览器即用，无需编程经验。项目和 API Key 通过界面管理。
 
 ---
 
@@ -260,18 +208,6 @@ manon_code_health   → 首次代码体检，获取 8 维度健康评分基线
 | `manon_usage` | 查看 API 使用统计 |
 ---
 
-## 🌐 Web 界面
-
-`http://localhost:3600` 提供：
-
-- **对话** — 自然语言交互，知识图谱支撑的回答
-- **项目管理** — 添加本地或 Git 项目，监控索引状态
-- **实时更新** — WebSocket 驱动的实时进度
-
-无需 IDE，无需终端，浏览器即用。
-
----
-
 ## 📡 API 参考
 
 基础 URL: `http://your-server:3700/api/v1` — 所有端点需要 `X-API-Key` 请求头。
@@ -353,7 +289,6 @@ AI 编程的另一个结构性缺陷是**执行无结构** — 拿到需求直�
 
 - Python 3.10+（Windows 下缺少时通过 `winget` 自动安装）
 - MCP 使用：Claude Code、Cursor、Windsurf、Zed、Continue 或 CodeBuddy
-- Web 使用：任意现代浏览器
 - 网络连接
 
 ## 许可证
