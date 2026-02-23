@@ -32,6 +32,9 @@ class TestIsTestFile:
         ("src/__tests__/bar.ts", True),
         ("src/utils/helper.py", False),
         ("src/test/integration.py", True),
+        ("tests/test_mod.py", True),
+        ("test_standalone.py", True),
+        ("foo_test.go", True),
     ])
     def test_patterns(self, path, expected):
         assert _is_test_file(path) == expected
@@ -120,6 +123,26 @@ class TestComputeGraphMetrics:
         # mod_a.foo is called by bar → alive
         # mod_b.baz is called by foo → alive
         assert m["dc"]["dead_count"] == 1  # only bar
+
+    def test_dc_excludes_entry_points(self):
+        """Dunder methods, test entities, and classes should not count as dead code."""
+        g = CodeGraph()
+        g.add_entity(Entity(id="mod", kind="module", name="mod", file_path="mod.py"))
+        # Dunder method — excluded
+        g.add_entity(Entity(id="mod.Cls.__init__", kind="method", name="__init__", file_path="mod.py"))
+        # Class — excluded
+        g.add_entity(Entity(id="mod.Cls", kind="class", name="Cls", file_path="mod.py"))
+        # Test entity — excluded
+        g.add_entity(Entity(id="tests.test_mod.test_foo", kind="function", name="test_foo", file_path="tests/test_mod.py"))
+        # Regular function with zero in-degree — dead
+        g.add_entity(Entity(id="mod.orphan", kind="function", name="orphan", file_path="mod.py"))
+        # Regular function with caller — alive
+        g.add_entity(Entity(id="mod.used", kind="function", name="used", file_path="mod.py"))
+        g.add_relation(Relation(src_id="mod.orphan", tgt_id="mod.used", kind="calls"))
+        m = compute_graph_metrics(g)
+        assert m["dc"]["dead_count"] == 1  # only mod.orphan
+        assert m["dc"]["excluded_entry_points"] == 3  # __init__, Cls, test_foo
+        assert m["dc"]["total"] == 2  # only orphan + used are checkable
 
     def test_oversized_functions(self):
         g = self._build_graph()

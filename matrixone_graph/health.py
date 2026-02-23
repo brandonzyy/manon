@@ -77,13 +77,27 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
     fi_ratio = len(high_fanin) / max(total_called, 1)
 
     # ── DC: Dead Code ────────────────────────────────────
+    # Exclude known entry points: dunder methods (called by runtime),
+    # test entities (called by test runner), classes (structural containers).
     all_in_degrees = dict(g.in_degree())
     non_module_entities = [
         nid for nid, data in nodes.items()
         if data.get("kind") and data.get("kind") != "module"
     ]
-    dead = [nid for nid in non_module_entities if all_in_degrees.get(nid, 0) == 0]
-    dc_ratio = len(dead) / max(len(non_module_entities), 1)
+    entry_point_ids: set[str] = set()
+    for nid, data in nodes.items():
+        kind = data.get("kind", "")
+        name = nid.rsplit(".", 1)[-1] if "." in nid else nid
+        fp = data.get("file_path", "")
+        if name.startswith("__") and name.endswith("__"):
+            entry_point_ids.add(nid)
+        elif _is_test_file(fp):
+            entry_point_ids.add(nid)
+        elif kind == "class":
+            entry_point_ids.add(nid)
+    checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
+    dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]
+    dc_ratio = len(dead) / max(len(checkable), 1)
 
     # ── TC: Test Coverage ────────────────────────────────
     test_entity_ids = set()
@@ -128,7 +142,7 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
         "mc": {"ratio": round(mc_ratio, 3), "cross_module": cross_module, "total": len(import_call_edges)},
         "cd": {"cycles": cycle_count, "modules": cycle_modules},
         "fi": {"ratio": round(fi_ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called},
-        "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(non_module_entities)},
+        "dc": {"ratio": round(dc_ratio, 3), "dead_count": len(dead), "total": len(checkable), "excluded_entry_points": len(entry_point_ids)},
         "tc": {"ratio": round(tc_ratio, 3), "tested": len(tested_entities & set(testable)), "testable": len(testable)},
         "fs": {"ratio": round(fs_ratio, 3), "oversized": len(oversized), "total": len(functions)},
         "id": {"max_depth": max_depth},
@@ -140,10 +154,11 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
 def _is_test_file(file_path: str) -> bool:
     """Check if a file path looks like a test file."""
     fp = file_path.replace("\\", "/")
-    return (
-        ".test." in fp or ".spec." in fp or "_test." in fp
-        or "/tests/" in fp or "/test/" in fp or "/__tests__/" in fp
-    )
+    basename = fp.rsplit("/", 1)[-1]
+    if basename.startswith("test_") or ".test." in basename or ".spec." in basename or "_test." in basename:
+        return True
+    parts = fp.split("/")
+    return any(p in ("tests", "test", "__tests__") for p in parts[:-1])
 
 
 # ── TD: Static scan for tech debt markers ────────────────
