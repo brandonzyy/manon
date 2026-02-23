@@ -25,3 +25,4 @@ web/static/test-results/
 docs/
 .last-deploy-hash
 .mcp.json
+scripts/deploy-r760.py
