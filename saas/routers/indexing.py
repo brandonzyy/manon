@@ -250,7 +250,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             # Debug: check annotations on reconstructed symbols
             for sym in pr.symbols:
                 if sym.annotations:
-                    logger.info("DBG-ANN file=%s sym=%s annotations=%s", f.rel_path, sym.name, sym.annotations[:2])
+                    print(f"DBG-ANN file={f.rel_path} sym={sym.name} annotations={sym.annotations[:2]}", flush=True)
                     break
 
             # Derive module prefix from relative path
@@ -267,7 +267,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             # Debug: check decorator data flow
             for ent in entities:
                 if ent.decorators:
-                    logger.info("DBG-DEC entity=%s decorators=%s", ent.id, ent.decorators)
+                    print(f"DBG-DEC entity={ent.id} decorators={ent.decorators}", flush=True)
                     break  # just log first one per file
 
             chunks = _chunk_file(f.source, pr, module)
