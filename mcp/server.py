@@ -856,6 +856,8 @@ def manon_index(repo_id: str, incremental: bool = True) -> str:
 def manon_index_status(repo_id: str) -> str:
     """查看仓库的索引状态和统计信息。
 
+    IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
+
     Args:
         repo_id: 仓库 ID
     """
@@ -1005,6 +1007,8 @@ def manon_push_update(repo_id: str) -> str:
 @mcp.tool()
 def manon_init(project_path: str, project_name: str = "") -> str:
     """初始化当前项目的 Manon 连接。检查 API 可达性、匹配或创建仓库、展示图谱状态。
+
+    IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
 
     Args:
         project_path: 项目在本机的绝对路径（通常是当前工作目录）
@@ -1200,7 +1204,10 @@ def manon_configure_excludes(project_path: str, exclude_patterns: list[str]) -> 
 
 @mcp.tool()
 def manon_config() -> str:
-    """查看当前 Manon 配置和连接状态。"""
+    """查看当前 Manon 配置和连接状态。
+
+    IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
+    """
     log.info("manon_config called")
     lines = [f"─── ⚙️ Manon 配置 {'─' * 28}"]
     lines.append(f"  🏷️ 版本  {CLIENT_VERSION}")
@@ -1440,6 +1447,8 @@ def manon_code_health(repo_id: str) -> str:
 
     维度: 模块耦合度(MC)、循环依赖(CD)、扇入集中度(FI)、死代码(DC)、
           测试覆盖(TC)、函数规模(FS)、技术债务(TD)、继承深度(ID)
+
+    IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
 
     Args:
         repo_id: 仓库 ID（从 manon_repos_list 获取）
