@@ -102,14 +102,14 @@ def main():
 
     # Guard: if API key is still empty, skip HTTP calls entirely
     if "Bearer " == headers.get("Authorization", "").strip():
-        print("[manon] ⚠ MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
+        print("[manon] MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
         _write_status(False, "API key 未配置")
         return
 
     summary_parts = []
 
     # Step 1: Scan and upload AST changes
-    print("[manon] 🔍 扫描变更文件...")
+    print("[manon] 扫描变更文件...")
     sync_ok = False
     try:
         from shared.ast_sync import scan_and_parse, set_project
@@ -124,7 +124,7 @@ def main():
             if deleted:
                 print(f"[manon]    删除 {len(deleted)} 个文件: {', '.join(deleted[:5])}"
                       + (f" 等" if len(deleted) > 5 else ""))
-            print("[manon] 📤 上传 AST 并更新知识图谱...")
+            print("[manon] 上传 AST 并更新知识图谱...")
             for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
                 batch = file_results[i:i + SYNC_BATCH_SIZE]
                 payload = {
@@ -139,7 +139,7 @@ def main():
             if deleted:
                 msg += f", {len(deleted)} 个文件移除"
             msg += "）"
-            print(f"[manon] ✅ {msg}")
+            print(f"[manon] OK {msg}")
             summary_parts.append(msg)
             # Only record hashes for actually synced files
             synced_set = {f["rel_path"] for f in file_results}
@@ -155,15 +155,15 @@ def main():
             set_project(project_path, info)
             sync_ok = True
         else:
-            print("[manon] ✅ 无文件变更，图谱已是最新")
+            print("[manon] OK 无文件变更，图谱已是最新")
             summary_parts.append("无文件变更")
             sync_ok = True
     except Exception as e:
-        print(f"[manon] ❌ 图谱更新失败: {e}")
+        print(f"[manon] FAIL 图谱更新失败: {e}")
         summary_parts.append(f"同步失败: {e}")
 
     # Step 2: Fetch health score
-    print("[manon] 📊 计算代码健康评分...")
+    print("[manon] 计算代码健康评分...")
     try:
         with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
             r = c.get(f"/api/v1/repos/{repo_id}/code-health")
@@ -172,9 +172,9 @@ def main():
         score = health.get("score", 0)
         grade = health.get("grade", "?")
         summary_parts.append(f"健康评分: {score}/100 ({grade})")
-        print(f"[manon] 💊 代码健康: {score}/100 ({grade})")
+        print(f"[manon] => 代码健康: {score}/100 ({grade})")
     except Exception as e:
-        print(f"[manon] ❌ 健康评分获取失败: {e}")
+        print(f"[manon] FAIL 健康评分获取失败: {e}")
 
     # Write status for LLM feedback
     _write_status(sync_ok, " | ".join(summary_parts))
