@@ -18,6 +18,32 @@ SYNC_BATCH_SIZE = 50
 PROJECTS_DIR = Path.home() / ".manon"
 PROJECTS_FILE = PROJECTS_DIR / "projects.json"
 
+# Universal directories to always exclude — covers all major languages/frameworks.
+# .gitignore is also parsed automatically for project-specific patterns.
+_ALWAYS_EXCLUDE = [
+    # Version control
+    "**/.git/**", "**/.svn/**", "**/.hg/**",
+    # Python
+    "**/.venv/**", "**/venv/**", "**/__pycache__/**",
+    "**/*.egg-info/**", "**/.tox/**", "**/.nox/**",
+    "**/.mypy_cache/**", "**/.pytest_cache/**", "**/.ruff_cache/**",
+    # Node / JS / TS
+    "**/node_modules/**", "**/.yarn/**", "**/.pnpm-store/**",
+    "**/bower_components/**",
+    # Build outputs
+    "**/dist/**", "**/build/**", "**/out/**", "**/target/**",
+    "**/_build/**", "**/.next/**", "**/.nuxt/**", "**/.output/**",
+    "**/.svelte-kit/**", "**/.turbo/**",
+    # Java / JVM
+    "**/.gradle/**", "**/.m2/**",
+    # IDE / Editor
+    "**/.idea/**", "**/.vscode/**", "**/.vs/**", "**/.eclipse/**",
+    # Coverage / test artifacts
+    "**/htmlcov/**", "**/.nyc_output/**", "**/coverage/**",
+    # Misc
+    "**/.cache/**", "**/.tmp/**", "**/.temp/**",
+]
+
 
 # ── Project registry (shared with MCP) ──────────────
 
@@ -51,6 +77,86 @@ def find_project_by_repo_id(repo_id: str) -> tuple[str, dict] | None:
     return None
 
 
+# ── Config loading with .gitignore support ────────────
+
+def _load_scan_config(local_path: str):
+    """Load codeindex Config and augment exclude list with .gitignore + common patterns + custom excludes."""
+    from codeindex.config import Config
+
+    root = Path(local_path).resolve()
+    config = Config.load(root / ".codeindex.yaml")
+
+    # Merge: existing excludes + always-exclude + .gitignore + custom
+    excludes = set(config.exclude)
+    excludes.update(_ALWAYS_EXCLUDE)
+
+    # Parse .gitignore
+    gitignore = root / ".gitignore"
+    if gitignore.exists():
+        for line in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("!"):
+                continue
+            pattern = line.rstrip("/")
+            if "/" not in pattern:
+                excludes.add(f"**/{pattern}/**")
+                excludes.add(f"**/{pattern}")
+            else:
+                excludes.add(f"**/{pattern}/**")
+                excludes.add(f"**/{pattern}")
+
+    # Load custom excludes from project registry
+    proj = get_project(local_path)
+    if proj:
+        for pat in proj.get("custom_excludes", []):
+            excludes.add(pat)
+
+    config.exclude = list(excludes)
+    return config, root
+
+
+def preview_project_structure(local_path: str) -> str:
+    """List top-level directory structure with file counts for LLM review.
+
+    Returns a formatted string showing each top-level directory, its file count,
+    and whether it's currently excluded. The calling LLM uses this to decide
+    if additional exclusions are needed.
+    """
+    root = Path(local_path).resolve()
+    config, _ = _load_scan_config(local_path)
+    from codeindex.scanner import should_exclude
+
+    lines = []
+    try:
+        items = sorted(root.iterdir())
+    except OSError:
+        return "无法读取目录"
+
+    for item in items:
+        if not item.is_dir():
+            continue
+        name = item.name
+        excluded = should_exclude(item, config.exclude, root)
+        # Quick file count (non-recursive, cap at 100 to stay fast)
+        try:
+            count = sum(1 for _ in zip(range(500), item.rglob("*")) if True)
+            count_str = f"{count}+" if count >= 500 else str(count)
+        except OSError:
+            count_str = "?"
+        marker = "✗ 已排除" if excluded else "○ 待扫描"
+        lines.append(f"  {marker}  {name}/  ({count_str} 文件)")
+
+    return "\n".join(lines) if lines else "（空目录）"
+
+
+def set_custom_excludes(local_path: str, patterns: list[str]) -> None:
+    """Save custom exclusion patterns to project registry."""
+    proj = get_project(local_path)
+    if proj:
+        proj["custom_excludes"] = patterns
+        set_project(local_path, proj)
+
+
 # ── Auto-detect languages + install parsers ──────────
 
 # Extension → language (mirrors codeindex.parser.FILE_EXTENSIONS)
@@ -74,10 +180,8 @@ _LANG_TO_PKG: dict[str, str] = {
 def detect_languages(local_path: str) -> set[str]:
     """Scan project directory and return set of detected languages."""
     from codeindex.scanner import scan_directory
-    from codeindex.config import Config
 
-    root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
+    config, root = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
 
     langs: set[str] = set()
@@ -184,6 +288,124 @@ def ensure_parsers(local_path: str) -> dict[str, str]:
     return results
 
 
+# ── Decorator enrichment (fallback if parser doesn't extract) ─────
+
+def _enrich_annotations(pr_dict: dict, source: str, file_path: str) -> dict:
+    """Add decorator/annotation data to symbols if the parser didn't extract them.
+
+    Uses regex-based extraction as a fallback when the tree-sitter parser
+    doesn't support annotation extraction (e.g., older codeindex versions
+    or cached module state).
+    """
+    symbols = pr_dict.get("symbols", [])
+    if not symbols:
+        return pr_dict
+
+    # Check if any symbol already has annotations — if so, parser handled it
+    if any(s.get("annotations") for s in symbols):
+        return pr_dict
+
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    if ext not in ("py", "ts", "tsx", "js", "jsx", "php", "phtml", "java"):
+        return pr_dict
+
+    lines = source.split("\n") if source else []
+    if not lines:
+        return pr_dict
+
+    # Build line→symbol mapping
+    sym_by_line: dict[int, dict] = {}
+    for s in symbols:
+        ls = s.get("line_start", 0)
+        if ls > 0:
+            sym_by_line[ls] = s
+
+    if ext == "py":
+        _enrich_python_decorators(lines, sym_by_line)
+    elif ext in ("ts", "tsx", "js", "jsx"):
+        _enrich_ts_decorators(lines, sym_by_line)
+    elif ext in ("php", "phtml"):
+        _enrich_php_attributes(lines, sym_by_line)
+    elif ext == "java":
+        _enrich_java_annotations(lines, sym_by_line)
+
+    return pr_dict
+
+
+import re
+
+_PY_DECORATOR_RE = re.compile(r"^\s*@([\w.]+)")
+_TS_DECORATOR_RE = re.compile(r"^\s*@(\w+)")
+_PHP_ATTR_RE = re.compile(r"#\[(\w+)")
+_JAVA_ANN_RE = re.compile(r"^\s*@(\w+)")
+
+
+def _enrich_python_decorators(lines: list[str], sym_by_line: dict[int, dict]):
+    for line_start, sym in sym_by_line.items():
+        decorators = []
+        # Scan lines above the symbol definition for decorators
+        for i in range(line_start - 2, max(line_start - 10, -1), -1):
+            if i < 0:
+                break
+            line = lines[i]
+            m = _PY_DECORATOR_RE.match(line)
+            if m:
+                decorators.append(m.group(1))
+            elif line.strip() and not line.strip().startswith("#"):
+                break
+        if decorators:
+            sym.setdefault("annotations", [])
+            sym["annotations"] = [{"name": d, "arguments": {}} for d in reversed(decorators)]
+
+
+def _enrich_ts_decorators(lines: list[str], sym_by_line: dict[int, dict]):
+    for line_start, sym in sym_by_line.items():
+        decorators = []
+        for i in range(line_start - 2, max(line_start - 10, -1), -1):
+            if i < 0:
+                break
+            line = lines[i]
+            m = _TS_DECORATOR_RE.match(line)
+            if m:
+                decorators.append(m.group(1))
+            elif line.strip() and not line.strip().startswith("//"):
+                break
+        if decorators:
+            sym["annotations"] = [{"name": d, "arguments": {}} for d in reversed(decorators)]
+
+
+def _enrich_php_attributes(lines: list[str], sym_by_line: dict[int, dict]):
+    for line_start, sym in sym_by_line.items():
+        attrs = []
+        for i in range(line_start - 2, max(line_start - 10, -1), -1):
+            if i < 0:
+                break
+            line = lines[i].strip()
+            m = _PHP_ATTR_RE.search(line)
+            if m:
+                attrs.append(m.group(1))
+            elif line and not line.startswith("//") and not line.startswith("*"):
+                break
+        if attrs:
+            sym["annotations"] = [{"name": a, "arguments": {}} for a in reversed(attrs)]
+
+
+def _enrich_java_annotations(lines: list[str], sym_by_line: dict[int, dict]):
+    for line_start, sym in sym_by_line.items():
+        anns = []
+        for i in range(line_start - 2, max(line_start - 10, -1), -1):
+            if i < 0:
+                break
+            line = lines[i]
+            m = _JAVA_ANN_RE.match(line)
+            if m:
+                anns.append(m.group(1))
+            elif line.strip() and not line.strip().startswith("//") and not line.strip().startswith("*"):
+                break
+        if anns:
+            sym["annotations"] = [{"name": a, "arguments": {}} for a in reversed(anns)]
+
+
 # ── File scanning + AST extraction ───────────────────
 
 def _resolve_relative_callees(parse_dict: dict, rel_path: str) -> dict:
@@ -253,10 +475,8 @@ def scan_and_parse(
 
     from codeindex.scanner import scan_directory
     from codeindex.parser import parse_file
-    from codeindex.config import Config
 
-    root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
+    config, root = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
 
     new_hashes: dict[str, str] = {}
@@ -281,6 +501,7 @@ def scan_and_parse(
             source = ""
         pr_dict = pr.to_dict()
         pr_dict = _resolve_relative_callees(pr_dict, rel)
+        pr_dict = _enrich_annotations(pr_dict, source, rel)
         file_results.append({
             "rel_path": rel, "hash": h,
             "source": source, "parse_result": pr_dict,
@@ -293,9 +514,7 @@ def scan_and_parse(
 def count_scannable_files(local_path: str) -> int:
     """Quick count of scannable files without parsing."""
     from codeindex.scanner import scan_directory
-    from codeindex.config import Config
-    root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
+    config, root = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
     return len(scan_result.files)
 

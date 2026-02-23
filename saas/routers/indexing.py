@@ -178,17 +178,6 @@ def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
 
 async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
     """Background task: process pre-parsed AST data from MCP client."""
-    # Debug: check raw request data
-    n_files = len(body.files)
-    n_with_ann = 0
-    for f in body.files:
-        pr = f.parse_result
-        for s in pr.get("symbols", []):
-            if s.get("annotations"):
-                n_with_ann += 1
-                break
-    print(f"DBG-RAW files={n_files} files_with_annotations={n_with_ann} full_reindex={body.full_reindex}", flush=True)
-
     import sys
     _project_root = str(Path(__file__).resolve().parents[2])
     if _project_root not in sys.path:
@@ -258,12 +247,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
                 logger.warning("Skipping %s: parse error %s", f.rel_path, pr.error)
                 continue
 
-            # Debug: check annotations on reconstructed symbols
-            for sym in pr.symbols:
-                if sym.annotations:
-                    print(f"DBG-ANN file={f.rel_path} sym={sym.name} annotations={sym.annotations[:2]}", flush=True)
-                    break
-
             # Derive module prefix from relative path
             rel = Path(f.rel_path)
             parts = list(rel.with_suffix("").parts)
@@ -274,12 +257,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             entities, relations = _map_parse_result(pr, module)
             all_entities.extend(entities)
             all_relations.extend(relations)
-
-            # Debug: check decorator data flow
-            for ent in entities:
-                if ent.decorators:
-                    print(f"DBG-DEC entity={ent.id} decorators={ent.decorators}", flush=True)
-                    break  # just log first one per file
 
             chunks = _chunk_file(f.source, pr, module)
             new_chunks.extend(chunks)
