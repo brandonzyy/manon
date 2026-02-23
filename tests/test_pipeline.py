@@ -1,7 +1,9 @@
 """Tests for matrixone_graph.pipeline — import resolution and entity ID helpers."""
+from pathlib import Path
+
 import pytest
 
-from matrixone_graph.pipeline import _resolve_import_by_filepath, _make_entity_id
+from matrixone_graph.pipeline import _resolve_import_by_filepath, _make_entity_id, _map_parse_result
 
 
 class TestMakeEntityId:
@@ -49,3 +51,38 @@ class TestResolveImportByFilepath:
             "index.ts", "./utils",
         )
         assert result == "utils"
+
+
+class TestMapParseResultDecorators:
+    """Ensure decorators are extracted from both Annotation objects and dicts."""
+
+    def _make_pr(self, annotations):
+        from codeindex.parser import ParseResult, Symbol
+        sym = Symbol(
+            name="my_route", kind="function", signature="def my_route():",
+            docstring="", line_start=1, line_end=5, annotations=annotations,
+        )
+        return ParseResult(
+            path=Path("src/app.py"), symbols=[sym], imports=[],
+            inheritances=[], calls=[], module_docstring="",
+            namespace="", error=None, file_lines=6,
+        )
+
+    def test_annotation_objects(self):
+        from codeindex.parser import Annotation
+        pr = self._make_pr([Annotation(name="app.get", arguments={"path": "/"})])
+        entities, _ = _map_parse_result(pr, "src.app")
+        func_ent = [e for e in entities if e.name == "my_route"][0]
+        assert func_ent.decorators == ["app.get"]
+
+    def test_annotation_dicts(self):
+        pr = self._make_pr([{"name": "app.get", "arguments": {"path": "/"}}])
+        entities, _ = _map_parse_result(pr, "src.app")
+        func_ent = [e for e in entities if e.name == "my_route"][0]
+        assert func_ent.decorators == ["app.get"]
+
+    def test_no_annotations(self):
+        pr = self._make_pr([])
+        entities, _ = _map_parse_result(pr, "src.app")
+        func_ent = [e for e in entities if e.name == "my_route"][0]
+        assert func_ent.decorators == []
