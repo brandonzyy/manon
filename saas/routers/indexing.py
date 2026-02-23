@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,20 @@ from ..models import IndexTrigger, IndexStatus, SyncAstRequest, MergeDynamicRequ
 from ..services.graph import get_graph
 from ..services.git import clone_or_pull
 from ..config import settings
+
+# Ensure matrixone_graph is importable
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from matrixone_graph.pipeline import (
+    _map_parse_result, _chunk_file, _module_prefix,
+    GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
+    _load_meta, _save_meta, _load_chunks, _save_chunks,
+    invalidate_kg_cache,
+)
+from matrixone_graph.store import CodeGraph, VectorIndex, Entity, Chunk
+from matrixone_graph.embed import EmbeddingClient
 
 router = APIRouter(prefix="/api/v1/repos/{repo_id}", tags=["indexing"])
 logger = logging.getLogger(__name__)
@@ -221,20 +236,6 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
 
 async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
     """Background task: process pre-parsed AST data from MCP client."""
-    import sys
-    _project_root = str(Path(__file__).resolve().parents[2])
-    if _project_root not in sys.path:
-        sys.path.insert(0, _project_root)
-
-    from matrixone_graph.pipeline import (
-        _map_parse_result, _chunk_file, _module_prefix,
-        GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
-        _load_meta, _save_meta, _load_chunks, _save_chunks,
-        invalidate_kg_cache,
-    )
-    from matrixone_graph.store import CodeGraph, VectorIndex, Entity, Chunk
-    from matrixone_graph.embed import EmbeddingClient
-
     db = await get_db()
     try:
         await db.execute(
@@ -356,13 +357,6 @@ async def merge_dynamic(
     - edges: {"caller->callee": count} — pre-resolved entity IDs
     - raw_edges: [{"from": path, "to": path}] + project_root — file paths resolved server-side
     """
-    import sys
-    _project_root = str(Path(__file__).resolve().parents[2])
-    if _project_root not in sys.path:
-        sys.path.insert(0, _project_root)
-
-    from matrixone_graph.pipeline import GRAPH_FILE, invalidate_kg_cache
-    from matrixone_graph.store import CodeGraph
     from matrixone_graph.merge_dynamic import merge_dynamic_edges
 
     row = await _get_repo_row(repo_id, ctx.tenant_id)
