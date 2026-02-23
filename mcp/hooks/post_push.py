@@ -109,7 +109,7 @@ def main():
     summary_parts = []
 
     # Step 1: Scan and upload AST changes
-    print("[manon] 正在扫描变更文件...")
+    print("[manon] 🔍 扫描变更文件...")
     sync_ok = False
     try:
         from shared.ast_sync import scan_and_parse, set_project
@@ -118,6 +118,13 @@ def main():
             project_path, old_hashes, max_files=200,
         )
         if file_results or deleted:
+            changed_names = [f["rel_path"] for f in file_results]
+            print(f"[manon]    变更 {len(file_results)} 个文件: {', '.join(changed_names[:5])}"
+                  + (f" 等" if len(changed_names) > 5 else ""))
+            if deleted:
+                print(f"[manon]    删除 {len(deleted)} 个文件: {', '.join(deleted[:5])}"
+                      + (f" 等" if len(deleted) > 5 else ""))
+            print("[manon] 📤 上传 AST 并更新知识图谱...")
             for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
                 batch = file_results[i:i + SYNC_BATCH_SIZE]
                 payload = {
@@ -128,8 +135,11 @@ def main():
                 with httpx.Client(base_url=api_url, headers=headers, timeout=45) as c:
                     r = c.post(f"/api/v1/repos/{repo_id}/sync-ast", json=payload)
                     r.raise_for_status()
-            msg = f"已同步 {len(file_results)} 文件, 删除 {len(deleted)} 文件"
-            print(f"[manon] {msg}")
+            msg = f"图谱已更新（{len(file_results)} 个文件重建 AST"
+            if deleted:
+                msg += f", {len(deleted)} 个文件移除"
+            msg += "）"
+            print(f"[manon] ✅ {msg}")
             summary_parts.append(msg)
             # Only record hashes for actually synced files
             synced_set = {f["rel_path"] for f in file_results}
@@ -145,14 +155,15 @@ def main():
             set_project(project_path, info)
             sync_ok = True
         else:
-            print("[manon] 无文件变更。")
+            print("[manon] ✅ 无文件变更，图谱已是最新")
             summary_parts.append("无文件变更")
             sync_ok = True
     except Exception as e:
-        print(f"[manon] AST 同步失败: {e}")
+        print(f"[manon] ❌ 图谱更新失败: {e}")
         summary_parts.append(f"同步失败: {e}")
 
     # Step 2: Fetch health score
+    print("[manon] 📊 计算代码健康评分...")
     try:
         with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
             r = c.get(f"/api/v1/repos/{repo_id}/code-health")
@@ -161,9 +172,9 @@ def main():
         score = health.get("score", 0)
         grade = health.get("grade", "?")
         summary_parts.append(f"健康评分: {score}/100 ({grade})")
-        print(f"[manon] 代码健康: {score}/100 ({grade})")
+        print(f"[manon] 💊 代码健康: {score}/100 ({grade})")
     except Exception as e:
-        print(f"[manon] 健康评分获取失败: {e}")
+        print(f"[manon] ❌ 健康评分获取失败: {e}")
 
     # Write status for LLM feedback
     _write_status(sync_ok, " | ".join(summary_parts))
