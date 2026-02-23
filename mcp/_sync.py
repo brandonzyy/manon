@@ -92,13 +92,22 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
                     max_files: int, full_reindex: bool):
     """Background thread: scan files, upload AST, loop until complete."""
     try:
+        # Reload shared.ast_sync to pick up code changes (e.g. _enrich_annotations)
+        # without requiring a full MCP process restart.
+        import importlib
+        import shared.ast_sync as _ast_mod
+        importlib.reload(_ast_mod)
+        _scan = _ast_mod.scan_and_parse
+        _find_project = _ast_mod.find_project_by_repo_id
+        _set_project = _ast_mod.set_project
+
         _write_sync_progress(repo_id, "syncing", "扫描文件中...")
         total_synced = 0
         total_deleted = 0
         current_hashes = dict(old_hashes)
 
         while True:
-            file_results, deleted, new_hashes = scan_and_parse(
+            file_results, deleted, new_hashes = _scan(
                 project_path, current_hashes,
                 max_files=0 if full_reindex else INLINE_SCAN_LIMIT,
             )
@@ -128,12 +137,12 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
             total_synced += len(file_results)
             total_deleted += len(deleted)
 
-            found = find_project_by_repo_id(repo_id)
+            found = _find_project(repo_id)
             if found:
                 lp, info = found
                 info["file_hashes"] = current_hashes
                 info["last_sync"] = datetime.datetime.now().isoformat()
-                set_project(lp, info)
+                _set_project(lp, info)
 
             log.info("BG sync batch: +%d synced, +%d deleted, total=%d",
                      len(file_results), len(deleted), len(current_hashes))
