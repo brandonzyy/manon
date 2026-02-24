@@ -8,7 +8,7 @@ set -euo pipefail
 #   3. Deep-query behavior rules for each platform
 # ─────────────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_PY="$SCRIPT_DIR/run_mcp.py"
 VENV_DIR="$SCRIPT_DIR/.venv"
 DEFAULT_API_URL="http://117.131.45.179:3700"
@@ -372,7 +372,9 @@ elif [ -f "$VENV_DIR/Scripts/python.exe" ]; then
 else
     err "Failed to locate venv python"
 fi
-"$VENV_PYTHON" -m pip install -q -r "$SCRIPT_DIR/mcp/requirements.txt"
+REQ_FILE="$SCRIPT_DIR/mcp/requirements.txt"
+[ -f "$REQ_FILE" ] || err "requirements.txt not found: $REQ_FILE"
+"$VENV_PYTHON" -m pip install -q -r "$REQ_FILE"
 info "Dependencies installed"
 
 # ── Auto-register if no key ───────────────────────────
