@@ -20,7 +20,7 @@ exit /b %errorlevel%
 
 ::PS $SERVER_PY  = "$SCRIPT_DIR\run_mcp.py"
 ::PS $VENV_DIR   = "$SCRIPT_DIR\.venv"
-::PS $DEFAULT_API_URL = "http://117.131.45.179:3700"
+::PS $DEFAULT_API_URL = "http://saas.matrixone.online:3700"
 ::PS $ErrorActionPreference = "Stop"
 ::PS function info($m)  { Write-Host "[+] $m" -ForegroundColor Green }
 ::PS function warn($m)  { Write-Host "[!] $m" -ForegroundColor Yellow }

@@ -58,7 +58,6 @@ async def health():
         "status": "ok",
         "version": LATEST_VERSION,
         "llm_model": settings.llm_model,
-        "embedding_url": settings.embedding_url,
     }
 
 

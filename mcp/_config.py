@@ -40,8 +40,8 @@ def _get_client_version() -> str:
 CLIENT_VERSION = _get_client_version()
 
 # ── Geo-routing ──────────────────────────────────────
-API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://117.131.45.179:3700")
-API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "")
+API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://saas.matrixone.online:3700")
+API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://203.208.134.27:3700")
 API_KEY = os.environ.get("MANON_API_KEY", "")
 _explicit_url = os.environ.get("MANON_API_URL", "")
 _REGION_CACHE = Path.home() / ".manon" / "region.json"
@@ -54,8 +54,11 @@ GIT_BRANCH_INTL = "main"
 def _detect_region() -> str:
     """Detect user region. Returns 'CN' or 'INTL'.
 
-    Priority: OS locale/timezone (fast, offline) -> IP lookup (slow, online).
+    Priority: locale -> timezone (all platforms) -> IP lookup (fallback).
+    Locale/timezone are offline signals reflecting where the user *lives*,
+    unaffected by VPN/proxy.  IP lookup may be skewed by proxy.
     """
+    # 1. OS locale
     import locale
     try:
         loc = locale.getdefaultlocale()[0] or ""
@@ -63,18 +66,43 @@ def _detect_region() -> str:
             return "CN"
     except Exception:
         pass
+
+    # 2. Timezone — cross-platform
     import platform
-    if platform.system() == "Windows":
+    _cn_tz_keywords = ("China", "Beijing", "Shanghai", "Asia/Shanghai",
+                       "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi",
+                       "CST-8", "UTC+8", "UTC+08")
+    sys_platform = platform.system()
+
+    if sys_platform == "Windows":
         try:
             import subprocess as _sp
             tz = _sp.run(
                 ["powershell", "-c", "(Get-TimeZone).Id"],
                 capture_output=True, text=True, stdin=_sp.DEVNULL, timeout=3,
             ).stdout.strip()
-            if "China" in tz or "Beijing" in tz or "Shanghai" in tz:
+            if any(k in tz for k in _cn_tz_keywords):
                 return "CN"
         except Exception:
             pass
+    else:
+        # macOS / Linux: read TZ env, /etc/timezone, or timedatectl
+        tz = os.environ.get("TZ", "")
+        if not tz:
+            try:
+                tz = Path("/etc/timezone").read_text().strip()
+            except Exception:
+                pass
+        if not tz:
+            try:
+                link = os.readlink("/etc/localtime")  # e.g. ../zoneinfo/Asia/Shanghai
+                tz = link.split("zoneinfo/")[-1] if "zoneinfo/" in link else ""
+            except Exception:
+                pass
+        if any(k in tz for k in _cn_tz_keywords):
+            return "CN"
+
+    # 3. IP lookup (may be affected by proxy — lowest priority)
     for endpoint, country_key in [
         ("https://api.country.is/", "country"),
         ("https://ipinfo.io/json", "country"),

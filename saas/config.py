@@ -12,7 +12,7 @@ class SaasSettings(BaseSettings):
     db_path: str = "./saas.db"
     repos_dir: str = "./saas_repos"
     index_dir: str = "./saas_indexes"
-    embedding_url: str = "http://117.131.45.179:3002"
+    embedding_url: str = "http://127.0.0.1:3002"
 
     # LLM (OpenAI-compatible)
     llm_api_url: str = "https://api.matrixone.online/v1/chat/completions"

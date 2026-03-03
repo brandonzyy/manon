@@ -294,7 +294,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         meta.update({
             "version": 1, "entity_count": graph.entity_count,
             "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
-            "file_count": len(new_hashes), "embedding_url": settings.embedding_url,
+            "file_count": len(new_hashes),
             "hashes": new_hashes,
         })
         _save_meta(kg_path, meta)
