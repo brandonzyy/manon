@@ -21,9 +21,16 @@ saas_indexes/
 saas_data/
 web/static/reports/
 web/static/test-results/
+app/static/test-results/
 
 # internal docs (business plans, etc.)
 docs/_*.md
+docs/tmp*.html
+BUGS-*.md
+*架构报告.md
+*架构报告.pdf
+check_imports.py
+.codebuddy/
 .last-deploy-hash
 .mcp.json
 scripts/deploy-r760.py

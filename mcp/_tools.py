@@ -960,8 +960,8 @@ def _register_index_tools(mcp):
         stats = result.get("stats")
         msg = f"状态: {s}"
         if stats:
-            msg += f"\n文件扫描: {stats.get('total_files', stats.get('files_scanned', stats.get('files_synced', 0)))}"
-            msg += f", 索引: {stats.get('files_indexed', 0)}"
+            total_files = stats.get('total_files', stats.get('files_scanned', stats.get('files_synced', 0)))
+            msg += f"\n文件: {total_files}"
             msg += f"\n实体: {stats.get('total_entities', stats.get('entities_added', 0))}"
             msg += f", 关系: {stats.get('total_relations', stats.get('relations_added', 0))}"
             msg += f", 块: {stats.get('total_chunks', stats.get('chunks_added', 0))}"
