@@ -18,6 +18,7 @@ node_modules/
 manon_server.log
 saas_repos/
 saas_indexes/
+saas_data/
 web/static/reports/
 web/static/test-results/
 

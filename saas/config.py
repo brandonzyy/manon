@@ -12,6 +12,7 @@ class SaasSettings(BaseSettings):
     db_path: str = "./saas.db"
     repos_dir: str = "./saas_repos"
     index_dir: str = "./saas_indexes"
+    data_dir: str = "./saas_data"          # JSONL training logs
     embedding_url: str = "http://127.0.0.1:3002"
 
     # LLM (OpenAI-compatible)

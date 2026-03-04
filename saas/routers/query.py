@@ -13,6 +13,7 @@ from ..metering import record_usage, record_query
 from ..models import SearchResult, ImpactResult, DeepQueryRequest
 from ..services.graph import get_graph
 from ..services.llm import llm_chat, parse_json
+from ..services.query_log import save_deep_query_log
 from ..quota import check_deep_query_quota
 from ..config import settings
 
@@ -165,6 +166,31 @@ _DEEPQUERY_SYSTEM = """你是一个代码知识图谱检索规划助手。你的
 ```"""
 
 
+def _hits_to_log(result) -> dict:
+    """Extract full entity/chunk content from a QueryResult for training log."""
+    return {
+        "entities": [
+            {
+                "id": e.get("id", ""),
+                "name": e.get("name", ""),
+                "type": e.get("type", ""),
+                "file_path": e.get("file_path", ""),
+                "score": e.get("score", 0),
+            }
+            for e in result.entities[:20]
+        ],
+        "chunks": [
+            {
+                "id": c.get("id", ""),
+                "entity": c.get("entity", ""),
+                "score": c.get("score", 0),
+                "content": c.get("content", ""),
+            }
+            for c in result.chunks[:20]
+        ],
+    }
+
+
 @router.post("/deep-query")
 async def deep_query(
     repo_id: str,
@@ -181,14 +207,24 @@ async def deep_query(
     # initial query
     result = await mg.query(body.question, top_k=10, depth=1)
     accumulated = result.context or ""
+
+    # SQLite log (IDs only, for operational analytics)
     rounds_detail: list[dict] = [{
         "round": 0, "query": body.question,
         "entities": [e.get("id", e.get("name", "")) for e in result.entities],
         "chunks": [c.get("id", c.get("entity", "")) for c in result.chunks],
-        "covered": False,  # unknown yet, updated after first LLM analysis
+        "covered": False,
     }]
+
+    # JSONL log (full content, for training)
+    hits0 = _hits_to_log(result)
+    training_rounds: list[dict] = [{
+        "round": 0, "query": body.question, **hits0,
+    }]
+
     rounds = [{"round": 0, "query": body.question, "context_chars": len(accumulated)}]
     parsed: dict = {}
+    all_llm_analyses: list[dict] = []
 
     # iterative refinement
     for i in range(body.max_rounds):
@@ -200,18 +236,17 @@ async def deep_query(
             ], max_tokens=2048)
             log.info("deep-query round %d LLM response (%d chars): %.200s", i + 1, len(analysis), analysis)
             parsed = parse_json(analysis)
+            all_llm_analyses.append(parsed)
         except Exception as exc:
             log.warning("deep-query LLM round %d failed: %s (analysis=%r)", i + 1, exc, analysis[:200] if isinstance(analysis, str) else analysis)
             break
 
         follow_ups = parsed.get("queries", [])
         if not follow_ups:
-            # All covered — mark round 0 as covered if it was the only round
             if len(rounds_detail) == 1:
                 rounds_detail[0]["covered"] = True
             break
 
-        # Run follow-up queries in parallel
         async def _run_query(q: str):
             return q, await mg.query(q, top_k=5, depth=1)
 
@@ -219,16 +254,19 @@ async def deep_query(
         for q, r in results:
             if r.context:
                 accumulated += f"\n\n## 补充查询: {q}\n{r.context}"
+            # SQLite (IDs only)
             rounds_detail.append({
                 "round": i + 1, "query": q,
                 "entities": [e.get("id", e.get("name", "")) for e in r.entities],
                 "chunks": [c.get("id", c.get("entity", "")) for c in r.chunks],
-                "covered": True,  # GLM requested this query to fill a gap
+                "covered": True,
             })
+            # JSONL (full content)
+            hits = _hits_to_log(r)
+            training_rounds.append({"round": i + 1, "query": q, **hits})
 
         rounds.append({
-            "round": i + 1,
-            "queries": follow_ups,
+            "round": i + 1, "queries": follow_ups,
             "context_chars": len(accumulated),
         })
 
@@ -237,13 +275,28 @@ async def deep_query(
     covered = parsed.get("covered", [])
     coverage = len(covered) / len(sub_qs) if sub_qs else 1.0
 
+    # SQLite log (operational analytics)
     await record_usage(ctx.tenant_id, "query.deep_query", repo_id)
     asyncio.create_task(record_query(
         ctx.tenant_id, repo_id, "deep_query", body.question,
-        rounds=len(rounds),
-        rounds_detail=rounds_detail,
-        coverage=coverage,
+        rounds=len(rounds), rounds_detail=rounds_detail, coverage=coverage,
     ))
+
+    # JSONL log (training data — full content)
+    save_deep_query_log({
+        "tenant_id": ctx.tenant_id,
+        "repo_id": repo_id,
+        "question": body.question,
+        "rounds": training_rounds,
+        "llm_analysis": parsed,
+        "final_coverage": {
+            "sub_questions": sub_qs,
+            "covered": covered,
+            "missing": parsed.get("missing", []),
+            "coverage_ratio": coverage,
+        },
+    })
+
     return {
         "context": accumulated,
         "rounds": rounds,
