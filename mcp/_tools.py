@@ -672,6 +672,20 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     graph_lines: list[str] = []
     sync = proj.get('last_sync', '') or '—'
     tracked = len(proj.get('file_hashes', {}))
+
+    # Detect languages and ensure parsers before fetching status
+    try:
+        parser_status = ensure_parsers(project_path)
+        if parser_status:
+            all_langs = sorted(parser_status.keys())
+            installed = [l for l, s in parser_status.items() if s == "installed"]
+            if installed:
+                lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
+            else:
+                lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+    except Exception as e:
+        log.warning("Parser detection failed: %s", e)
+
     try:
         t0 = _time.time()
         repo = _client._get(f"/api/v1/repos/{rid}")
@@ -727,6 +741,18 @@ def _init_match_or_create(
             info = {"repo_id": rid, "name": matched["name"], "last_sync": "", "file_hashes": {}}
             set_project(project_path, info)
             lines.append("  ✅ 已注册到本地项目表")
+            # Detect languages and ensure parsers before background sync
+            try:
+                parser_status = ensure_parsers(project_path)
+                if parser_status:
+                    all_langs = sorted(parser_status.keys())
+                    installed = [l for l, s in parser_status.items() if s == "installed"]
+                    if installed:
+                        lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
+                    else:
+                        lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+            except Exception as e:
+                log.warning("Parser detection failed: %s", e)
             bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                            old_hashes=info.get("file_hashes", {}))
             graph_lines.append(f"  🔄 {bg_msg}")
