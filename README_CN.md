@@ -38,9 +38,25 @@ Manon 是基于自研 **MatrixOneGraph 知识图谱引擎**的 MCP 服务，为 
 
 ## 📊 实测效果
 
-基于 20 个真实查询样本（每工具 5 个），与原生工具（Grep/Glob/Read/git）在相同任务上对比。完整报告：[`docs/manon-query-tools-evaluation.md`](docs/manon-query-tools-evaluation.md)
+### 真实项目分析基准测试
 
-### 核心数据
+分析 OpenClaw 项目（2,100 文件）并制定精简方案。完整报告：[`docs/MANON_VS_NATIVE_COMPARISON.md`](docs/MANON_VS_NATIVE_COMPARISON.md)
+
+| 维度 | 使用 Manon | 使用原生工具 | 差异 |
+|------|-----------|-------------|------|
+| **所需时间** | ~30 分钟 | ~8-12 小时 | **快 16-24 倍** |
+| **分析深度** | 深度语义理解 | 表面文本匹配 | Manon 更深入 |
+| **准确性** | 95%+ | 60-70% | **+30%** |
+| **可信度** | 基于图谱关系 | 基于推测 | Manon 更可靠 |
+
+**核心优势**：
+- **语义理解** — 理解代码含义和关系，不只是文本匹配
+- **关系图谱** — 52,701 实体、73,865 关系，秒级多层依赖追踪
+- **自然语言查询** — 描述意图即可，无需知道精确关键词
+
+### 查询工具评估
+
+基于 20 个真实查询样本（每工具 5 个），与原生工具（Grep/Glob/Read/git）在相同任务上对比。完整报告：[`docs/manon-query-tools-evaluation.md`](docs/manon-query-tools-evaluation.md)
 
 | 指标 | Manon | 原生工具 | 提升 |
 |------|-------|---------|------|
@@ -92,14 +108,22 @@ Manon 是基于自研 **MatrixOneGraph 知识图谱引擎**的 MCP 服务，为 
 
 **macOS / Linux**
 ```bash
+# GitHub（推荐）
+git clone https://github.com/brandonzyy/manon.git
+# 或使用 Gitee 镜像（国内更快）
 git clone https://gitee.com/ymxy_1_0/manon.git
+
 cd manon
 bash install.sh
 ```
 
 **Windows**
 ```cmd
+# GitHub（推荐）
+git clone https://github.com/brandonzyy/manon.git
+# 或使用 Gitee 镜像（国内更快）
 git clone https://gitee.com/ymxy_1_0/manon.git
+
 cd manon
 install.bat
 ```
@@ -383,6 +407,30 @@ AI 编程的另一个结构性缺陷是**执行无结构** — 拿到需求直�
 - MCP 使用：Claude Code、Cursor、Windsurf、Zed、Continue 或 CodeBuddy
 - 网络连接
 
+## 🏗️ 自托管部署
+
+想要运行自己的 Manon 服务器？查看 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) 了解：
+- 使用 Ollama 本地部署
+- OpenAI 兼容的 LLM 配置
+- 多用户设置
+- Docker 部署（即将推出）
+
+## 🤝 参与贡献
+
+Manon 是开源项目，欢迎贡献！查看 [`CONTRIBUTING.md`](CONTRIBUTING.md) 了解：
+- 开发环境设置
+- 代码风格指南
+- Pull Request 流程
+- 可贡献的领域
+
+## 💬 社区与支持
+
+- **问题反馈**：[报告 Bug 或请求功能](https://github.com/brandonzyy/manon/issues)
+- **讨论交流**：[提问或分享想法](https://github.com/brandonzyy/manon/discussions)
+- **文档**：[`docs/`](docs/) 查看架构和部署指南
+
 ## 📄 许可证
 
-MIT
+MIT License - 详见 [LICENSE](LICENSE)
+
+Copyright (c) 2026 一码行云（杭州）信息科技有限公司

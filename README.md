@@ -38,9 +38,25 @@ Manon is an MCP service powered by the **MatrixOneGraph knowledge graph engine**
 
 ## 📊 Measured Effectiveness
 
-Evaluated with 20 real-world queries (5 per tool), benchmarked against native tools (Grep/Glob/Read/git) on identical tasks. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
+### Real-World Analysis Benchmark
 
-### Key Results
+Analyzed OpenClaw project (2,100 files) to develop a streamlining plan. Full report: [`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
+
+| Dimension | Using Manon | Using Native Tools | Difference |
+|-----------|-------------|-------------------|------------|
+| **Time Required** | ~30 minutes | ~8-12 hours | **16-24x faster** |
+| **Analysis Depth** | Deep semantic understanding | Surface text matching | Manon deeper |
+| **Accuracy** | 95%+ | 60-70% | **+30%** |
+| **Reliability** | Graph-based relationships | Speculation-based | Manon more reliable |
+
+**Key Advantages**:
+- **Semantic understanding** — Understands code meaning and relationships, not just text matching
+- **Relationship graph** — 52,701 entities, 73,865 relationships, instant multi-layer dependency tracing
+- **Natural language queries** — Describe intent without knowing exact keywords
+
+### Query Tools Evaluation
+
+Evaluated with 20 real-world queries (5 per tool), benchmarked against native tools (Grep/Glob/Read/git) on identical tasks. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
 
 | Metric | Manon | Native Tools | Improvement |
 |--------|-------|-------------|-------------|
@@ -92,14 +108,14 @@ What do you need?
 
 **macOS / Linux**
 ```bash
-git clone https://github.com/brandonzyy/manon-server.git manon
+git clone https://github.com/brandonzyy/manon.git
 cd manon
 bash install.sh
 ```
 
 **Windows**
 ```cmd
-git clone https://github.com/brandonzyy/manon-server.git manon
+git clone https://github.com/brandonzyy/manon.git
 cd manon
 install.bat
 ```
@@ -384,6 +400,30 @@ We're developing a structured pipeline that enforces a deterministic workflow: `
 - MCP: Claude Code, Cursor, Windsurf, Zed, Continue, or CodeBuddy
 - Network connection
 
+## 🏗️ Self-Hosting
+
+Want to run your own Manon server? See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for:
+- Local deployment with Ollama
+- OpenAI-compatible LLM configuration
+- Multi-user setup
+- Docker deployment (coming soon)
+
+## 🤝 Contributing
+
+Manon is open source and welcomes contributions! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
+- Development setup
+- Code style guidelines
+- Pull request process
+- Areas for contribution
+
+## 💬 Community & Support
+
+- **Issues**: [Report bugs or request features](https://github.com/brandonzyy/manon/issues)
+- **Discussions**: [Ask questions or share ideas](https://github.com/brandonzyy/manon/discussions)
+- **Documentation**: [`docs/`](docs/) for architecture and deployment guides
+
 ## 📄 License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+Copyright (c) 2026 MatrixOne (Hangzhou) Information Technology Co., Ltd.
