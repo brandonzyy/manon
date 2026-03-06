@@ -676,8 +676,10 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     # Detect languages and ensure parsers before fetching status
     try:
         parser_status = ensure_parsers(project_path)
+        log.info("Parser status: %s", parser_status)
         if parser_status:
             all_langs = sorted(parser_status.keys())
+            log.info("All langs: %s", all_langs)
             installed = [l for l, s in parser_status.items() if s == "installed"]
             if installed:
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")

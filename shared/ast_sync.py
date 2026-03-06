@@ -80,11 +80,13 @@ def find_project_by_repo_id(repo_id: str) -> tuple[str, dict] | None:
 # ── Config loading with .gitignore support ────────────
 
 def _load_scan_config(local_path: str):
-    """Load codeindex Config and augment exclude list with .gitignore + common patterns + custom excludes."""
+    """Load codeindex Config with auto language detection and augment with .gitignore + custom excludes."""
     from codeindex.config import Config
 
     root = Path(local_path).resolve()
-    config = Config.load(root / ".codeindex.yaml")
+
+    # Use new API: auto-detects languages, installs parsers, generates smart config
+    config = Config.load_with_auto_setup(root)
 
     # Merge: existing excludes + always-exclude + .gitignore + custom
     excludes = set(config.exclude)
@@ -159,133 +161,25 @@ def set_custom_excludes(local_path: str, patterns: list[str]) -> None:
 
 # ── Auto-detect languages + install parsers ──────────
 
-# Extension → language (mirrors codeindex.parser.FILE_EXTENSIONS)
-_EXT_TO_LANG: dict[str, str] = {
-    ".py": "python", ".php": "php", ".phtml": "php",
-    ".java": "java", ".ts": "typescript", ".tsx": "tsx",
-    ".js": "javascript", ".jsx": "javascript",
-}
-
-# Language → pip package name
-_LANG_TO_PKG: dict[str, str] = {
-    "python": "tree-sitter-python",
-    "php": "tree-sitter-php",
-    "java": "tree-sitter-java",
-    "typescript": "tree-sitter-typescript",
-    "tsx": "tree-sitter-typescript",  # same package
-    "javascript": "tree-sitter-javascript",
-}
-
-
-def detect_languages(local_path: str) -> set[str]:
-    """Scan project directory and return set of detected languages."""
-    from codeindex.scanner import scan_directory
-
-    config, root = _load_scan_config(local_path)
-    scan_result = scan_directory(root, config, root)
-
-    langs: set[str] = set()
-    for f in scan_result.files:
-        ext = f.suffix.lower()
-        lang = _EXT_TO_LANG.get(ext)
-        if lang:
-            langs.add(lang)
-    return langs
-
-
-def _check_parser_installed(language: str) -> bool:
-    """Check if tree-sitter parser for a language is importable."""
-    try:
-        if language in ("typescript", "tsx"):
-            __import__("tree_sitter_typescript")
-        elif language == "javascript":
-            __import__("tree_sitter_javascript")
-        elif language == "python":
-            __import__("tree_sitter_python")
-        elif language == "php":
-            __import__("tree_sitter_php")
-        elif language == "java":
-            __import__("tree_sitter_java")
-        else:
-            return False
-        return True
-    except ImportError:
-        return False
-
-
-_install_failed_pkgs: set[str] = set()  # cache failed installs to avoid retrying
-_PIP_MIRRORS = [
-    None,  # default PyPI
-    "https://pypi.tuna.tsinghua.edu.cn/simple",
-    "https://mirrors.aliyun.com/pypi/simple",
-]
-
-
 def ensure_parsers(local_path: str) -> dict[str, str]:
     """Auto-detect project languages and install missing tree-sitter parsers.
 
+    Now delegates to codeindex's built-in functionality.
+
     Returns dict mapping language → status ("already_installed" | "installed" | "failed").
     """
-    langs = detect_languages(local_path)
+    from codeindex.detector import quick_detect_languages
+    from codeindex.parser import FILE_EXTENSIONS
+    from codeindex.parser_installer import install_parsers
+
+    root = Path(local_path).resolve()
+    langs = quick_detect_languages(root, FILE_EXTENSIONS)
+
     if not langs:
         log.info("No supported languages detected in %s", local_path)
         return {}
 
-    # Deduplicate packages (tsx and typescript share the same package)
-    needed_pkgs: dict[str, list[str]] = {}  # pkg → [languages]
-    for lang in langs:
-        pkg = _LANG_TO_PKG.get(lang)
-        if pkg:
-            needed_pkgs.setdefault(pkg, []).append(lang)
-
-    results: dict[str, str] = {}
-    to_install: list[str] = []
-
-    for pkg, pkg_langs in needed_pkgs.items():
-        if all(_check_parser_installed(l) for l in pkg_langs):
-            for l in pkg_langs:
-                results[l] = "already_installed"
-        elif pkg in _install_failed_pkgs:
-            for l in pkg_langs:
-                results[l] = "failed"
-        else:
-            to_install.append(pkg)
-            for l in pkg_langs:
-                results[l] = "pending"
-
-    if not to_install:
-        if all(v == "already_installed" for v in results.values()):
-            log.info("All parsers already installed for: %s", ", ".join(langs))
-        return results
-
-    log.info("Installing missing parsers: %s", ", ".join(to_install))
-    installed = False
-    for mirror in _PIP_MIRRORS:
-        cmd = [sys.executable, "-m", "pip", "install", "--quiet"] + to_install
-        if mirror:
-            cmd += ["-i", mirror, "--trusted-host", mirror.split("//")[1].split("/")[0]]
-        try:
-            subprocess.check_call(cmd, timeout=30)
-            installed = True
-            for pkg in to_install:
-                for l in needed_pkgs[pkg]:
-                    results[l] = "installed"
-            source = mirror or "PyPI"
-            log.info("Parsers installed via %s: %s", source, ", ".join(to_install))
-            break
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            source = mirror or "PyPI"
-            log.warning("pip install via %s failed: %s", source, e)
-            continue
-
-    if not installed:
-        log.error("All pip mirrors failed for: %s", ", ".join(to_install))
-        _install_failed_pkgs.update(to_install)
-        for pkg in to_install:
-            for l in needed_pkgs[pkg]:
-                results[l] = "failed"
-
-    return results
+    return install_parsers(langs)
 
 
 # ── Decorator enrichment (fallback if parser doesn't extract) ─────
