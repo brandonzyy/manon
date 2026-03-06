@@ -58,7 +58,7 @@ def _api_url() -> str:
     url = os.environ.get("MANON_API_URL") or os.environ.get("MANON_API_URL_CN")
     if not url:
         url = _load_config().get("api_url", "")
-    return url or "http://saas.matrixone.online:3700"
+    return url or "http://localhost:3700"
 
 def _headers() -> dict:
     key = os.environ.get("MANON_API_KEY", "")

@@ -40,8 +40,9 @@ def _get_client_version() -> str:
 CLIENT_VERSION = _get_client_version()
 
 # ── Geo-routing ──────────────────────────────────────
-API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://saas.matrixone.online:3700")
-API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://203.208.134.27:3700")
+# Default: local deployment. For production, set MANON_API_URL env var
+API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://localhost:3700")
+API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://localhost:3700")
 API_KEY = os.environ.get("MANON_API_KEY", "")
 _explicit_url = os.environ.get("MANON_API_URL", "")
 _REGION_CACHE = Path.home() / ".manon" / "region.json"

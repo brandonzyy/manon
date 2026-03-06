@@ -16,8 +16,11 @@ class SaasSettings(BaseSettings):
     embedding_url: str = "http://127.0.0.1:3002"
 
     # LLM (OpenAI-compatible)
-    llm_api_url: str = "https://api.matrixone.online/v1/chat/completions"
-    llm_model: str = "glm-4.7-fp8"
+    # Default: local Ollama. For production, set SAAS_LLM_API_URL env var
+    # Examples: http://localhost:11434/v1/chat/completions (Ollama)
+    #           https://api.openai.com/v1/chat/completions (OpenAI)
+    llm_api_url: str = "http://localhost:11434/v1/chat/completions"
+    llm_model: str = "qwen2.5-coder:7b"
     llm_api_key: str = ""
 
     # admin
