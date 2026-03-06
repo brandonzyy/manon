@@ -104,6 +104,21 @@ What do you need?
 
 ## ⚡ Quick Start
 
+### Using the Official Service (Recommended)
+
+Manon provides a free official SaaS service — no server setup required. After installation, the MCP client connects to the official API automatically (geo-routed by region).
+
+**Environment variables** (optional, for customization):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MANON_API_URL` | auto (geo-routed) | Override API endpoint. Set to `http://localhost:3700` for self-hosted |
+| `MANON_API_KEY` | auto-generated | API key (auto-created on first use) |
+| `MANON_API_URL_CN` | `http://saas.matrixone.online:3700` | China endpoint |
+| `MANON_API_URL_INTL` | `http://203.208.134.27:3700` | International endpoint (Singapore) |
+
+To use the official service, just install and run — no environment variables needed.
+
 ### Installation (Claude Code / Cursor / Windsurf)
 
 **macOS / Linux**
@@ -381,6 +396,8 @@ All configuration is stored in `~/.manon/config.json`, created automatically on 
 | `projects` | `{}` | Local project registry and file hashes |
 
 Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
+
+> **Official service vs self-hosted:** By default, Manon connects to the official SaaS service (geo-routed). To use a self-hosted server, set `MANON_API_URL=http://localhost:3700`. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for self-hosting instructions.
 
 ---
 

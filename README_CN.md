@@ -104,6 +104,21 @@ Manon 是基于自研 **MatrixOneGraph 知识图谱引擎**的 MCP 服务，为 
 
 ## ⚡ 开箱即用
 
+### 使用官方服务（推荐）
+
+Manon 提供免费的官方 SaaS 服务 — 无需自建服务器。安装后 MCP 客户端自动连接官方 API（按地区自动路由）。
+
+**环境变量**（可选，用于自定义）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MANON_API_URL` | 自动（按地区路由） | 覆盖 API 地址。自部署设为 `http://localhost:3700` |
+| `MANON_API_KEY` | 自动生成 | API 密钥（首次使用自动创建） |
+| `MANON_API_URL_CN` | `http://saas.matrixone.online:3700` | 国内节点 |
+| `MANON_API_URL_INTL` | `http://203.208.134.27:3700` | 国际节点（新加坡） |
+
+使用官方服务只需安装运行，无需设置任何环境变量。
+
 ### 安装（Claude Code / Cursor / Windsurf）
 
 **macOS / Linux**
@@ -388,6 +403,8 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 | `projects` | `{}` | 本地项目注册表和文件哈希 |
 
 可通过环境变量覆盖：`MANON_API_KEY`、`MANON_API_URL`。
+
+> **官方服务 vs 自部署：** 默认连接官方 SaaS 服务（按地区自动路由）。如需使用自部署服务器，设置 `MANON_API_URL=http://localhost:3700`。自部署详见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
 
 ---
 

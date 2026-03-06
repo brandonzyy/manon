@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_PY="$SCRIPT_DIR/run_mcp.py"
 VENV_DIR="$SCRIPT_DIR/.venv"
-DEFAULT_API_URL="http://localhost:3700"
+DEFAULT_API_URL="http://saas.matrixone.online:3700"
 
 # ── Colors ────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
