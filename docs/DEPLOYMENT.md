@@ -67,7 +67,44 @@ SAAS_LLM_MODEL=gpt-4
 SAAS_LLM_API_KEY=sk-your-key-here
 ```
 
-### 5. Initialize Project
+### 5. Configure Embedding Service
+
+**Required for semantic search.** Choose one option:
+
+**Option A: TEI (Text Embeddings Inference) - Recommended**
+
+```bash
+# Using Docker
+docker run -p 3002:80 --gpus all \
+  ghcr.io/huggingface/text-embeddings-inference:latest \
+  --model-id BAAI/bge-small-en-v1.5
+
+# In .env:
+SAAS_EMBEDDING_URL=http://localhost:3002
+```
+
+**Option B: Ollama**
+
+```bash
+# Pull embedding model
+ollama pull nomic-embed-text
+
+# Run embedding service on port 3002
+# (Requires custom wrapper - see docs/embedding-ollama.md)
+
+# In .env:
+SAAS_EMBEDDING_URL=http://localhost:3002
+```
+
+**Option C: OpenAI**
+
+```bash
+# In .env:
+SAAS_EMBEDDING_URL=https://api.openai.com/v1
+SAAS_EMBEDDING_API_KEY=sk-your-key-here
+```
+
+### 6. Initialize Project
 
 In your IDE:
 
@@ -126,9 +163,12 @@ For team deployment:
 │ (FastAPI)   │
 └──────┬──────┘
        │
-┌──────▼──────┐
-│ LLM Service │ (Ollama/OpenAI)
-└─────────────┘
+   ┌───┴────┐
+   │        │
+┌──▼───┐ ┌─▼────────┐
+│ LLM  │ │ Embedding│
+│:11434│ │  :3002   │
+└──────┘ └──────────┘
 ```
 
 See `docs/ARCHITECTURE.md` for details.
