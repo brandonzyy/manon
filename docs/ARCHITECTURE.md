@@ -72,10 +72,9 @@ Manon is an AI-powered code intelligence tool with three main components:
 
 ### 4. Web Client (`web/`)
 
-**Purpose**: Browser-based interface (optional)
+**Purpose**: Browser-based interface (optional, not included in open source release)
 
-- Single-page HTML + WebSocket
-- Real-time pipeline visualization
+**Note**: The web client is an optional component not included in the public repository. Core functionality is accessed through IDE integration via MCP protocol.
 
 ## Data Flow
 
