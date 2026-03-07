@@ -151,6 +151,134 @@ def preview_project_structure(local_path: str) -> str:
     return "\n".join(lines) if lines else "（空目录）"
 
 
+def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> str:
+    """Analyze index coverage: scannable vs indexed files per top-level directory.
+
+    Returns a formatted string with per-directory status and summary.
+    """
+    from codeindex.scanner import scan_directory, should_exclude
+
+    root = Path(local_path).resolve()
+    config, _ = _load_scan_config(local_path)
+
+    # Get all scannable files
+    scan_result = scan_directory(root, config, root)
+    scannable_by_dir: dict[str, int] = {}
+    for f in scan_result.files:
+        rel = str(f.relative_to(root)).replace("\\", "/")
+        top_dir = rel.split("/")[0] if "/" in rel else "."
+        scannable_by_dir[top_dir] = scannable_by_dir.get(top_dir, 0) + 1
+
+    # Count indexed files per directory
+    indexed_by_dir: dict[str, int] = {}
+    for rel_path in indexed_hashes:
+        top_dir = rel_path.split("/")[0] if "/" in rel_path else "."
+        indexed_by_dir[top_dir] = indexed_by_dir.get(top_dir, 0) + 1
+
+    # Gather all top-level directories
+    try:
+        all_dirs = sorted(d.name for d in root.iterdir() if d.is_dir())
+    except OSError:
+        return "  无法读取目录"
+
+    # Build entries: (name, status_str)
+    entries: list[tuple[str, str]] = []
+    excluded_count = 0
+
+    # Collect exclude patterns for display
+    proj = get_project(local_path)
+    custom_excludes = proj.get("custom_excludes", []) if proj else []
+
+    for d in all_dirs:
+        scannable = scannable_by_dir.get(d, 0)
+        indexed = indexed_by_dir.get(d, 0)
+        dir_path = root / d
+
+        # Check if excluded
+        if should_exclude(dir_path, config.exclude, root):
+            excluded_count += 1
+            # Find matching pattern
+            reason = _find_exclude_reason(d, config.exclude, custom_excludes)
+            entries.append((f"{d}/", f"✗ 排除({reason})"))
+        elif scannable == 0:
+            entries.append((f"{d}/", "─ 无源码文件"))
+        elif indexed >= scannable:
+            entries.append((f"{d}/", f"✅ {indexed}/{scannable}"))
+        elif indexed > 0:
+            entries.append((f"{d}/", f"🟡 {indexed}/{scannable}"))
+        else:
+            entries.append((f"{d}/", f"○ 0/{scannable} 待同步"))
+
+    if not entries:
+        return ""
+
+    # Two-column layout
+    lines = ["📂 索引覆盖"]
+    mid = (len(entries) + 1) // 2
+    left = entries[:mid]
+    right = entries[mid:]
+
+    for i in range(mid):
+        l_name, l_status = left[i]
+        col1 = f"  {l_name:<22s}{l_status}"
+        if i < len(right):
+            r_name, r_status = right[i]
+            col2 = f"{r_name:<22s}{r_status}"
+            lines.append(f"{col1:<44s}{col2}")
+        else:
+            lines.append(col1)
+
+    # Summary line
+    total_scannable = sum(scannable_by_dir.values())
+    total_indexed = sum(indexed_by_dir.values())
+
+    # Collect supported extensions
+    exts = set()
+    for f in scan_result.files:
+        suffix = f.suffix
+        if suffix:
+            exts.add(suffix)
+    ext_str = " ".join(sorted(exts)) if exts else ""
+
+    summary_parts = [f"{total_indexed}/{total_scannable} 已索引"]
+    if excluded_count:
+        summary_parts.append(f"{excluded_count} 目录排除")
+    if ext_str:
+        summary_parts.append(f"支持: {ext_str}")
+    lines.append(f"\n  总计: {' · '.join(summary_parts)}")
+
+    return "\n".join(lines)
+
+
+def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes: list[str]) -> str:
+    """Find the first matching exclusion pattern for a directory name."""
+    import fnmatch
+    test_paths = [f"{dir_name}/", f"{dir_name}/dummy.py"]
+
+    # Check custom excludes first (most specific)
+    for pat in custom_excludes:
+        for tp in test_paths:
+            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
+                return pat
+
+    # Check _ALWAYS_EXCLUDE
+    for pat in _ALWAYS_EXCLUDE:
+        # Strip leading **/ for matching
+        simple = pat.lstrip("*").lstrip("/")
+        if dir_name in simple or fnmatch.fnmatch(f"{dir_name}/x", pat):
+            return pat
+
+    # Check .gitignore patterns (everything else)
+    for pat in all_excludes:
+        if pat in _ALWAYS_EXCLUDE:
+            continue
+        for tp in test_paths:
+            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
+                return pat
+
+    return dir_name
+
+
 def set_custom_excludes(local_path: str, patterns: list[str]) -> None:
     """Save custom exclusion patterns to project registry."""
     proj = get_project(local_path)

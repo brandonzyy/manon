@@ -18,6 +18,7 @@ from shared.ast_sync import (
     load_projects, save_projects, get_project, set_project,
     find_project_by_repo_id, count_scannable_files,
     ensure_parsers, preview_project_structure, set_custom_excludes,
+    analyze_index_coverage,
     SYNC_BATCH_SIZE,
 )
 
@@ -704,6 +705,13 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                    old_hashes=proj.get("file_hashes", {}))
     graph_lines.append(f"  🔄 {bg_msg}")
+    # Index coverage analysis
+    try:
+        coverage = analyze_index_coverage(project_path, proj.get("file_hashes", {}))
+        if coverage:
+            graph_lines.append(f"\n{coverage}")
+    except Exception as e:
+        log.warning("Index coverage analysis failed: %s", e)
     return rid, lines, graph_lines
 
 
@@ -758,6 +766,13 @@ def _init_match_or_create(
             bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                            old_hashes=info.get("file_hashes", {}))
             graph_lines.append(f"  🔄 {bg_msg}")
+            # Index coverage analysis
+            try:
+                coverage = analyze_index_coverage(project_path, info.get("file_hashes", {}))
+                if coverage:
+                    graph_lines.append(f"\n{coverage}")
+            except Exception as e:
+                log.warning("Index coverage analysis failed: %s", e)
         return rid, lines, graph_lines
 
     # No match — create new repo
@@ -775,8 +790,9 @@ def _init_match_or_create(
         except Exception:
             pass
         try:
-            preview = preview_project_structure(project_path)
-            lines.append(f"\n  📂 目录结构预览:\n{preview}")
+            coverage = analyze_index_coverage(project_path, {})
+            if coverage:
+                lines.append(f"\n{coverage}")
             lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
         except Exception:
             pass
