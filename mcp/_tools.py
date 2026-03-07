@@ -19,6 +19,7 @@ from shared.ast_sync import (
     find_project_by_repo_id, count_scannable_files,
     ensure_parsers, preview_project_structure, set_custom_excludes,
     analyze_index_coverage, detect_test_patterns,
+    collect_directory_signals,
     SYNC_BATCH_SIZE,
 )
 
@@ -664,6 +665,95 @@ def _fmt_stats(s: dict) -> str:
     return f"  📊 文件 {fil}  ·  实体 {ent}  ·  关系 {rel}  ·  块 {chk}"
 
 
+def _run_smart_analysis(project_path: str, rid: str, proj: dict) -> list[str]:
+    """Run LLM-based directory relevance analysis. Returns display lines.
+
+    Only runs once per project (skipped if custom_excludes already set or
+    if smart_analysis_done flag is set). Auto-applies skip recommendations
+    and installs missing parsers for directories worth indexing.
+    """
+    # Skip if already analyzed
+    if proj.get("smart_analysis_done"):
+        return []
+    # Skip if user already set custom excludes manually
+    if proj.get("custom_excludes"):
+        return []
+
+    lines: list[str] = []
+    try:
+        signals = collect_directory_signals(project_path)
+        dirs = signals.get("directories", {})
+        if not dirs:
+            return []
+
+        result = _client._post(
+            f"/api/v1/repos/{rid}/analyze-structure",
+            {"signals": signals},
+            timeout=30,
+        )
+        analyzed = result.get("directories", [])
+        if not analyzed:
+            return []
+
+        skip_dirs = [d for d in analyzed if d["action"] == "skip"]
+        index_dirs = [d for d in analyzed if d["action"] == "index"]
+
+        # Auto-apply exclusions for skip directories
+        if skip_dirs:
+            exclude_patterns = [f"**/{d['name']}/**" for d in skip_dirs]
+            set_custom_excludes(project_path, exclude_patterns)
+
+        # For index directories, check if any need additional language parsers.
+        # Uses codeindex's combined extension map (specialized + generic).
+        supported = set(signals.get("supported_languages", []))
+        try:
+            from codeindex.parser import get_all_extensions
+            _EXT_TO_LANG = get_all_extensions()
+        except ImportError:
+            _EXT_TO_LANG = {
+                ".py": "python", ".js": "javascript", ".ts": "typescript",
+                ".tsx": "tsx", ".php": "php", ".java": "java",
+            }
+        needed_langs: set[str] = set()
+        for d in index_dirs:
+            dir_info = dirs.get(d["name"], {})
+            exts = dir_info.get("extensions", {})
+            for ext, count in exts.items():
+                lang = _EXT_TO_LANG.get(ext)
+                if lang and lang not in supported and count >= 5:
+                    needed_langs.add(lang)
+
+        if needed_langs:
+            try:
+                from codeindex.parser_installer import install_parsers
+                install_result = install_parsers(needed_langs)
+                installed = [l for l, s in install_result.items() if s == "installed"]
+                if installed:
+                    lines.append(f"  🗂️ 新增语言解析器: {', '.join(installed)}")
+                    log.info("Installed parsers for smart-analysis: %s", install_result)
+            except Exception as e:
+                log.warning("Failed to install additional parsers: %s", e)
+
+        # Build display lines
+        lines.append("  🧠 智能分析")
+        for d in analyzed:
+            icon = "✅" if d["action"] == "index" else "⊘ "
+            lines.append(f"    {icon} {d['name']}/  {d.get('reason', '')}")
+
+        if skip_dirs:
+            names = ", ".join(d["name"] for d in skip_dirs)
+            lines.append(f"  💡 已自动排除: {names}")
+
+        # Mark as done so we don't re-run
+        proj["smart_analysis_done"] = True
+        set_project(project_path, proj)
+
+    except Exception as e:
+        log.warning("Smart analysis failed (non-blocking): %s", e)
+
+    return lines
+
+
 def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
     """Handle init for an already-registered local project. Returns (rid, lines, graph_lines)."""
     import time as _time
@@ -710,6 +800,10 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         graph_lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
         graph_lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
         log.warning("Failed to fetch repo %s status: %s", rid, e)
+    # Smart analysis — LLM judges directory relevance (runs once per project)
+    smart_lines = _run_smart_analysis(project_path, rid, proj)
+    if smart_lines:
+        lines.extend(smart_lines)
     bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                    old_hashes=proj.get("file_hashes", {}))
     graph_lines.append(f"  🔄 {bg_msg}")
@@ -778,6 +872,10 @@ def _init_match_or_create(
                     lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
             except Exception as e:
                 log.warning("Test framework detection failed: %s", e)
+            # Smart analysis — LLM judges directory relevance (runs once)
+            smart_lines = _run_smart_analysis(project_path, rid, info)
+            if smart_lines:
+                lines.extend(smart_lines)
             bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                            old_hashes=info.get("file_hashes", {}))
             graph_lines.append(f"  🔄 {bg_msg}")
@@ -811,11 +909,16 @@ def _init_match_or_create(
                 lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
         except Exception:
             pass
+        # Smart analysis — LLM judges directory relevance (first time only)
+        smart_lines = _run_smart_analysis(project_path, rid, info)
+        if smart_lines:
+            lines.extend(smart_lines)
         try:
             coverage = analyze_index_coverage(project_path, {})
             if coverage:
                 lines.append(f"\n{coverage}")
-            lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
+            if not smart_lines:
+                lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
         except Exception:
             pass
         bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,

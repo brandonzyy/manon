@@ -464,6 +464,85 @@ def set_custom_excludes(local_path: str, patterns: list[str]) -> None:
         set_project(local_path, proj)
 
 
+# ── Smart directory analysis signals ─────────────────
+
+def collect_directory_signals(local_path: str) -> dict:
+    """Collect per-directory metadata signals for LLM-based index relevance analysis.
+
+    Gathers extension distribution, file counts, sample filenames, and build
+    config presence for each top-level directory that isn't already excluded by
+    built-in rules (.git, node_modules, etc.).
+
+    Returns dict with supported_languages and per-directory signal data.
+    """
+    from codeindex.scanner import should_exclude
+    from codeindex.detector import quick_detect_languages
+    try:
+        from codeindex.parser import get_all_extensions
+        all_exts = get_all_extensions()
+    except ImportError:
+        from codeindex.parser import FILE_EXTENSIONS
+        all_exts = FILE_EXTENSIONS
+
+    root = Path(local_path).resolve()
+    config, _, _ = _load_scan_config(local_path)
+
+    # Project-level supported languages (detect all, including generic)
+    supported_langs = quick_detect_languages(root, all_exts)
+
+    _BUILD_CONFIG_FILES = [
+        "package.json", "tsconfig.json", "Cargo.toml",
+        "pyproject.toml", "go.mod", "build.gradle", "pom.xml",
+        "CMakeLists.txt", "Makefile", "setup.py", "setup.cfg",
+    ]
+
+    dirs: dict[str, dict] = {}
+    try:
+        items = sorted(root.iterdir())
+    except OSError:
+        return {"supported_languages": supported_langs, "directories": {}}
+
+    for item in items:
+        if not item.is_dir():
+            continue
+        # Skip directories already excluded by built-in / gitignore rules
+        if should_exclude(item, config.exclude, root):
+            continue
+
+        ext_counts: dict[str, int] = {}
+        sample_files: list[str] = []
+        total = 0
+        for f in item.rglob("*"):
+            if not f.is_file():
+                continue
+            total += 1
+            ext = f.suffix.lower()
+            if ext:
+                ext_counts[ext] = ext_counts.get(ext, 0) + 1
+            if len(sample_files) < 8:
+                sample_files.append(str(f.relative_to(root)))
+            # Cap traversal for very large directories
+            if total >= 2000:
+                break
+
+        has_config = any((item / f).exists() for f in _BUILD_CONFIG_FILES)
+
+        # Top extensions sorted by count descending, keep top 10
+        top_exts = dict(sorted(ext_counts.items(), key=lambda x: -x[1])[:10])
+
+        dirs[item.name] = {
+            "total_files": total,
+            "extensions": top_exts,
+            "sample_files": sample_files,
+            "has_build_config": has_config,
+        }
+
+    return {
+        "supported_languages": supported_langs,
+        "directories": dirs,
+    }
+
+
 # ── Auto-detect languages + install parsers ──────────
 
 def ensure_parsers(local_path: str) -> dict[str, str]:
