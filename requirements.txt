@@ -5,7 +5,8 @@ pydantic-settings>=2.7,<3
 aiosqlite>=0.21,<1
 httpx>=0.28,<1
 pyyaml>=6,<7
-git+https://github.com/brandonzyy/codeindex.git@master
+# codeindex is now embedded in mcp/codeindex/
+tree-sitter>=0.23.0,<1  # Required by embedded codeindex
 networkx>=3.0
 numpy>=1.24
 mcp>=1.0.0

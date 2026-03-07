@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from codeindex.config import Config
-from codeindex.parser import ParseResult, parse_file
-from codeindex.scanner import scan_directory
+from mcp.codeindex.config import Config
+from mcp.codeindex.parser import ParseResult, parse_file
+from mcp.codeindex.scanner import scan_directory
 
 from .embed import EmbeddingClient
 from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex

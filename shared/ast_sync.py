@@ -215,7 +215,7 @@ def _load_scan_config(local_path: str):
     Returns (config, root, test_excludes) where test_excludes is the list of
     auto-detected test framework exclusion patterns.
     """
-    from codeindex.config import Config
+    from mcp.codeindex.config import Config
 
     root = Path(local_path).resolve()
 
@@ -264,7 +264,7 @@ def preview_project_structure(local_path: str) -> str:
     """
     root = Path(local_path).resolve()
     config, _, _test_exc = _load_scan_config(local_path)
-    from codeindex.scanner import should_exclude
+    from mcp.codeindex.scanner import should_exclude
 
     lines = []
     try:
@@ -295,7 +295,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     Returns a formatted table with per-directory status, exclusion reasons,
     and a summary line.
     """
-    from codeindex.scanner import scan_directory, should_exclude
+    from mcp.codeindex.scanner import scan_directory, should_exclude
 
     root = Path(local_path).resolve()
     config, _, test_excludes = _load_scan_config(local_path)
@@ -475,13 +475,13 @@ def collect_directory_signals(local_path: str) -> dict:
 
     Returns dict with supported_languages and per-directory signal data.
     """
-    from codeindex.scanner import should_exclude
-    from codeindex.detector import quick_detect_languages
+    from mcp.codeindex.scanner import should_exclude
+    from mcp.codeindex.detector import quick_detect_languages
     try:
-        from codeindex.parser import get_all_extensions
+        from mcp.codeindex.parser import get_all_extensions
         all_exts = get_all_extensions()
     except ImportError:
-        from codeindex.parser import FILE_EXTENSIONS
+        from mcp.codeindex.parser import FILE_EXTENSIONS
         all_exts = FILE_EXTENSIONS
 
     root = Path(local_path).resolve()
@@ -559,9 +559,9 @@ def ensure_parsers(local_path: str, use_cache: bool = True) -> dict[str, str]:
 
     Returns dict mapping language → status ("already_installed" | "installed" | "failed").
     """
-    from codeindex.detector import quick_detect_languages
-    from codeindex.parser import FILE_EXTENSIONS
-    from codeindex.parser_installer import install_parsers
+    from mcp.codeindex.detector import quick_detect_languages
+    from mcp.codeindex.parser import FILE_EXTENSIONS
+    from mcp.codeindex.parser_installer import install_parsers
 
     root = Path(local_path).resolve()
     root_str = str(root)
@@ -766,8 +766,8 @@ def scan_and_parse(
     # Auto-install missing tree-sitter parsers
     ensure_parsers(local_path)
 
-    from codeindex.scanner import scan_directory
-    from codeindex.parser import parse_file
+    from mcp.codeindex.scanner import scan_directory
+    from mcp.codeindex.parser import parse_file
 
     config, root, _test_exc = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
@@ -806,7 +806,7 @@ def scan_and_parse(
 
 def count_scannable_files(local_path: str) -> int:
     """Quick count of scannable files without parsing."""
-    from codeindex.scanner import scan_directory
+    from mcp.codeindex.scanner import scan_directory
     config, root, _test_exc = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
     return len(scan_result.files)

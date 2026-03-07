@@ -233,8 +233,8 @@ def scan_directory_debt(repo_path: Path) -> dict[str, int]:
     total_any = 0
     total_lines = 0
     try:
-        from codeindex.scanner import scan_directory
-        from codeindex.config import Config
+        from mcp.codeindex.scanner import scan_directory
+        from mcp.codeindex.config import Config
         config = Config.load(repo_path / ".codeindex.yaml")
         files = scan_directory(repo_path, config, repo_path).files
     except Exception:

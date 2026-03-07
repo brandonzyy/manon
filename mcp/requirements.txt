@@ -1,6 +1,7 @@
 mcp>=1.0.0
 httpx>=0.28,<1
-git+https://github.com/brandonzyy/codeindex.git@master
+# codeindex is now embedded in mcp/codeindex/
+tree-sitter>=0.23.0,<1
 tree-sitter-python
 tree-sitter-javascript
 tree-sitter-typescript
