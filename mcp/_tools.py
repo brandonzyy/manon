@@ -18,7 +18,7 @@ from shared.ast_sync import (
     load_projects, save_projects, get_project, set_project,
     find_project_by_repo_id, count_scannable_files,
     ensure_parsers, preview_project_structure, set_custom_excludes,
-    analyze_index_coverage,
+    analyze_index_coverage, detect_test_patterns,
     SYNC_BATCH_SIZE,
 )
 
@@ -689,6 +689,14 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     except Exception as e:
         log.warning("Parser detection failed: %s", e)
 
+    # Auto-detect test frameworks
+    try:
+        _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
+        if test_report:
+            lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
+    except Exception as e:
+        log.warning("Test framework detection failed: %s", e)
+
     try:
         t0 = _time.time()
         repo = _client._get(f"/api/v1/repos/{rid}")
@@ -763,6 +771,13 @@ def _init_match_or_create(
                         lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
             except Exception as e:
                 log.warning("Parser detection failed: %s", e)
+            # Auto-detect test frameworks
+            try:
+                _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
+                if test_report:
+                    lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
+            except Exception as e:
+                log.warning("Test framework detection failed: %s", e)
             bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                            old_hashes=info.get("file_hashes", {}))
             graph_lines.append(f"  🔄 {bg_msg}")
@@ -787,6 +802,13 @@ def _init_match_or_create(
             if parser_status:
                 all_langs = sorted(parser_status.keys())
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+        except Exception:
+            pass
+        # Auto-detect test frameworks
+        try:
+            _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
+            if test_report:
+                lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
         except Exception:
             pass
         try:

@@ -45,6 +45,136 @@ _ALWAYS_EXCLUDE = [
 ]
 
 
+# ── Test framework auto-detection ─────────────────────
+
+def detect_test_patterns(root: Path) -> tuple[list[str], list[str]]:
+    """Auto-detect test frameworks and return exclusion patterns.
+
+    Phase A: config file detection (root + one-level subdirs)
+    Phase B: directory name convention detection
+
+    Returns (deduplicated_patterns, report_lines like ["pytest: test_*.py, tests/"]).
+    """
+    root = root.resolve()
+    patterns: set[str] = set()
+    frameworks: dict[str, set[str]] = {}  # framework_name -> display hints
+
+    # ── Phase A: config file detection ──
+
+    # Helper: check if a file exists in root or one-level subdirs
+    def _exists(name: str) -> bool:
+        if (root / name).exists():
+            return True
+        try:
+            for d in root.iterdir():
+                if d.is_dir() and (d / name).exists():
+                    return True
+        except OSError:
+            pass
+        return False
+
+    def _file_contains(name: str, needle: str) -> bool:
+        """Check if a file in root contains a string (shallow check)."""
+        p = root / name
+        if not p.exists():
+            return False
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")[:8192]
+            return needle in text
+        except Exception:
+            return False
+
+    # pytest
+    if (_exists("conftest.py") or _exists("pytest.ini")
+            or _file_contains("pyproject.toml", "[tool.pytest")
+            or _file_contains("setup.cfg", "[tool:pytest")):
+        _pytest_pats = ["**/test_*.py", "**/*_test.py", "**/conftest.py", "**/tests/**"]
+        patterns.update(_pytest_pats)
+        frameworks["pytest"] = {"test_*.py", "*_test.py", "tests/"}
+
+    # Jest
+    _has_jest_config = any(_exists(f"jest.config.{ext}") for ext in ("js", "ts", "mjs", "cjs", "json"))
+    if _has_jest_config or _file_contains("package.json", '"jest"'):
+        _jest_pats = [
+            "**/__tests__/**",
+            "**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.jsx",
+            "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js", "**/*.spec.jsx",
+        ]
+        patterns.update(_jest_pats)
+        frameworks["jest"] = {"__tests__/", "*.test.{ts,js}"}
+
+    # Vitest
+    _has_vitest_config = any(_exists(f"vitest.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
+    if _has_vitest_config or _file_contains("package.json", '"vitest"'):
+        _vitest_pats = [
+            "**/__tests__/**",
+            "**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.jsx",
+            "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js", "**/*.spec.jsx",
+        ]
+        patterns.update(_vitest_pats)
+        frameworks["vitest"] = {"__tests__/", "*.test.{ts,js}"}
+
+    # Cypress
+    _has_cypress_config = any(_exists(f"cypress.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
+    if _has_cypress_config or (root / "cypress").is_dir():
+        _cypress_pats = ["**/cypress/**", "**/*.cy.ts", "**/*.cy.js"]
+        patterns.update(_cypress_pats)
+        frameworks["cypress"] = {"cypress/", "*.cy.{ts,js}"}
+
+    # Playwright
+    _has_pw_config = any(_exists(f"playwright.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
+    if _has_pw_config:
+        _pw_pats = ["**/*.spec.ts", "**/*.spec.js", "**/e2e/**"]
+        patterns.update(_pw_pats)
+        frameworks["playwright"] = {"*.spec.{ts,js}", "e2e/"}
+
+    # Go test
+    try:
+        has_go_test = any(root.glob("*_test.go")) or any(root.glob("**/*_test.go"))
+    except OSError:
+        has_go_test = False
+    if has_go_test or _exists("go.mod"):
+        # Only add if go test files actually exist
+        try:
+            if any(root.rglob("*_test.go")):
+                patterns.add("**/*_test.go")
+                frameworks["go test"] = {"*_test.go"}
+        except OSError:
+            pass
+
+    # Java (Maven/Gradle convention)
+    if (root / "src" / "test").is_dir():
+        patterns.add("**/src/test/**")
+        frameworks["java/maven"] = {"src/test/"}
+
+    # Rust
+    if _exists("Cargo.toml") and (root / "tests").is_dir():
+        patterns.add("**/tests/**")
+        frameworks["rust"] = {"tests/"}
+
+    # ── Phase B: directory name conventions (supplement) ──
+    _test_dirs = {
+        "tests": "**/tests/**",
+        "test": "**/test/**",
+        "__tests__": "**/__tests__/**",
+        "spec": "**/spec/**",
+        "e2e": "**/e2e/**",
+        "cypress": "**/cypress/**",
+    }
+    for dirname, pat in _test_dirs.items():
+        if (root / dirname).is_dir() and pat not in patterns:
+            patterns.add(pat)
+            if dirname not in frameworks:
+                frameworks.setdefault("目录约定", set()).add(f"{dirname}/")
+
+    # Build report lines
+    report: list[str] = []
+    for fw, hints in sorted(frameworks.items()):
+        report.append(f"{fw}: {', '.join(sorted(hints))}")
+
+    return sorted(patterns), report
+
+
 # ── Project registry (shared with MCP) ──────────────
 
 def load_projects() -> dict:
@@ -80,7 +210,11 @@ def find_project_by_repo_id(repo_id: str) -> tuple[str, dict] | None:
 # ── Config loading with .gitignore support ────────────
 
 def _load_scan_config(local_path: str):
-    """Load codeindex Config with auto language detection and augment with .gitignore + custom excludes."""
+    """Load codeindex Config with auto language detection and augment with .gitignore + custom excludes + test patterns.
+
+    Returns (config, root, test_excludes) where test_excludes is the list of
+    auto-detected test framework exclusion patterns.
+    """
     from codeindex.config import Config
 
     root = Path(local_path).resolve()
@@ -88,7 +222,7 @@ def _load_scan_config(local_path: str):
     # Use new API: auto-detects languages, installs parsers, generates smart config
     config = Config.load_with_auto_setup(root)
 
-    # Merge: existing excludes + always-exclude + .gitignore + custom
+    # Merge: existing excludes + always-exclude + .gitignore + test auto-detect + custom
     excludes = set(config.exclude)
     excludes.update(_ALWAYS_EXCLUDE)
 
@@ -107,6 +241,10 @@ def _load_scan_config(local_path: str):
                 excludes.add(f"**/{pattern}/**")
                 excludes.add(f"**/{pattern}")
 
+    # Auto-detect test frameworks
+    test_excludes, _test_report = detect_test_patterns(root)
+    excludes.update(test_excludes)
+
     # Load custom excludes from project registry
     proj = get_project(local_path)
     if proj:
@@ -114,7 +252,7 @@ def _load_scan_config(local_path: str):
             excludes.add(pat)
 
     config.exclude = list(excludes)
-    return config, root
+    return config, root, test_excludes
 
 
 def preview_project_structure(local_path: str) -> str:
@@ -125,7 +263,7 @@ def preview_project_structure(local_path: str) -> str:
     if additional exclusions are needed.
     """
     root = Path(local_path).resolve()
-    config, _ = _load_scan_config(local_path)
+    config, _, _test_exc = _load_scan_config(local_path)
     from codeindex.scanner import should_exclude
 
     lines = []
@@ -160,7 +298,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     from codeindex.scanner import scan_directory, should_exclude
 
     root = Path(local_path).resolve()
-    config, _ = _load_scan_config(local_path)
+    config, _, test_excludes = _load_scan_config(local_path)
 
     # Get all scannable files
     scan_result = scan_directory(root, config, root)
@@ -197,7 +335,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
         dir_path = root / d
 
         if should_exclude(dir_path, config.exclude, root):
-            pattern, source = _find_exclude_reason(d, config.exclude, custom_excludes)
+            pattern, source = _find_exclude_reason(d, config.exclude, custom_excludes, test_excludes)
             excluded_rows.append(("✗", f"{d}/", "排除", f"{pattern} ({source})"))
         elif scannable == 0:
             skipped_rows.append(("─", f"{d}/", "跳过", "无源码文件"))
@@ -263,17 +401,24 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     return "\n".join(lines)
 
 
-def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes: list[str]) -> tuple[str, str]:
+def _find_exclude_reason(
+    dir_name: str,
+    all_excludes: list[str],
+    custom_excludes: list[str],
+    test_excludes: list[str] | None = None,
+) -> tuple[str, str]:
     """Find the first matching exclusion pattern for a directory name.
 
     Returns (pattern, source) where source is one of:
-      "自定义" — user-configured via manon_configure_excludes
-      "内置"   — from _ALWAYS_EXCLUDE (universal patterns)
+      "自定义"   — user-configured via manon_configure_excludes
+      "测试框架" — auto-detected test framework patterns
+      "内置"     — from _ALWAYS_EXCLUDE (universal patterns)
       "gitignore" — from .gitignore
     """
     import fnmatch
     test_paths = [f"{dir_name}/", f"{dir_name}/dummy.py", dir_name]
     _always_set = set(_ALWAYS_EXCLUDE)
+    _test_set = set(test_excludes or [])
 
     def _matches(pat: str) -> bool:
         """Check if pattern matches the directory name, handling ** glob."""
@@ -291,6 +436,11 @@ def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes
         if _matches(pat):
             return pat, "自定义"
 
+    # Check test framework excludes
+    for pat in (test_excludes or []):
+        if _matches(pat):
+            return pat, "测试框架"
+
     # Check _ALWAYS_EXCLUDE
     for pat in _ALWAYS_EXCLUDE:
         if _matches(pat):
@@ -298,7 +448,7 @@ def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes
 
     # Check .gitignore patterns (everything else)
     for pat in all_excludes:
-        if pat in _always_set:
+        if pat in _always_set or pat in _test_set:
             continue
         if _matches(pat):
             return pat, "gitignore"
@@ -525,7 +675,7 @@ def scan_and_parse(
     from codeindex.scanner import scan_directory
     from codeindex.parser import parse_file
 
-    config, root = _load_scan_config(local_path)
+    config, root, _test_exc = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
 
     new_hashes: dict[str, str] = {}
@@ -563,7 +713,7 @@ def scan_and_parse(
 def count_scannable_files(local_path: str) -> int:
     """Quick count of scannable files without parsing."""
     from codeindex.scanner import scan_directory
-    config, root = _load_scan_config(local_path)
+    config, root, _test_exc = _load_scan_config(local_path)
     scan_result = scan_directory(root, config, root)
     return len(scan_result.files)
 
