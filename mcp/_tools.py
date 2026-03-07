@@ -766,7 +766,10 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
 
     # Detect languages and ensure parsers before fetching status
     try:
-        parser_status = ensure_parsers(project_path)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(ensure_parsers, project_path)
+            parser_status = future.result(timeout=5)
         log.info("Parser status: %s", parser_status)
         if parser_status:
             all_langs = sorted(parser_status.keys())
@@ -776,6 +779,9 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
             else:
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+    except concurrent.futures.TimeoutError:
+        log.warning("Parser detection timed out after 5s")
+        lines.append("  ⚠️ 语言检测超时，跳过")
     except Exception as e:
         log.warning("Parser detection failed: %s", e)
 
@@ -855,7 +861,10 @@ def _init_match_or_create(
             lines.append("  ✅ 已注册到本地项目表")
             # Detect languages and ensure parsers before background sync
             try:
-                parser_status = ensure_parsers(project_path)
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(ensure_parsers, project_path)
+                    parser_status = future.result(timeout=5)
                 if parser_status:
                     all_langs = sorted(parser_status.keys())
                     installed = [l for l, s in parser_status.items() if s == "installed"]
@@ -863,6 +872,9 @@ def _init_match_or_create(
                         lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
                     else:
                         lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+            except concurrent.futures.TimeoutError:
+                log.warning("Parser detection timed out after 5s")
+                lines.append("  ⚠️ 语言检测超时，跳过")
             except Exception as e:
                 log.warning("Parser detection failed: %s", e)
             # Auto-detect test frameworks
@@ -896,10 +908,16 @@ def _init_match_or_create(
         set_project(project_path, info)
         lines.append(f"  🆕 {name}  ({rid[:8]})")
         try:
-            parser_status = ensure_parsers(project_path)
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(ensure_parsers, project_path)
+                parser_status = future.result(timeout=5)
             if parser_status:
                 all_langs = sorted(parser_status.keys())
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
+        except concurrent.futures.TimeoutError:
+            log.warning("Parser detection timed out after 5s")
+            lines.append("  ⚠️ 语言检测超时，跳过")
         except Exception:
             pass
         # Auto-detect test frameworks

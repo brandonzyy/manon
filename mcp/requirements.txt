@@ -1,6 +1,6 @@
 mcp>=1.0.0
 httpx>=0.28,<1
-ai-codeindex>=0.19.0
+git+https://github.com/brandonzyy/codeindex.git@master
 tree-sitter-python
 tree-sitter-javascript
 tree-sitter-typescript

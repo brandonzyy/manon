@@ -538,17 +538,24 @@ def collect_directory_signals(local_path: str) -> dict:
         }
 
     return {
-        "supported_languages": supported_langs,
+        "supported_languages": list(supported_langs),
         "directories": dirs,
     }
 
 
 # ── Auto-detect languages + install parsers ──────────
 
-def ensure_parsers(local_path: str) -> dict[str, str]:
+# Cache for language detection results (path -> languages)
+_LANG_CACHE: dict[str, set[str]] = {}
+
+def ensure_parsers(local_path: str, use_cache: bool = True) -> dict[str, str]:
     """Auto-detect project languages and install missing tree-sitter parsers.
 
-    Now delegates to codeindex's built-in functionality.
+    Now delegates to codeindex's built-in functionality with caching.
+
+    Args:
+        local_path: Project root path
+        use_cache: Whether to use cached language detection results (default True)
 
     Returns dict mapping language → status ("already_installed" | "installed" | "failed").
     """
@@ -557,13 +564,21 @@ def ensure_parsers(local_path: str) -> dict[str, str]:
     from codeindex.parser_installer import install_parsers
 
     root = Path(local_path).resolve()
-    langs = quick_detect_languages(root, FILE_EXTENSIONS)
+    root_str = str(root)
+
+    # Check cache first
+    if use_cache and root_str in _LANG_CACHE:
+        langs = _LANG_CACHE[root_str]
+        log.debug("Using cached language detection for %s: %s", local_path, langs)
+    else:
+        langs = quick_detect_languages(root, FILE_EXTENSIONS, max_files=500)
+        _LANG_CACHE[root_str] = langs
 
     if not langs:
         log.info("No supported languages detected in %s", local_path)
         return {}
 
-    return install_parsers(langs)
+    return install_parsers(langs, timeout=30)
 
 
 # ── Decorator enrichment (fallback if parser doesn't extract) ─────
