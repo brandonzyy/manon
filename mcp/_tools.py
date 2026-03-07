@@ -998,7 +998,7 @@ def _register_index_tools(mcp):
                 msg += f"\n\n❌ 本地同步失败: {pm}"
             if ts:
                 msg += f"\n   更新于 {ts}"
-        return msg
+        return "<!-- DISPLAY_VERBATIM -->\n" + msg
 
 
 def _register_repo_crud_tools(mcp):
@@ -1143,7 +1143,7 @@ def _register_init_tools(mcp):
 
         lines.extend(_build_hooks_lines(project_path))
 
-        return "\n".join(lines)
+        return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
     @mcp.tool()
     def manon_configure_excludes(project_path: str, exclude_patterns: list[str]) -> str:
@@ -1196,7 +1196,7 @@ def _register_config_tools(mcp):
             lines.append(_config._update_notice)
         elif not _config._version_checked:
             threading.Thread(target=_config._check_version, daemon=True).start()
-        return "\n".join(lines)
+        return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
     @mcp.tool()
     def manon_account() -> str:
@@ -1347,7 +1347,7 @@ def _register_health_tools(mcp):
                 info = ", ".join(f"{k}={v}" for k, v in detail.items() if not isinstance(v, list))
                 if info:
                     lines.append(f"     {info}")
-        return "\n".join(lines)
+        return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
     @mcp.tool()
     def manon_setup_hooks(project_path: str) -> str:

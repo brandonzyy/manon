@@ -21,7 +21,12 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("manon", instructions="Manon 代码智能工具 — 语义搜索、图遍历、影响分析")
+mcp = FastMCP("manon", instructions="""\
+Manon 代码智能工具 — 语义搜索、图遍历、影响分析
+
+DISPLAY RULES:
+When a tool result contains the marker "<!-- DISPLAY_VERBATIM -->", you MUST output the ENTIRE result \
+as-is to the user. Do NOT summarize, truncate, or reformat it. The content is pre-formatted for display.""")
 
 log = logging.getLogger("manon-mcp")
 

@@ -154,7 +154,8 @@ def preview_project_structure(local_path: str) -> str:
 def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> str:
     """Analyze index coverage: scannable vs indexed files per top-level directory.
 
-    Returns a formatted string with per-directory status and summary.
+    Returns a formatted table with per-directory status, exclusion reasons,
+    and a summary line.
     """
     from codeindex.scanner import scan_directory, should_exclude
 
@@ -181,56 +182,34 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     except OSError:
         return "  无法读取目录"
 
-    # Build entries: (name, status_str)
-    entries: list[tuple[str, str]] = []
-    excluded_count = 0
-
     # Collect exclude patterns for display
     proj = get_project(local_path)
     custom_excludes = proj.get("custom_excludes", []) if proj else []
+
+    # Build rows: (icon, name, coverage, reason)
+    indexed_rows: list[tuple[str, str, str, str]] = []
+    excluded_rows: list[tuple[str, str, str, str]] = []
+    skipped_rows: list[tuple[str, str, str, str]] = []
 
     for d in all_dirs:
         scannable = scannable_by_dir.get(d, 0)
         indexed = indexed_by_dir.get(d, 0)
         dir_path = root / d
 
-        # Check if excluded
         if should_exclude(dir_path, config.exclude, root):
-            excluded_count += 1
-            # Find matching pattern
-            reason = _find_exclude_reason(d, config.exclude, custom_excludes)
-            entries.append((f"{d}/", f"✗ 排除({reason})"))
+            pattern, source = _find_exclude_reason(d, config.exclude, custom_excludes)
+            excluded_rows.append(("✗", f"{d}/", "排除", f"{pattern} ({source})"))
         elif scannable == 0:
-            entries.append((f"{d}/", "─ 无源码文件"))
+            skipped_rows.append(("─", f"{d}/", "跳过", "无源码文件"))
         elif indexed >= scannable:
-            entries.append((f"{d}/", f"✅ {indexed}/{scannable}"))
+            indexed_rows.append(("✅", f"{d}/", f"{indexed}/{scannable}", ""))
         elif indexed > 0:
-            entries.append((f"{d}/", f"🟡 {indexed}/{scannable}"))
+            indexed_rows.append(("🟡", f"{d}/", f"{indexed}/{scannable}", "部分同步"))
         else:
-            entries.append((f"{d}/", f"○ 0/{scannable} 待同步"))
+            indexed_rows.append(("○", f"{d}/", f"0/{scannable}", "待同步"))
 
-    if not entries:
+    if not indexed_rows and not excluded_rows and not skipped_rows:
         return ""
-
-    # Two-column layout
-    lines = ["📂 索引覆盖"]
-    mid = (len(entries) + 1) // 2
-    left = entries[:mid]
-    right = entries[mid:]
-
-    for i in range(mid):
-        l_name, l_status = left[i]
-        col1 = f"  {l_name:<22s}{l_status}"
-        if i < len(right):
-            r_name, r_status = right[i]
-            col2 = f"{r_name:<22s}{r_status}"
-            lines.append(f"{col1:<44s}{col2}")
-        else:
-            lines.append(col1)
-
-    # Summary line
-    total_scannable = sum(scannable_by_dir.values())
-    total_indexed = sum(indexed_by_dir.values())
 
     # Collect supported extensions
     exts = set()
@@ -240,9 +219,43 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
             exts.add(suffix)
     ext_str = " ".join(sorted(exts)) if exts else ""
 
+    # Summary counts
+    total_scannable = sum(scannable_by_dir.values())
+    total_indexed = sum(indexed_by_dir.values())
+
+    # Format table
+    lines = ["📂 索引覆盖"]
+
+    # Determine column widths
+    all_rows = indexed_rows + excluded_rows + skipped_rows
+    name_w = max((len(r[1]) for r in all_rows), default=10)
+    name_w = max(name_w, 6) + 1  # min width + padding
+    cov_w = max((len(r[2]) for r in all_rows), default=4)
+    cov_w = max(cov_w, 4) + 1
+
+    def _fmt_row(icon: str, name: str, cov: str, reason: str) -> str:
+        base = f"  {icon} {name:<{name_w}s} {cov:<{cov_w}s}"
+        return f"{base} {reason}" if reason else base
+
+    if indexed_rows:
+        lines.append("  ── 已索引 ──")
+        for row in indexed_rows:
+            lines.append(_fmt_row(*row))
+
+    if excluded_rows:
+        lines.append("  ── 已排除 ──")
+        for row in excluded_rows:
+            lines.append(_fmt_row(*row))
+
+    if skipped_rows:
+        lines.append("  ── 已跳过 ──")
+        for row in skipped_rows:
+            lines.append(_fmt_row(*row))
+
+    # Summary
     summary_parts = [f"{total_indexed}/{total_scannable} 已索引"]
-    if excluded_count:
-        summary_parts.append(f"{excluded_count} 目录排除")
+    if excluded_rows:
+        summary_parts.append(f"{len(excluded_rows)} 目录排除")
     if ext_str:
         summary_parts.append(f"支持: {ext_str}")
     lines.append(f"\n  总计: {' · '.join(summary_parts)}")
@@ -250,33 +263,47 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     return "\n".join(lines)
 
 
-def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes: list[str]) -> str:
-    """Find the first matching exclusion pattern for a directory name."""
+def _find_exclude_reason(dir_name: str, all_excludes: list[str], custom_excludes: list[str]) -> tuple[str, str]:
+    """Find the first matching exclusion pattern for a directory name.
+
+    Returns (pattern, source) where source is one of:
+      "自定义" — user-configured via manon_configure_excludes
+      "内置"   — from _ALWAYS_EXCLUDE (universal patterns)
+      "gitignore" — from .gitignore
+    """
     import fnmatch
-    test_paths = [f"{dir_name}/", f"{dir_name}/dummy.py"]
+    test_paths = [f"{dir_name}/", f"{dir_name}/dummy.py", dir_name]
+    _always_set = set(_ALWAYS_EXCLUDE)
+
+    def _matches(pat: str) -> bool:
+        """Check if pattern matches the directory name, handling ** glob."""
+        for tp in test_paths:
+            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
+                return True
+        # fnmatch doesn't understand **; strip **/ prefix for simple matching
+        simple = pat.lstrip("*").lstrip("/")
+        if simple and (dir_name == simple or dir_name == simple.rstrip("/**")):
+            return True
+        return False
 
     # Check custom excludes first (most specific)
     for pat in custom_excludes:
-        for tp in test_paths:
-            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
-                return pat
+        if _matches(pat):
+            return pat, "自定义"
 
     # Check _ALWAYS_EXCLUDE
     for pat in _ALWAYS_EXCLUDE:
-        # Strip leading **/ for matching
-        simple = pat.lstrip("*").lstrip("/")
-        if dir_name in simple or fnmatch.fnmatch(f"{dir_name}/x", pat):
-            return pat
+        if _matches(pat):
+            return pat, "内置"
 
     # Check .gitignore patterns (everything else)
     for pat in all_excludes:
-        if pat in _ALWAYS_EXCLUDE:
+        if pat in _always_set:
             continue
-        for tp in test_paths:
-            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
-                return pat
+        if _matches(pat):
+            return pat, "gitignore"
 
-    return dir_name
+    return dir_name, ""
 
 
 def set_custom_excludes(local_path: str, patterns: list[str]) -> None:
