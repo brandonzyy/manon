@@ -140,13 +140,69 @@ $MANON_RULES
 
 ## 初始化流程（/manon 触发时执行）
 
-1. 调用 \`manon_init\`，传入当前工作目录路径和项目名
-2. 根据返回结果：
-   - 仓库已存在且已索引 → 展示图谱统计
-   - 仓库已存在但未索引 → 轮询 \`manon_index_status\` 直到完成
-   - 仓库不存在 → 已自动创建并触发索引，轮询等待
-3. 调用 \`manon_config\` 展示当前配置
-4. 告知用户 Manon 模式已激活
+执行以下步骤，按顺序完成：
+
+### Step 1: manon_init
+调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
+
+### Step 2: Smart Analysis（首次执行）
+检查 \`manon_init\` 输出中的标记：
+- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
+- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
+
+**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
+
+**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
+
+**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
+- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
+- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
+
+**2d.** 向用户展示分析结果：
+\`\`\`
+🧠 智能分析
+  ✅ src/     核心源码
+  ✅ lib/     共享库
+  ⊘  docs/   纯文档目录
+  ⊘  data/   数据文件
+💡 已自动排除: docs, data
+\`\`\`
+
+### Step 3: 文件同步（AST 提取 + 上传）
+调用 \`manon_push_update(repo_id, wait=true)\` 同步执行文件扫描和 AST 上传。
+等待返回结果后继续。
+
+### Step 4: 索引覆盖率
+调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
+原样输出结果给用户。
+
+### Step 5: 代码健康度
+调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
+原样输出结果给用户。
+
+### Step 6: 激活
+告知用户 Manon 模式已激活，可以开始使用代码智能工具。
+
+---
+
+## 目录判断规则
+
+用于 Step 2b，判断每个顶级目录是否值得索引：
+
+### 判断标准（按优先级）
+
+1. **源码占比**：目录内编程语言扩展名（.py .js .ts .tsx .java .go .rs .cpp .c .php .rb .swift .kt 等）文件占比 > 30% → index。纯文档(.md)、配置(.json/.yaml)、图片、数据文件等目录 → skip。
+
+2. **构建配置**：有 package.json / tsconfig.json / Cargo.toml / go.mod / CMakeLists.txt / build.gradle 等构建配置的目录，通常是可构建的源码模块 → index。
+
+3. **业务关联**：
+   - 核心业务代码、共享库、扩展模块 → index
+   - 静态资源（images/fonts/icons）、文档站（docs）、数据目录（data/fixtures）、日志（logs） → skip
+
+### 注意事项
+- codeindex 有 GenericParser 可处理任意 tree-sitter 支持的语言，不必因语言"不支持"而跳过
+- 测试目录（test/tests/__tests__）中的测试文件由 codeindex 的测试排除机制自动处理，不需要手动排除整个目录
+- 如果不确定，偏向 index（宁多勿少）
 SKILLEOF
     info "Claude Code /manon Skill installed"
 }
@@ -259,13 +315,45 @@ $MANON_RULES
 
 ## 初始化流程（/manon 触发时执行）
 
-1. 调用 \`manon_init\`，传入当前工作目录路径和项目名
-2. 根据返回结果：
-   - 仓库已存在且已索引 → 展示图谱统计
-   - 仓库已存在但未索引 → 轮询 \`manon_index_status\` 直到完成
-   - 仓库不存在 → 已自动创建并触发索引，轮询等待
-3. 调用 \`manon_config\` 展示当前配置
-4. 告知用户 Manon 模式已激活
+执行以下步骤，按顺序完成：
+
+### Step 1: manon_init
+调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
+
+### Step 2: Smart Analysis（首次执行）
+检查 \`manon_init\` 输出中的标记：
+- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
+- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
+
+**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
+
+**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
+
+**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
+- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
+- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
+
+**2d.** 向用户展示分析结果。
+
+### Step 3: 文件同步（AST 提取 + 上传）
+调用 \`manon_push_update(repo_id, wait=true)\` 同步执行文件扫描和 AST 上传。
+
+### Step 4: 索引覆盖率
+调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
+
+### Step 5: 代码健康度
+调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
+
+### Step 6: 激活
+告知用户 Manon 模式已激活。
+
+---
+
+## 目录判断规则
+
+1. **源码占比**：编程语言扩展名文件占比 > 30% → index
+2. **构建配置**：有 package.json/tsconfig.json/Cargo.toml 等 → index
+3. **业务关联**：核心代码/共享库 → index；静态资源/文档/数据/日志 → skip
 SKILLEOF
     info "CodeBuddy /manon Skill installed"
 }
