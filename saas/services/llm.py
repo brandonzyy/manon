@@ -39,7 +39,7 @@ async def llm_chat(
     resp = await client.post(
         settings.llm_api_url,
         headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
-        json={"model": settings.llm_model, "max_tokens": max_tokens, "messages": messages},
+        json={"model": settings.llm_model, "max_tokens": max_tokens, "messages": messages, "chat_template_kwargs": {"enable_thinking": False}},
         timeout=timeout,
     )
     resp.raise_for_status()

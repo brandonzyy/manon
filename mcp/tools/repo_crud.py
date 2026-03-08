@@ -49,7 +49,7 @@ def register_repo_crud_tools(mcp):
             return (
                 f"仓库已创建: id={repo_id}, name={name}\n"
                 f"本地路径: {resolved}\n"
-                f"检测到 {file_count} 个文件，请调用 manon_index {repo_id} 开始索引。"
+                f"检测到 {file_count} 个文件，请通过 scan + upload_batch 同步索引。"
             )
         result = _client._post("/api/v1/repos", {"name": name, "branch": branch, "source_type": "local"})
         return f"仓库已创建: id={result['id']}, name={result['name']}, status={result['index_status']}"

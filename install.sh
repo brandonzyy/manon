@@ -169,11 +169,20 @@ $MANON_RULES
 \`\`\`
 
 ### Step 3: 文件同步（AST 提取 + 上传）
-**3a.** 调用 \`manon_scan_files(repo_id)\` 扫描变更文件。
-- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
-- 如果 total_files == 0 且 deleted_files == 0 → 展示 "✅ 无变更" → 跳到 Step 4
 
-**3b.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+
+**3b.** 用 Bash 运行扫描脚本：
+\`\`\`
+python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+\`\`\`
+- 脚本输出 JSON: {total_files, deleted_files, total_batches}
+- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
+- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
+
+**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
+
+**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
 - 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
 - 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
 
@@ -341,11 +350,20 @@ $MANON_RULES
 **2d.** 向用户展示分析结果。
 
 ### Step 3: 文件同步（AST 提取 + 上传）
-**3a.** 调用 \`manon_scan_files(repo_id)\` 扫描变更文件。
-- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
-- 如果 total_files == 0 且 deleted_files == 0 → 展示 "✅ 无变更" → 跳到 Step 4
 
-**3b.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+
+**3b.** 用 Bash 运行扫描脚本：
+\`\`\`
+python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+\`\`\`
+- 脚本输出 JSON: {total_files, deleted_files, total_batches}
+- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
+- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
+
+**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
+
+**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
 - 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
 - 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
 

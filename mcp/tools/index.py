@@ -17,21 +17,6 @@ def register_index_tools(mcp):
     """Index trigger and status tools."""
 
     @mcp.tool()
-    def manon_index(repo_id: str, incremental: bool = True) -> str:
-        """触发代码索引构建。索引完成后才能进行搜索和分析。
-
-        Args:
-            repo_id: 仓库 ID
-            incremental: 增量索引（默认 True），设为 False 全量重建
-        """
-        result = _client._post(f"/api/v1/repos/{repo_id}/index", {
-            "incremental": incremental,
-        })
-        status = result.get("status", "unknown")
-        msg = result.get("message", "")
-        return f"索引已触发: {status}" + (f" — {msg}" if msg else "")
-
-    @mcp.tool()
     def manon_index_status(repo_id: str) -> str:
         """查看仓库的索引状态和统计信息。
 

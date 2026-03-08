@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from mcp.server.fastmcp import Context
 from shared.ast_sync import (
@@ -110,6 +111,10 @@ def register_init_tools(mcp):
         await progress(75, "🔗 安装 Git 钩子...")
         hooks_lines = await asyncio.to_thread(_build_hooks_lines, project_path)
         lines.extend(hooks_lines)
+
+        # Embed MANON_DIR for Skill layer to locate scripts
+        manon_dir = str(Path(__file__).resolve().parent.parent.parent)
+        lines.append(f"\n<!-- MANON_DIR={manon_dir} -->")
 
         # Embed smart_analysis status marker for Skill layer
         proj = get_project(project_path)

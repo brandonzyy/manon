@@ -37,7 +37,7 @@ def register_health_tools(mcp):
         lines = [f"代码健康评分: {score}/100 ({grade})"]
         lines.append(f"实体: {result.get('entity_count', 0)}, 关系: {result.get('relation_count', 0)}")
         if not result.get("reliable", True):
-            lines.append("⚠ 图谱数据为空，评分不可靠。请先运行 manon_index 重建索引。")
+            lines.append("⚠ 图谱数据为空，评分不可靠。请先同步文件并重建索引。")
         lines.append("")
         for d in dims:
             bar = "█" * d["value"] + "░" * (10 - d["value"])
