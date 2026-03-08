@@ -2,7 +2,41 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from pathlib import Path
+
+# Directories to skip during recursive traversal (basename matching).
+# Kept in sync with config._ALWAYS_EXCLUDE but as simple basenames for os.walk.
+_SKIP_DIRS = frozenset({
+    ".git", ".svn", ".hg",
+    ".venv", "venv", "__pycache__", ".tox", ".nox",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "node_modules", ".yarn", ".pnpm-store", "bower_components",
+    "dist", "build", "out", "target", "_build",
+    ".next", ".nuxt", ".output", ".svelte-kit", ".turbo",
+    ".gradle", ".m2",
+    ".idea", ".vscode", ".vs", ".eclipse",
+    "htmlcov", ".nyc_output", "coverage",
+    ".cache", ".tmp", ".temp",
+})
+
+
+def _walk_safe(root: Path, *, max_files: int = 0):
+    """Recursively yield Path objects, skipping heavy directories.
+
+    Args:
+        root: Directory to walk.
+        max_files: Stop after this many files (0 = unlimited).
+    """
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune heavy directories in-place (modifies os.walk traversal)
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for fname in filenames:
+            yield Path(dirpath) / fname
+            count += 1
+            if max_files and count >= max_files:
+                return
 
 
 def detect_test_patterns(root: Path) -> tuple[list[str], list[str]]:
@@ -86,15 +120,10 @@ def detect_test_patterns(root: Path) -> tuple[list[str], list[str]]:
         patterns.update(_pw_pats)
         frameworks["playwright"] = {"*.spec.{ts,js}", "e2e/"}
 
-    # Go test
-    try:
-        has_go_test = any(root.glob("*_test.go")) or any(root.glob("**/*_test.go"))
-    except OSError:
-        has_go_test = False
-    if has_go_test or _exists("go.mod"):
-        # Only add if go test files actually exist
+    # Go test — only scan if go.mod exists
+    if _exists("go.mod"):
         try:
-            if any(root.rglob("*_test.go")):
+            if any(f for f in _walk_safe(root) if f.name.endswith("_test.go")):
                 patterns.add("**/*_test.go")
                 frameworks["go test"] = {"*_test.go"}
         except OSError:
@@ -157,9 +186,9 @@ def preview_project_structure(local_path: str) -> str:
             continue
         name = item.name
         excluded = should_exclude(item, config.exclude, root)
-        # Quick file count (non-recursive, cap at 500 to stay fast)
+        # Quick file count (capped at 500 to stay fast, skips heavy dirs)
         try:
-            count = sum(1 for _ in zip(range(500), item.rglob("*")) if True)
+            count = sum(1 for _ in _walk_safe(item, max_files=500))
             count_str = f"{count}+" if count >= 500 else str(count)
         except OSError:
             count_str = "?"
@@ -358,12 +387,8 @@ def collect_directory_signals(local_path: str) -> dict:
         has_build_config = False
 
         try:
-            for f in item.rglob("*"):
-                if not f.is_file():
-                    continue
+            for f in _walk_safe(item, max_files=1000):
                 file_count += 1
-                if file_count > 1000:  # Cap to avoid slow scans
-                    break
 
                 # Extension distribution
                 ext = f.suffix.lower()
