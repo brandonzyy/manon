@@ -7,3 +7,5 @@ tree-sitter-javascript
 tree-sitter-typescript
 tree-sitter-java
 tree-sitter-php
+networkx>=3.0
+numpy>=1.24

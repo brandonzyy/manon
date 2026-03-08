@@ -1,4 +1,8 @@
-"""Async git clone / pull — standalone version (no app.config dependency)."""
+"""DEPRECATED: Async git clone / pull for server-side indexing.
+
+All repos now use MCP client-side scan_and_parse + sync-ast.
+No production repos use git_url as of 2026-03.
+This module can be removed once the git-clone path is fully retired."""
 from __future__ import annotations
 
 import asyncio

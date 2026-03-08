@@ -33,14 +33,12 @@ from .pipeline import (
     KG_DIR,
     GRAPH_FILE,
     META_FILE,
-    IndexResult,
     QueryResult,
-    index_repo,
     query,
 )
 from .store import CodeGraph
 
-__all__ = ["MatrixoneGraph", "IndexResult", "QueryResult"]
+__all__ = ["MatrixoneGraph", "QueryResult"]
 
 
 class MatrixoneGraph:
@@ -99,37 +97,6 @@ class MatrixoneGraph:
             self.kg_path = self._data_dir / self._repo_key(self.repo_path) / "kg"
         else:
             self.kg_path = self.repo_path / KG_DIR
-
-    # -- Indexing --
-
-    async def index(self, *, incremental=True, on_progress=None) -> IndexResult:
-        return await index_repo(
-            self.repo_path, self._embedder,
-            kg_path=self.kg_path,
-            incremental=incremental, on_progress=on_progress,
-        )
-
-    async def index_report(self, *, incremental=True, on_progress=None) -> dict:
-        """Index + health scan, return combined dict for API consumers."""
-        result = await self.index(incremental=incremental, on_progress=on_progress)
-        health = await self.health()
-        # Compute entity type counts from graph
-        g = self._load_graph()
-        type_counts: dict[str, int] = {}
-        for _, data in g._g.nodes(data=True):
-            kind = data.get("kind", "")
-            if kind:
-                type_counts[kind] = type_counts.get(kind, 0) + 1
-        return {
-            "files": result.files_scanned,
-            "entities": g.entity_count,
-            "relations": g.relation_count,
-            "chunks": result.chunks_added,
-            "skipped": result.files_skipped,
-            "errors": [],
-            "entityTypes": type_counts,
-            "health": health,
-        }
 
     # -- Query --
 

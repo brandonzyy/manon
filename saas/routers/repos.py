@@ -12,7 +12,6 @@ from ..auth import TenantContext, require_tenant
 from ..db import get_db
 from ..metering import record_usage
 from ..models import RepoCreate, RepoOut
-from ..services.git import clone_or_pull
 from ..config import settings
 from ..quota import check_repo_quota
 
@@ -48,11 +47,9 @@ async def create_repo(body: RepoCreate, ctx: TenantContext = Depends(require_ten
     local_path = body.local_path
     source_type = body.source_type or ""
 
-    if source_type == "local":
+    if source_type == "local" or not body.git_url:
         # Client-side AST sync — no clone, no local_path on server
         local_path = None
-    elif body.git_url:
-        local_path = await clone_or_pull(repo_id, body.git_url, body.branch)
 
     await db.execute(
         "INSERT INTO repos (id, tenant_id, name, git_url, branch, local_path, source_type) VALUES (?,?,?,?,?,?,?)",

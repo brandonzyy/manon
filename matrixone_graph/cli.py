@@ -31,38 +31,6 @@ def kg():
     pass
 
 
-@kg.command()
-@click.argument("path", default=".", type=click.Path(exists=True))
-@click.option("--embedding-url", default=None, help="Embedding endpoint URL")
-@click.option("--full", is_flag=True, help="Force full re-index")
-def index(path: str, embedding_url: str | None, full: bool):
-    """Index a repository into the knowledge graph."""
-    from matrixone_graph import MatrixoneGraph
-
-    url = _get_embedding_url(embedding_url)
-    repo = Path(path).resolve()
-
-    def progress(msg: str):
-        console.print(f"  [dim]{msg}[/dim]")
-
-    console.print(f"[bold]Indexing[/bold] {repo}")
-    console.print(f"  Embedding endpoint: {url}")
-    kg_inst = MatrixoneGraph(repo, embedding_url=url)
-
-    async def _do():
-        try:
-            return await kg_inst.index(incremental=not full, on_progress=progress)
-        finally:
-            await kg_inst.close()
-
-    result = asyncio.run(_do())
-    console.print(f"\n[green]Done.[/green]  "
-                  f"scanned={result.files_scanned}  indexed={result.files_indexed}  "
-                  f"skipped={result.files_skipped}")
-    console.print(f"  entities={result.entities_added}  "
-                  f"relations={result.relations_added}  "
-                  f"chunks={result.chunks_added}")
-
 
 @kg.command()
 @click.argument("text")

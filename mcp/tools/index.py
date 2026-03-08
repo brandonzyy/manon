@@ -27,18 +27,17 @@ def register_index_tools(mcp):
             incremental: 增量索引（默认 True），设为 False 全量重建
         """
         found = find_project_by_repo_id(repo_id)
-        if found:
-            local_path, info = found
-            old_hashes = {} if not incremental else info.get("file_hashes", {})
-            # max_files: 0 = unlimited (full reindex), -1 = use default limit
-            limit = 0 if not incremental else -1
-            bg_msg = _sync._start_bg_sync(
-                repo_id, local_path, old_hashes,
-                max_files=limit, full_reindex=not incremental,
-            )
-            return f"本地索引已提交后台执行。{bg_msg}"
-        result = _client._post(f"/api/v1/repos/{repo_id}/index", {"incremental": incremental})
-        return f"索引已触发: {result['status']}。用 manon_index_status 查看进度。"
+        if not found:
+            return f"本地项目未注册。请先在项目目录执行 manon_init 注册本地项目。"
+        local_path, info = found
+        old_hashes = {} if not incremental else info.get("file_hashes", {})
+        # max_files: 0 = unlimited (full reindex), -1 = use default limit
+        limit = 0 if not incremental else -1
+        bg_msg = _sync._start_bg_sync(
+            repo_id, local_path, old_hashes,
+            max_files=limit, full_reindex=not incremental,
+        )
+        return f"本地索引已提交后台执行。{bg_msg}"
 
     @mcp.tool()
     def manon_index_status(repo_id: str) -> str:

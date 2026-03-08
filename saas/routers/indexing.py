@@ -1,7 +1,6 @@
-"""Indexing endpoints — trigger, poll status, push-update, sync-ast."""
+"""Indexing endpoints — sync-ast, index-status, merge-dynamic."""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sys
@@ -13,9 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..auth import TenantContext, require_tenant
 from ..db import get_db
 from ..metering import record_usage
-from ..models import IndexTrigger, IndexStatus, SyncAstRequest, MergeDynamicRequest
-from ..services.graph import get_graph
-from ..services.git import clone_or_pull
+from ..models import IndexStatus, SyncAstRequest, MergeDynamicRequest
 from ..config import settings
 
 # Ensure matrixone_graph is importable
@@ -24,7 +21,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from matrixone_graph.pipeline import (
-    _map_parse_result, _module_from_rel_path, _chunk_file,
+    _map_parse_result, _module_from_rel_path,
     GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
     _load_meta, _save_meta, _load_chunks, _save_chunks,
     invalidate_kg_cache,
@@ -47,83 +44,12 @@ async def _get_repo_row(repo_id: str, tenant_id: str):
     return row
 
 
-async def _run_index(repo_id: str, tenant_id: str, local_path: str, incremental: bool):
-    """Background task: run indexing and update DB status."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "UPDATE repos SET index_status = 'indexing', updated_at = datetime('now') WHERE id = ?",
-            (repo_id,),
-        )
-        await db.commit()
-
-        mg = get_graph(tenant_id, local_path)
-        result = await mg.index(incremental=incremental)
-        st = mg.status()
-        stats = {
-            "files_scanned": result.files_scanned,
-            "files_indexed": result.files_indexed,
-            "entities_added": result.entities_added,
-            "relations_added": result.relations_added,
-            "chunks_added": result.chunks_added,
-            "total_files": result.files_indexed,
-            "total_entities": st.get("entity_count", 0),
-            "total_relations": st.get("relation_count", 0),
-            "total_chunks": st.get("chunk_count", 0),
-        }
-        await db.execute(
-            "UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
-            (json.dumps(stats), repo_id),
-        )
-        await db.commit()
-    except Exception as exc:
-        await db.execute(
-            "UPDATE repos SET index_status = 'error', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
-            (json.dumps({"error": str(exc)[:500]}), repo_id),
-        )
-        await db.commit()
-
-
-@router.post("/index", status_code=202)
-async def trigger_index(
-    repo_id: str,
-    body: IndexTrigger = IndexTrigger(),
-    ctx: TenantContext = Depends(require_tenant),
-):
-    row = await _get_repo_row(repo_id, ctx.tenant_id)
-    if not row["local_path"]:
-        raise HTTPException(400, "repo has no local path — create with git_url or local_path first")
-
-    asyncio.create_task(_run_index(repo_id, ctx.tenant_id, row["local_path"], body.incremental))
-    await record_usage(ctx.tenant_id, "indexing.trigger", repo_id)
-    return {"repo_id": repo_id, "status": "indexing"}
-
 
 @router.get("/index-status")
 async def index_status(repo_id: str, ctx: TenantContext = Depends(require_tenant)):
     row = await _get_repo_row(repo_id, ctx.tenant_id)
     stats = json.loads(row["index_stats"]) if row["index_stats"] else None
     return IndexStatus(repo_id=repo_id, status=row["index_status"], stats=stats)
-
-
-@router.post("/push-update", status_code=202)
-async def push_update(repo_id: str, ctx: TenantContext = Depends(require_tenant)):
-    """Pull latest changes then re-index incrementally."""
-    row = await _get_repo_row(repo_id, ctx.tenant_id)
-    if row["git_url"]:
-        local_path = await clone_or_pull(repo_id, row["git_url"], row["branch"])
-        db = await get_db()
-        await db.execute("UPDATE repos SET local_path = ? WHERE id = ?", (local_path, repo_id))
-        await db.commit()
-    else:
-        local_path = row["local_path"]
-
-    if not local_path:
-        raise HTTPException(400, "repo has no local path or git_url — use sync-ast for local repos")
-
-    asyncio.create_task(_run_index(repo_id, ctx.tenant_id, local_path, incremental=True))
-    await record_usage(ctx.tenant_id, "indexing.push_update", repo_id)
-    return {"repo_id": repo_id, "status": "indexing"}
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +148,9 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
         entities, relations = _map_parse_result(pr, module)
         all_entities.extend(entities)
         all_relations.extend(relations)
-        if f.chunks:
-            chunks = [Chunk.from_dict(cd) for cd in f.chunks]
-        else:
-            # Fallback: old client sends source, chunk server-side
-            chunks = _chunk_file(f.source, pr, module)
+        if not f.chunks:
+            logger.warning("File %s has no pre-chunked data, skipping chunks", f.rel_path)
+        chunks = [Chunk.from_dict(cd) for cd in f.chunks]
         new_chunks.extend(chunks)
         for c in chunks:
             all_chunks[c.id] = c

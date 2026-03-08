@@ -99,7 +99,7 @@ async def sync_to_server(repo_id: str, file_results: list, deleted_files: list, 
         batch = file_results[i:i + SYNC_BATCH_SIZE]
         payload = {
             "files": batch,
-            "deleted": deleted_files if i == 0 else [],
+            "deleted_files": deleted_files if i == 0 else [],
             "full_reindex": full_reindex if i == 0 else False,
         }
         last_result = await saas_client.post(f"/api/v1/repos/{repo_id}/sync-ast", payload)

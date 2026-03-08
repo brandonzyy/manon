@@ -129,18 +129,10 @@ def _run_smart_analysis(project_path: str, rid: str, proj: dict) -> list[str]:
     return lines
 
 
-# ── Init workflows ────────────────────────────────────
+# ── Common init steps ─────────────────────────────────
 
-def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
-    """Handle init for an already-registered local project. Returns (rid, lines, graph_lines)."""
-    rid = proj["repo_id"]
-    log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
-    lines = [f"  {proj['name']}  ({rid[:8]})"]
-    graph_lines: list[str] = []
-    sync = proj.get('last_sync', '') or '—'
-    tracked = len(proj.get('file_hashes', {}))
-
-    # Detect languages and ensure parsers before fetching status
+def _detect_languages(project_path: str, lines: list[str]) -> None:
+    """Detect project languages and install missing parsers."""
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(ensure_parsers, project_path)
@@ -148,7 +140,6 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         log.info("Parser status: %s", parser_status)
         if parser_status:
             all_langs = sorted(parser_status.keys())
-            log.info("All langs: %s", all_langs)
             installed = [l for l, s in parser_status.items() if s == "installed"]
             if installed:
                 lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
@@ -160,13 +151,49 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     except Exception as e:
         log.warning("Parser detection failed: %s", e)
 
-    # Auto-detect test frameworks
+
+def _detect_tests(project_path: str, lines: list[str]) -> None:
+    """Auto-detect test frameworks and append exclusion report."""
     try:
         _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
         if test_report:
             lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
     except Exception as e:
         log.warning("Test framework detection failed: %s", e)
+
+
+def _run_post_register(project_path: str, rid: str, proj: dict,
+                       lines: list[str], graph_lines: list[str]) -> None:
+    """Common post-registration steps: smart analysis, bg sync, index coverage."""
+    smart_lines = _run_smart_analysis(project_path, rid, proj)
+    if smart_lines:
+        lines.extend(smart_lines)
+
+    bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
+                                   old_hashes=proj.get("file_hashes", {}))
+    graph_lines.append(f"  🔄 {bg_msg}")
+
+    try:
+        coverage = analyze_index_coverage(project_path, proj.get("file_hashes", {}))
+        if coverage:
+            graph_lines.append(f"\n{coverage}")
+    except Exception as e:
+        log.warning("Index coverage analysis failed: %s", e)
+
+
+# ── Init workflows ────────────────────────────────────
+
+def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
+    """Handle init for an already-registered local project. Returns (rid, lines, graph_lines)."""
+    rid = proj["repo_id"]
+    log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
+    lines = [f"  {proj['name']}  ({rid[:8]})"]
+    graph_lines: list[str] = []
+    sync = proj.get('last_sync', '') or '—'
+    tracked = len(proj.get('file_hashes', {}))
+
+    _detect_languages(project_path, lines)
+    _detect_tests(project_path, lines)
 
     try:
         t0 = time.time()
@@ -182,23 +209,7 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         graph_lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
         log.warning("Failed to fetch repo %s status: %s", rid, e)
 
-    # Smart analysis — LLM judges directory relevance (runs once per project)
-    smart_lines = _run_smart_analysis(project_path, rid, proj)
-    if smart_lines:
-        lines.extend(smart_lines)
-
-    bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
-                                   old_hashes=proj.get("file_hashes", {}))
-    graph_lines.append(f"  🔄 {bg_msg}")
-
-    # Index coverage analysis
-    try:
-        coverage = analyze_index_coverage(project_path, proj.get("file_hashes", {}))
-        if coverage:
-            graph_lines.append(f"\n{coverage}")
-    except Exception as e:
-        log.warning("Index coverage analysis failed: %s", e)
-
+    _run_post_register(project_path, rid, proj, lines, graph_lines)
     return rid, lines, graph_lines
 
 
@@ -241,48 +252,9 @@ def _init_match_or_create(
             set_project(project_path, info)
             lines.append("  ✅ 已注册到本地项目表")
 
-            # Detect languages and ensure parsers before background sync
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(ensure_parsers, project_path)
-                    parser_status = future.result(timeout=30)
-                if parser_status:
-                    all_langs = sorted(parser_status.keys())
-                    installed = [l for l, s in parser_status.items() if s == "installed"]
-                    if installed:
-                        lines.append(f"  🗂️ 语言: {', '.join(all_langs)} (新安装: {', '.join(installed)})")
-                    else:
-                        lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
-            except concurrent.futures.TimeoutError:
-                log.warning("Parser detection timed out after 30s")
-                lines.append("  ⚠️ 语言检测超时，跳过")
-            except Exception as e:
-                log.warning("Parser detection failed: %s", e)
-
-            # Auto-detect test frameworks
-            try:
-                _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
-                if test_report:
-                    lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
-            except Exception as e:
-                log.warning("Test framework detection failed: %s", e)
-
-            # Smart analysis — LLM judges directory relevance (runs once)
-            smart_lines = _run_smart_analysis(project_path, rid, info)
-            if smart_lines:
-                lines.extend(smart_lines)
-
-            bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
-                                           old_hashes=info.get("file_hashes", {}))
-            graph_lines.append(f"  🔄 {bg_msg}")
-
-            # Index coverage analysis
-            try:
-                coverage = analyze_index_coverage(project_path, info.get("file_hashes", {}))
-                if coverage:
-                    graph_lines.append(f"\n{coverage}")
-            except Exception as e:
-                log.warning("Index coverage analysis failed: %s", e)
+            _detect_languages(project_path, lines)
+            _detect_tests(project_path, lines)
+            _run_post_register(project_path, rid, info, lines, graph_lines)
 
         return rid, lines, graph_lines
 
@@ -294,49 +266,9 @@ def _init_match_or_create(
         set_project(project_path, info)
         lines.append(f"  🆕 {name}  ({rid[:8]})")
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(ensure_parsers, project_path)
-                parser_status = future.result(timeout=30)
-            if parser_status:
-                all_langs = sorted(parser_status.keys())
-                lines.append(f"  🗂️ 语言: {', '.join(all_langs)}")
-        except concurrent.futures.TimeoutError:
-            log.warning("Parser detection timed out after 30s")
-            lines.append("  ⚠️ 语言检测超时，跳过")
-        except Exception:
-            pass
-
-        # Auto-detect test frameworks
-        try:
-            _test_pats, test_report = detect_test_patterns(Path(project_path).resolve())
-            if test_report:
-                lines.append(f"  🧪 测试排除: {', '.join(test_report)}")
-        except Exception:
-            pass
-
-        # Smart analysis
-        smart_lines = _run_smart_analysis(project_path, rid, info)
-        if smart_lines:
-            lines.extend(smart_lines)
-
-        bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
-                                       old_hashes=info.get("file_hashes", {}))
-        graph_lines.append(f"  🔄 {bg_msg}")
-
-        # Index coverage
-        try:
-            coverage = analyze_index_coverage(project_path, info.get("file_hashes", {}))
-            if coverage:
-                graph_lines.append(f"\n{coverage}")
-            else:
-                lines.append("  💡 如有目录不应被扫描，请调用 manon_configure_excludes 排除")
-        except Exception:
-            pass
-
-        bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
-                                       old_hashes=info.get("file_hashes", {}))
-        graph_lines.append(f"  🔄 {bg_msg}")
+        _detect_languages(project_path, lines)
+        _detect_tests(project_path, lines)
+        _run_post_register(project_path, rid, info, lines, graph_lines)
     except Exception as e:
         lines.append(f"\n  ❌ 创建仓库失败: {e}")
         rid = None
@@ -351,7 +283,7 @@ def _build_health_lines(rid: str) -> list[str]:
     lines = []
     try:
         health = _client._get(f"/api/v1/repos/{rid}/code-health", timeout=10)
-        score = health.get("overall_score", 0)
+        score = health.get("score", 0)
         grade = health.get("grade", "?")
         dims = health.get("dimensions", {})
         dim_str = "  ".join(f"{k}{v}" for k, v in dims.items())

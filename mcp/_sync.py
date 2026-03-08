@@ -138,16 +138,11 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
                     max_files: int, full_reindex: bool):
     """Background thread: scan files, upload AST, loop until complete."""
     try:
-        import importlib
-        import shared.ast.scanner as _scanner_mod
-        importlib.reload(_scanner_mod)
-        import shared.ast_sync as _ast_mod
-        importlib.reload(_ast_mod)
         _write_sync_progress(repo_id, "syncing", "扫描文件中...")
         current_hashes = dict(old_hashes)
         total_synced, total_deleted = _run_sync_loop(
             repo_id, project_path, current_hashes, max_files, full_reindex,
-            _ast_mod.scan_and_parse, _ast_mod.find_project_by_repo_id, _ast_mod.set_project,
+            scan_and_parse, find_project_by_repo_id, set_project,
         )
         _write_sync_progress(
             repo_id, "done",

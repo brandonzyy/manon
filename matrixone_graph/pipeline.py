@@ -1,22 +1,17 @@
-"""Index and query pipelines for MatrixoneGraph.
+"""Chunking, caching, and query pipelines for MatrixoneGraph.
 
-index_repo()  — scan → parse → map → embed → store
-query()       — embed → vector search → graph BFS → assemble context
+chunk_file_from_dict() — client-side chunking (MCP → sync-ast)
+query()               — embed → vector search → graph BFS → assemble context
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
-
-from codeindex.config import Config
-from codeindex.parser import ParseResult, parse_file
-from codeindex.scanner import scan_directory
+from typing import Any
 
 from .embed import EmbeddingClient
 from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex
@@ -31,41 +26,12 @@ META_FILE = "meta.json"
 
 
 @dataclass
-class IndexResult:
-    files_scanned: int = 0
-    files_indexed: int = 0
-    files_skipped: int = 0
-    entities_added: int = 0
-    relations_added: int = 0
-    chunks_added: int = 0
-
-@dataclass
 class QueryResult:
     entities: list[dict[str, Any]] = field(default_factory=list)
     relations: list[dict[str, Any]] = field(default_factory=list)
     chunks: list[dict[str, Any]] = field(default_factory=list)
     context: str = ""
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _file_hash(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return h.hexdigest()
-
-
-def _module_prefix(file_path: Path, repo_root: Path) -> str:
-    try:
-        rel = file_path.relative_to(repo_root)
-    except ValueError:
-        rel = file_path
-    parts = list(rel.with_suffix("").parts)
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join(parts)
 
 
 def _make_entity_id(module: str, symbol_name: str) -> str:
@@ -102,38 +68,6 @@ def _build_description(symbol) -> str:
         parts.append(symbol.docstring[:200])
     return " | ".join(parts)
 
-
-def _chunk_file(source: str, parse_result: ParseResult, module: str) -> list[Chunk]:
-    lines = source.splitlines(keepends=True)
-    chunks: list[Chunk] = []
-    covered: set[int] = set()
-    for sym in sorted(parse_result.symbols, key=lambda s: s.line_start):
-        start = max(sym.line_start - 1, 0)
-        end = min(sym.line_end, len(lines))
-        if start >= end:
-            continue
-        content = "".join(lines[start:end])
-        if not content.strip():
-            continue
-        cid = f"chunk:{_make_entity_id(module, sym.name)}"
-        chunks.append(Chunk(
-            id=cid, content=content,
-            file_path=str(parse_result.path),
-            line_start=sym.line_start, line_end=sym.line_end,
-            symbol_name=sym.name,
-        ))
-        covered.update(range(start, end))
-    uncovered = [i for i in range(len(lines)) if i not in covered]
-    if uncovered:
-        content = "".join(lines[i] for i in uncovered)
-        if content.strip():
-            chunks.append(Chunk(
-                id=f"chunk:{module}.__file__", content=content[:2000],
-                file_path=str(parse_result.path),
-                line_start=uncovered[0] + 1, line_end=uncovered[-1] + 1,
-                symbol_name="",
-            ))
-    return chunks
 
 
 def _module_from_rel_path(rel_path: str) -> str:
@@ -349,140 +283,6 @@ def invalidate_kg_cache(kg_path: Path) -> None:
     """Remove a specific kg_path from cache (call after re-indexing)."""
     _kg_cache.pop(str(kg_path), None)
 
-
-# ---------------------------------------------------------------------------
-# Index pipeline
-# ---------------------------------------------------------------------------
-
-def _process_file(
-    f: Path, repo_path: Path, graph: CodeGraph, vec_index: VectorIndex,
-    all_chunks: dict[str, Chunk],
-) -> tuple[list[Entity], list[Relation], list[Chunk]]:
-    """Parse one file and return entities, relations, chunks. Removes old data first."""
-    module = _module_prefix(f, repo_path)
-    fp_str = str(f)
-    graph.remove_by_file(fp_str)
-    old_chunk_ids = {cid for cid, c in all_chunks.items() if c.file_path == fp_str}
-    vec_index.remove_by_ids(old_chunk_ids)
-    for cid in old_chunk_ids:
-        del all_chunks[cid]
-
-    pr = parse_file(f)
-    if pr.error:
-        logger.warning("Parse error %s: %s", f, pr.error)
-        return [], [], []
-    entities, relations = _map_parse_result(pr, module)
-    try:
-        source = f.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        source = ""
-    chunks = _chunk_file(source, pr, module)
-    for c in chunks:
-        all_chunks[c.id] = c
-    return entities, relations, chunks
-
-
-async def _embed_and_save(
-    graph: CodeGraph, vec_index: VectorIndex, all_chunks: dict[str, Chunk],
-    all_entities: list[Entity], all_relations: list[Relation], new_chunks: list[Chunk],
-    embedder: EmbeddingClient, kg_path: Path, new_hashes: dict[str, str],
-    result: IndexResult, on_progress: Callable[[str], None] | None,
-) -> None:
-    """Add entities/relations to graph, embed, and save to disk."""
-    for ent in all_entities:
-        graph.add_entity(ent)
-        result.entities_added += 1
-    for rel in all_relations:
-        if graph.has_entity(rel.src_id) or graph.has_entity(rel.tgt_id):
-            graph.add_relation(rel)
-            result.relations_added += 1
-
-    if all_entities:
-        if on_progress:
-            on_progress(f"Embedding {len(all_entities)} entities...")
-        ent_vecs = await embedder.embed([e.description for e in all_entities])
-        vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
-
-    if new_chunks:
-        if on_progress:
-            on_progress(f"Embedding {len(new_chunks)} chunks...")
-        chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
-        vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
-        result.chunks_added = len(new_chunks)
-
-    if on_progress:
-        on_progress("Saving to disk...")
-    graph.save(kg_path / GRAPH_FILE)
-    vec_index.save(kg_path / VECTORS_FILE)
-    _save_chunks(kg_path, all_chunks)
-    invalidate_kg_cache(kg_path)
-    meta = _load_meta(kg_path)
-    meta.update({
-        "version": 1, "entity_count": graph.entity_count,
-        "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
-        "file_count": len(new_hashes), "embedding_url": embedder.base_url,
-        "hashes": new_hashes,
-    })
-    _save_meta(kg_path, meta)
-
-
-async def index_repo(
-    repo_path: Path,
-    embedder: EmbeddingClient,
-    *,
-    kg_path: Path | None = None,
-    incremental: bool = True,
-    on_progress: Callable[[str], None] | None = None,
-) -> IndexResult:
-    repo_path = repo_path.resolve()
-    if kg_path is None:
-        kg_path = repo_path / KG_DIR
-    result = IndexResult()
-
-    graph = CodeGraph()
-    vec_index = VectorIndex()
-    graph.load(kg_path / GRAPH_FILE)
-    vec_index.load(kg_path / VECTORS_FILE)
-    all_chunks = _load_chunks(kg_path)
-    meta = _load_meta(kg_path)
-    old_hashes: dict[str, str] = meta.get("hashes", {})
-
-    config = Config.load(repo_path / ".codeindex.yaml")
-    scan_result = scan_directory(repo_path, config, repo_path)
-    result.files_scanned = len(scan_result.files)
-    if on_progress:
-        on_progress(f"Scanned {result.files_scanned} files")
-
-    files_to_index: list[Path] = []
-    new_hashes: dict[str, str] = {}
-    for f in scan_result.files:
-        h = _file_hash(f)
-        key = str(f.relative_to(repo_path))
-        new_hashes[key] = h
-        if incremental and old_hashes.get(key) == h:
-            result.files_skipped += 1
-            continue
-        files_to_index.append(f)
-    if on_progress:
-        on_progress(f"{len(files_to_index)} files to index, {result.files_skipped} unchanged")
-
-    all_entities: list[Entity] = []
-    all_relations: list[Relation] = []
-    new_chunks: list[Chunk] = []
-    for f in files_to_index:
-        ents, rels, chunks = _process_file(f, repo_path, graph, vec_index, all_chunks)
-        all_entities.extend(ents)
-        all_relations.extend(rels)
-        new_chunks.extend(chunks)
-        result.files_indexed += 1
-        if on_progress and result.files_indexed % 20 == 0:
-            on_progress(f"Indexed {result.files_indexed}/{len(files_to_index)} files")
-
-    await _embed_and_save(
-        graph, vec_index, all_chunks, all_entities, all_relations, new_chunks,
-        embedder, kg_path, new_hashes, result, on_progress,
-    )
-    return result
 
 
 # ---------------------------------------------------------------------------
