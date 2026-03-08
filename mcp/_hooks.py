@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
+
 import sys
 from pathlib import Path
 
@@ -135,33 +135,28 @@ def _install_claude_hooks() -> str | None:
         return None
 
 
+def _find_git_root(path: Path) -> Path | None:
+    """Walk up from path to find the nearest .git directory. Pure Python, no subprocess."""
+    p = path.resolve()
+    while p != p.parent:
+        if (p / ".git").is_dir():
+            return p
+        p = p.parent
+    return None
+
+
 def _install_hook(project_path: str) -> str | None:
-    """Install pre-push hook if .git exists. Returns status message or None."""
+    """Install pre-push hook if .git exists. Returns status message or None on skip/error."""
     import time as _time
     t0 = _time.time()
 
     resolved = Path(project_path).resolve()
-    log.debug("_install_hook: resolve path took %.2fs", _time.time() - t0)
-
-    t1 = _time.time()
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(resolved), capture_output=True, text=True, encoding="utf-8",
-            stdin=subprocess.DEVNULL, timeout=5,
-        )
-        log.debug("_install_hook: git rev-parse took %.2fs", _time.time() - t1)
-        if result.returncode == 0 and result.stdout.strip():
-            git_root = Path(result.stdout.strip()).resolve()
-        else:
-            return None
-    except Exception as e:
-        log.debug("_install_hook: git rev-parse failed after %.2fs: %s", _time.time() - t1, e)
+    git_root = _find_git_root(resolved)
+    log.debug("_install_hook: find git root took %.2fs", _time.time() - t0)
+    if git_root is None:
         return None
 
     git_dir = git_root / ".git"
-    if not git_dir.is_dir():
-        return None
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_file = hooks_dir / "pre-push"

@@ -44,6 +44,7 @@ def register_init_tools(mcp):
             project_path: 项目在本机的绝对路径（通常是当前工作目录）
             project_name: 项目名称（可选，默认从路径推断）
         """
+        import concurrent.futures
         log.info("manon_init called: path=%s, name=%s", project_path, project_name)
         try:
             health = _client._get_no_auth("/health")
@@ -77,10 +78,23 @@ def register_init_tools(mcp):
             lines.append("\n🕸️ 知识图谱")
             lines.extend(graph_lines)
 
-        if rid:
-            lines.extend(_build_health_lines(rid))
+        # Run health check and hooks installation concurrently
+        health_lines: list[str] = []
+        hooks_lines: list[str] = []
 
-        lines.extend(_build_hooks_lines(project_path))
+        def _do_health():
+            if rid:
+                health_lines.extend(_build_health_lines(rid))
+
+        def _do_hooks():
+            hooks_lines.extend(_build_hooks_lines(project_path))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(_do_health), pool.submit(_do_hooks)]
+            concurrent.futures.wait(futures, timeout=40)
+
+        lines.extend(health_lines)
+        lines.extend(hooks_lines)
 
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 

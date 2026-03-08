@@ -190,7 +190,11 @@ def _run_post_register(project_path: str, rid: str, proj: dict,
 # ── Init workflows ────────────────────────────────────
 
 def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
-    """Handle init for an already-registered local project. Returns (rid, lines, graph_lines)."""
+    """Handle init for an already-registered local project. Returns (rid, lines, graph_lines).
+
+    Phase 1 runs _detect_languages, _detect_tests, and fetch repo status concurrently.
+    Phase 2 (_run_post_register) runs after Phase 1 since it depends on proj/lines.
+    """
     rid = proj["repo_id"]
     log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
     lines = [f"  {proj['name']}  ({rid[:8]})"]
@@ -198,23 +202,51 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     sync = proj.get('last_sync', '') or '—'
     tracked = len(proj.get('file_hashes', {}))
 
-    _detect_languages(project_path, lines)
-    _detect_tests(project_path, lines)
+    # Phase 1: run independent steps concurrently
+    lang_lines: list[str] = []
+    test_lines: list[str] = []
+    repo_result = {"ok": False}
 
-    try:
-        t0 = time.time()
-        repo = _client._get(f"/api/v1/repos/{rid}")
-        log.info("Fetch repo status took %.1fs", time.time() - t0)
+    def _do_detect_languages():
+        _detect_languages(project_path, lang_lines)
+
+    def _do_detect_tests():
+        _detect_tests(project_path, test_lines)
+
+    def _do_fetch_repo():
+        try:
+            t0 = time.time()
+            repo = _client._get(f"/api/v1/repos/{rid}")
+            log.info("Fetch repo status took %.1fs", time.time() - t0)
+            repo_result["ok"] = True
+            repo_result["repo"] = repo
+        except Exception as e:
+            repo_result["error"] = e
+            log.warning("Failed to fetch repo %s status: %s", rid, e)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [
+            pool.submit(_do_detect_languages),
+            pool.submit(_do_detect_tests),
+            pool.submit(_do_fetch_repo),
+        ]
+        concurrent.futures.wait(futures, timeout=30)
+
+    lines.extend(lang_lines)
+    lines.extend(test_lines)
+
+    if repo_result["ok"]:
+        repo = repo_result["repo"]
         status = repo['index_status']
         status_icon = "🟢" if status == "done" else "🟡" if status == "indexing" else "⚪"
         graph_lines.append(f"  {status_icon} 索引 {status}  ·  🕐 同步 {sync}")
         if repo.get("index_stats"):
             graph_lines.append(_fmt_stats(repo["index_stats"]))
-    except Exception as e:
+    else:
         graph_lines.append(f"  🕐 同步 {sync}  ·  📁 跟踪 {tracked} 文件")
-        graph_lines.append(f"  ⚠️ 获取服务端状态失败: {e}")
-        log.warning("Failed to fetch repo %s status: %s", rid, e)
+        graph_lines.append(f"  ⚠️ 获取服务端状态失败: {repo_result.get('error', '?')}")
 
+    # Phase 2: post-register depends on Phase 1 results
     _run_post_register(project_path, rid, proj, lines, graph_lines)
     return rid, lines, graph_lines
 
