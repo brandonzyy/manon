@@ -357,7 +357,7 @@ def collect_directory_signals(local_path: str) -> dict:
     config, _, _ = _load_scan_config(local_path)
 
     # Project-level supported languages (detect all, including generic)
-    supported_langs = quick_detect_languages(root, all_exts)
+    supported_langs = sorted(quick_detect_languages(root, all_exts))
 
     _BUILD_CONFIG_FILES = [
         "package.json", "tsconfig.json", "Cargo.toml",

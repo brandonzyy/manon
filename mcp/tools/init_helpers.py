@@ -165,20 +165,26 @@ def _detect_tests(project_path: str, lines: list[str]) -> None:
 def _run_post_register(project_path: str, rid: str, proj: dict,
                        lines: list[str], graph_lines: list[str]) -> None:
     """Common post-registration steps: smart analysis, bg sync, index coverage."""
+    log.info("_run_post_register: smart_analysis starting")
     smart_lines = _run_smart_analysis(project_path, rid, proj)
     if smart_lines:
         lines.extend(smart_lines)
 
+    log.info("_run_post_register: bg_sync starting")
     bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
                                    old_hashes=proj.get("file_hashes", {}))
     graph_lines.append(f"  🔄 {bg_msg}")
+    log.info("_run_post_register: bg_sync submitted")
 
     try:
+        log.info("_run_post_register: analyze_index_coverage starting")
         coverage = analyze_index_coverage(project_path, proj.get("file_hashes", {}))
+        log.info("_run_post_register: analyze_index_coverage done")
         if coverage:
             graph_lines.append(f"\n{coverage}")
     except Exception as e:
         log.warning("Index coverage analysis failed: %s", e)
+    log.info("_run_post_register: done")
 
 
 # ── Init workflows ────────────────────────────────────
@@ -279,10 +285,14 @@ def _init_match_or_create(
 # ── Health and hooks ──────────────────────────────────
 
 def _build_health_lines(rid: str) -> list[str]:
-    """Fetch and format code health score."""
+    """Fetch and format code health score.
+
+    Uses a short timeout (5s) since this is non-critical and the API
+    returns 400 for newly created repos that haven't been indexed yet.
+    """
     lines = []
     try:
-        health = _client._get(f"/api/v1/repos/{rid}/code-health", timeout=10)
+        health = _client._get(f"/api/v1/repos/{rid}/code-health", timeout=5)
         score = health.get("score", 0)
         grade = health.get("grade", "?")
         dims = health.get("dimensions", {})
@@ -290,32 +300,29 @@ def _build_health_lines(rid: str) -> list[str]:
         lines.append(f"\n💊 代码健康")
         lines.append(f"  {grade} {score:.1f}/100  {dim_str}")
     except Exception as e:
-        log.warning("Failed to fetch code health: %s", e)
+        log.debug("Code health not available (expected for new repos): %s", e)
     return lines
 
 
 def _build_hooks_lines(project_path: str) -> list[str]:
-    """Install git hooks and Claude Code hooks."""
+    """Install git hooks and Claude Code hooks.
+
+    Runs synchronously — hook installation is fast (<1s) and using
+    ThreadPoolExecutor caused 10-20s GIL contention delays on Windows
+    when background sync threads were active.
+    """
+    log.info("_build_hooks_lines starting for %s", project_path)
     lines = ["\n🔗 钩子"]
 
-    def _do_hooks():
+    try:
         t0 = time.time()
         hook_msg = _hooks._install_hook(project_path)
         log.info("Install git hook took %.1fs", time.time() - t0)
         t1 = time.time()
         claude_hook_msg = _hooks._install_claude_hooks()
         log.info("Install claude hooks took %.1fs", time.time() - t1)
-        return hook_msg, claude_hook_msg
-
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_do_hooks)
-            hook_msg, claude_hook_msg = future.result(timeout=10)
         lines.append(f"  {hook_msg}" if hook_msg else "  ✅ Push hook 已就绪")
         lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
-    except concurrent.futures.TimeoutError:
-        log.warning("Hooks installation timed out (10s), skipping")
-        lines.append("  ⚠️ 钩子安装超时，已跳过（下次 init 会重试）")
     except Exception as e:
         log.warning("Hooks installation failed: %s", e)
         lines.append(f"  ⚠️ 钩子安装失败: {e}")
