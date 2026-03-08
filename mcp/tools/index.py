@@ -1,0 +1,77 @@
+"""Index and status tools."""
+from __future__ import annotations
+
+from shared.ast_sync import find_project_by_repo_id
+
+# Will be injected by parent
+_client = None
+_sync = None
+
+
+def init(client, sync):
+    """Inject dependencies."""
+    global _client, _sync
+    _client = client
+    _sync = sync
+
+
+def register_index_tools(mcp):
+    """Index, status, push-update, repo CRUD tools."""
+
+    @mcp.tool()
+    def manon_index(repo_id: str, incremental: bool = True) -> str:
+        """触发代码索引构建。索引完成后才能进行搜索和分析。
+
+        Args:
+            repo_id: 仓库 ID
+            incremental: 增量索引（默认 True），设为 False 全量重建
+        """
+        found = find_project_by_repo_id(repo_id)
+        if found:
+            local_path, info = found
+            old_hashes = {} if not incremental else info.get("file_hashes", {})
+            # max_files: 0 = unlimited (full reindex), -1 = use default limit
+            limit = 0 if not incremental else -1
+            bg_msg = _sync._start_bg_sync(
+                repo_id, local_path, old_hashes,
+                max_files=limit, full_reindex=not incremental,
+            )
+            return f"本地索引已提交后台执行。{bg_msg}"
+        result = _client._post(f"/api/v1/repos/{repo_id}/index", {"incremental": incremental})
+        return f"索引已触发: {result['status']}。用 manon_index_status 查看进度。"
+
+    @mcp.tool()
+    def manon_index_status(repo_id: str) -> str:
+        """查看仓库的索引状态和统计信息。
+
+        IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
+
+        Args:
+            repo_id: 仓库 ID
+        """
+        result = _client._get(f"/api/v1/repos/{repo_id}/index-status")
+        s = result["status"]
+        stats = result.get("stats")
+        msg = f"状态: {s}"
+        if stats:
+            total_files = stats.get('total_files', stats.get('files_scanned', stats.get('files_synced', 0)))
+            msg += f"\n文件: {total_files}"
+            msg += f"\n实体: {stats.get('total_entities', stats.get('entities_added', 0))}"
+            msg += f", 关系: {stats.get('total_relations', stats.get('relations_added', 0))}"
+            msg += f", 块: {stats.get('total_chunks', stats.get('chunks_added', 0))}"
+        prog = _sync._read_sync_progress(repo_id)
+        if prog:
+            ps = prog.get("status", "")
+            pm = prog.get("message", "")
+            ts = prog.get("updated_at", "")
+            if ps == "syncing":
+                msg += f"\n\n🔄 本地同步: {pm}"
+                if _sync._is_syncing(repo_id):
+                    msg += " (进行中)"
+            elif ps == "done":
+                msg += f"\n\n✅ 本地同步: {pm}"
+            elif ps == "error":
+                msg += f"\n\n❌ 本地同步失败: {pm}"
+            if ts:
+                msg += f"\n   更新于 {ts}"
+        return "<!-- DISPLAY_VERBATIM -->\n" + msg

@@ -40,7 +40,7 @@ log.setLevel(logging.DEBUG)
 
 # ── Constants ─────────────────────────────────────────
 MAX_RESPONSE_CHARS = 8000
-HTTP_TIMEOUT = 45
+HTTP_TIMEOUT = 120  # Increased from 45 to handle slow networks
 INLINE_SCAN_LIMIT = 50  # must be <= SYNC_BATCH_SIZE to fit in one HTTP call
 
 # ── Load sibling modules via importlib ────────────────

@@ -90,13 +90,17 @@ def _sync_to_server(repo_id: str, file_results: list, deleted_files: list,
 
 def _run_sync_loop(repo_id, project_path, current_hashes, max_files, full_reindex,
                    _scan, _find_project, _set_project):
-    """Inner sync loop: scan → upload → update hashes. Returns (total_synced, total_deleted)."""
+    """Inner sync loop: scan → upload → update hashes. Returns (total_synced, total_deleted).
+
+    Args:
+        max_files: 0 = unlimited, >0 = limit per batch
+    """
     total_synced = 0
     total_deleted = 0
     while True:
         file_results, deleted, new_hashes = _scan(
             project_path, current_hashes,
-            max_files=0 if full_reindex else INLINE_SCAN_LIMIT,
+            max_files=max_files,
         )
         if not file_results and not deleted:
             break
@@ -158,9 +162,13 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
 
 
 def _start_bg_sync(repo_id: str, project_path: str, old_hashes: dict,
-                   max_files: int = 0, full_reindex: bool = False) -> str:
-    """Start background sync if not already running. Returns status message."""
-    if max_files == 0:
+                   max_files: int = -1, full_reindex: bool = False) -> str:
+    """Start background sync if not already running. Returns status message.
+
+    Args:
+        max_files: -1 = use default limit, 0 = unlimited (full reindex)
+    """
+    if max_files == -1:
         max_files = INLINE_SCAN_LIMIT
     if _is_syncing(repo_id):
         prog = _read_sync_progress(repo_id)

@@ -172,7 +172,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
         eid = _make_entity_id(module, sym.name)
         local_names.add(sym.name)
         decorators = [
-            a["name"] if isinstance(a, dict) else a.name
+            a["name"] if isinstance(a, dict) else (a if isinstance(a, str) else a.name)
             for a in sym.annotations
         ] if sym.annotations else []
         entities.append(Entity(
