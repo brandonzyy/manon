@@ -24,7 +24,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from matrixone_graph.pipeline import (
-    _map_parse_result, _chunk_file, _module_prefix,
+    _map_parse_result, _module_from_rel_path, _chunk_file,
     GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
     _load_meta, _save_meta, _load_chunks, _save_chunks,
     invalidate_kg_cache,
@@ -218,15 +218,15 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
         if pr.error:
             logger.warning("Skipping %s: parse error %s", f.rel_path, pr.error)
             continue
-        rel = Path(f.rel_path)
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == "__init__":
-            parts = parts[:-1]
-        module = ".".join(parts)
+        module = _module_from_rel_path(f.rel_path)
         entities, relations = _map_parse_result(pr, module)
         all_entities.extend(entities)
         all_relations.extend(relations)
-        chunks = _chunk_file(f.source, pr, module)
+        if f.chunks:
+            chunks = [Chunk.from_dict(cd) for cd in f.chunks]
+        else:
+            # Fallback: old client sends source, chunk server-side
+            chunks = _chunk_file(f.source, pr, module)
         new_chunks.extend(chunks)
         for c in chunks:
             all_chunks[c.id] = c

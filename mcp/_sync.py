@@ -139,6 +139,8 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
     """Background thread: scan files, upload AST, loop until complete."""
     try:
         import importlib
+        import shared.ast.scanner as _scanner_mod
+        importlib.reload(_scanner_mod)
         import shared.ast_sync as _ast_mod
         importlib.reload(_ast_mod)
         _write_sync_progress(repo_id, "syncing", "扫描文件中...")

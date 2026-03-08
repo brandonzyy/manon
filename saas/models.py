@@ -40,8 +40,9 @@ class IndexStatus(BaseModel):
 class FileSyncData(BaseModel):
     rel_path: str           # relative path within repo
     hash: str               # sha256 of file content
-    source: str             # file content (for chunking)
     parse_result: dict      # ParseResult.to_dict()
+    chunks: list[dict] = [] # pre-chunked by client (chunk_file_from_dict)
+    source: str = ""        # deprecated: kept for transition, use chunks
 
 
 class SyncAstRequest(BaseModel):

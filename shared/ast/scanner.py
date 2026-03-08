@@ -38,6 +38,7 @@ def scan_and_parse(
     from codeindex.parser import parse_file
     from .config import _load_scan_config
     from .parser_utils import ensure_parsers, _resolve_relative_callees, _enrich_annotations
+    from matrixone_graph.pipeline import chunk_file_from_dict
 
     # Auto-install missing tree-sitter parsers
     ensure_parsers(local_path)
@@ -68,9 +69,11 @@ def scan_and_parse(
         pr_dict = pr.to_dict()
         pr_dict = _resolve_relative_callees(pr_dict, rel)
         pr_dict = _enrich_annotations(pr_dict, source, rel)
+        chunks = chunk_file_from_dict(source, pr_dict, rel)
         file_results.append({
             "rel_path": rel, "hash": h,
-            "source": source, "parse_result": pr_dict,
+            "parse_result": pr_dict,
+            "chunks": chunks,
         })
 
     deleted_files = list(set(old_hashes.keys()) - set(new_hashes.keys()))
