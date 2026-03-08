@@ -302,7 +302,6 @@ Manon provides 4 core query tools covering the full spectrum from code search to
 
 | Tool | Description |
 |------|-------------|
-| `manon_index` | Trigger code indexing (builds knowledge graph) |
 | `manon_index_status` | Check indexing progress |
 | `manon_push_update` | Sync latest changes (incremental) |
 
