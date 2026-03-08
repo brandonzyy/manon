@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import math
 import threading
 from pathlib import Path
 
@@ -30,6 +31,9 @@ def init(client, constants):
 _bg_sync_lock = threading.Lock()
 _bg_sync_threads: dict[str, threading.Thread] = {}
 _SYNC_PROGRESS_FILE = Path.home() / ".manon" / "sync_progress.json"
+
+# ── Scan cache (for scan + upload_batch mode) ────────
+_scan_cache: dict[str, dict] = {}  # repo_id → {file_results, deleted, new_hashes, cursor, total_batches, ...}
 
 
 def _write_sync_progress(repo_id: str, status: str, message: str):
@@ -216,3 +220,109 @@ def _run_sync_foreground(repo_id: str, project_path: str, old_hashes: dict,
         log.error("Foreground sync error for %s: %s", repo_id, e)
         _write_sync_progress(repo_id, "error", str(e))
         return f"❌ 同步失败: {e}"
+
+
+# ── Scan + Upload Batch mode ────────────────────────
+
+UPLOAD_BATCH_SIZE = SYNC_BATCH_SIZE  # files per upload_batch call
+
+
+def scan_files(repo_id: str, project_path: str, old_hashes: dict) -> dict:
+    """Scan project files and cache results for subsequent upload_batch calls.
+
+    Returns:
+        {total_files, deleted_files, total_batches}
+    """
+    file_results, deleted, new_hashes = scan_and_parse(
+        project_path, old_hashes, max_files=0,
+    )
+    total_files = len(file_results)
+    total_batches = max(math.ceil(total_files / UPLOAD_BATCH_SIZE), 1) if (total_files or deleted) else 0
+
+    _scan_cache[repo_id] = {
+        "file_results": file_results,
+        "deleted": deleted,
+        "new_hashes": new_hashes,
+        "old_hashes": dict(old_hashes),
+        "cursor": 0,
+        "total_batches": total_batches,
+        "project_path": project_path,
+    }
+    return {
+        "total_files": total_files,
+        "deleted_files": len(deleted),
+        "total_batches": total_batches,
+    }
+
+
+def upload_next_batch(repo_id: str) -> dict:
+    """Upload next batch from scan cache. Call repeatedly until status == 'done'.
+
+    Returns:
+        {batch, uploaded, remaining, total, deleted, status}
+    """
+    cache = _scan_cache.get(repo_id)
+    if not cache:
+        return {"status": "error", "message": "No scan cache. Call manon_scan_files first."}
+
+    file_results = cache["file_results"]
+    deleted = cache["deleted"]
+    cursor = cache["cursor"]
+    total_files = len(file_results)
+    total_batches = cache["total_batches"]
+
+    # Nothing to upload
+    if not file_results and not deleted:
+        _scan_cache.pop(repo_id, None)
+        return {"batch": 0, "uploaded": 0, "remaining": 0, "total": 0, "deleted": 0, "status": "done"}
+
+    start = cursor
+    end = min(cursor + UPLOAD_BATCH_SIZE, total_files)
+    batch_files = file_results[start:end]
+
+    # Send deleted only in the first batch
+    batch_deleted = deleted if cursor == 0 else []
+
+    _sync_to_server(repo_id, batch_files, batch_deleted)
+
+    cache["cursor"] = end
+    batch_num = math.ceil(end / UPLOAD_BATCH_SIZE) if end > 0 else 1
+    remaining = total_files - end
+    is_done = end >= total_files
+
+    # Update file_hashes incrementally
+    new_hashes = cache["new_hashes"]
+    found = find_project_by_repo_id(repo_id)
+    if found:
+        lp, info = found
+        current_hashes = info.get("file_hashes", {})
+        # Apply this batch's hashes
+        for f in batch_files:
+            rp = f["rel_path"]
+            if rp in new_hashes:
+                current_hashes[rp] = new_hashes[rp]
+        # Apply deletes (first batch only)
+        if cursor == 0:
+            for d in deleted:
+                current_hashes.pop(d, None)
+        if is_done:
+            # Final batch: replace all hashes with new_hashes
+            current_hashes = new_hashes
+        info["file_hashes"] = current_hashes
+        info["last_sync"] = datetime.datetime.now().isoformat()
+        set_project(lp, info)
+
+    if is_done:
+        _scan_cache.pop(repo_id, None)
+        log.info("Upload batch done for %s: %d synced, %d deleted",
+                 repo_id, total_files, len(deleted))
+
+    return {
+        "batch": batch_num,
+        "total_batches": total_batches,
+        "uploaded": end,
+        "remaining": remaining,
+        "total": total_files,
+        "deleted": len(deleted),
+        "status": "done" if is_done else "uploading",
+    }

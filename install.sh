@@ -169,8 +169,13 @@ $MANON_RULES
 \`\`\`
 
 ### Step 3: 文件同步（AST 提取 + 上传）
-调用 \`manon_push_update(repo_id, wait=true)\` 同步执行文件扫描和 AST 上传。
-等待返回结果后继续。
+**3a.** 调用 \`manon_scan_files(repo_id)\` 扫描变更文件。
+- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
+- 如果 total_files == 0 且 deleted_files == 0 → 展示 "✅ 无变更" → 跳到 Step 4
+
+**3b.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
+- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
+- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
 
 ### Step 4: 索引覆盖率
 调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
@@ -336,7 +341,13 @@ $MANON_RULES
 **2d.** 向用户展示分析结果。
 
 ### Step 3: 文件同步（AST 提取 + 上传）
-调用 \`manon_push_update(repo_id, wait=true)\` 同步执行文件扫描和 AST 上传。
+**3a.** 调用 \`manon_scan_files(repo_id)\` 扫描变更文件。
+- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
+- 如果 total_files == 0 且 deleted_files == 0 → 展示 "✅ 无变更" → 跳到 Step 4
+
+**3b.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
+- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
+- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
 
 ### Step 4: 索引覆盖率
 调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
