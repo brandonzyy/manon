@@ -164,26 +164,42 @@ def _detect_tests(project_path: str, lines: list[str]) -> None:
 
 def _run_post_register(project_path: str, rid: str, proj: dict,
                        lines: list[str], graph_lines: list[str]) -> None:
-    """Common post-registration steps: smart analysis, bg sync, index coverage."""
+    """Common post-registration steps: smart analysis, bg sync, index coverage.
+
+    smart_analysis must run first (it may update exclude rules that affect
+    scanning). After that, bg_sync and index_coverage are independent and
+    run in parallel.
+    """
+    # Phase 1: smart analysis (may change exclude rules)
     log.info("_run_post_register: smart_analysis starting")
     smart_lines = _run_smart_analysis(project_path, rid, proj)
     if smart_lines:
         lines.extend(smart_lines)
 
-    log.info("_run_post_register: bg_sync starting")
-    bg_msg = _sync._start_bg_sync(project_path=project_path, repo_id=rid,
-                                   old_hashes=proj.get("file_hashes", {}))
-    graph_lines.append(f"  🔄 {bg_msg}")
-    log.info("_run_post_register: bg_sync submitted")
+    # Phase 2: bg_sync + index_coverage in parallel
+    log.info("_run_post_register: bg_sync + coverage starting")
+    bg_result = {"msg": ""}
+    coverage_result = {"text": ""}
 
-    try:
-        log.info("_run_post_register: analyze_index_coverage starting")
-        coverage = analyze_index_coverage(project_path, proj.get("file_hashes", {}))
-        log.info("_run_post_register: analyze_index_coverage done")
-        if coverage:
-            graph_lines.append(f"\n{coverage}")
-    except Exception as e:
-        log.warning("Index coverage analysis failed: %s", e)
+    def _do_bg_sync():
+        bg_result["msg"] = _sync._start_bg_sync(
+            project_path=project_path, repo_id=rid,
+            old_hashes=proj.get("file_hashes", {}))
+
+    def _do_coverage():
+        try:
+            coverage_result["text"] = analyze_index_coverage(
+                project_path, proj.get("file_hashes", {}))
+        except Exception as e:
+            log.warning("Index coverage analysis failed: %s", e)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(_do_bg_sync), pool.submit(_do_coverage)]
+        concurrent.futures.wait(futures, timeout=30)
+
+    graph_lines.append(f"  🔄 {bg_result['msg']}")
+    if coverage_result["text"]:
+        graph_lines.append(f"\n{coverage_result['text']}")
     log.info("_run_post_register: done")
 
 

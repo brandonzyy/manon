@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
+from mcp.server.fastmcp import Context
 from shared.ast_sync import get_project, set_custom_excludes, preview_project_structure
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import Context
 
 log = logging.getLogger("manon-mcp")
 
