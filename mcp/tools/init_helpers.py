@@ -11,15 +11,13 @@ log = logging.getLogger("manon-mcp")
 
 # Will be injected by parent module
 _client = None
-_sync = None
 _hooks = None
 
 
-def init(client, sync, hooks):
+def init(client, hooks):
     """Inject dependencies."""
-    global _client, _sync, _hooks
+    global _client, _hooks
     _client = client
-    _sync = sync
     _hooks = hooks
 
 

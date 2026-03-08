@@ -9,7 +9,7 @@ Keeps sync HTTP helpers for MCP tool compatibility.
 Sub-modules (loaded via importlib to avoid shadowing pip's `mcp` package):
   _config  — version, geo-routing, version check
   _client  — HTTP helpers, response formatters
-  _sync    — background sync worker
+  _sync    — scan cache loader and batch uploader
   _hooks   — git / Claude Code hook installation
   _tools   — all 19 MCP tool definitions
 """
@@ -41,7 +41,6 @@ log.setLevel(logging.DEBUG)
 # ── Constants ─────────────────────────────────────────
 MAX_RESPONSE_CHARS = 8000
 HTTP_TIMEOUT = 120  # Increased from 45 to handle slow networks
-INLINE_SCAN_LIMIT = 50  # must be <= SYNC_BATCH_SIZE to fit in one HTTP call
 
 # ── Load sibling modules via importlib ────────────────
 _dir = Path(__file__).parent
@@ -66,11 +65,10 @@ _tools = _load_sibling("_tools")
 _constants = {
     "MAX_RESPONSE_CHARS": MAX_RESPONSE_CHARS,
     "HTTP_TIMEOUT": HTTP_TIMEOUT,
-    "INLINE_SCAN_LIMIT": INLINE_SCAN_LIMIT,
 }
 
 _client.init(_config, _constants)
-_sync.init(_client, _constants)
+_sync.init(_client)
 _hooks.init(_config)
 _tools.init(_client, _sync, _hooks, _config, _constants)
 

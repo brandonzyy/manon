@@ -22,7 +22,7 @@ def init(client, sync):
 
 
 def register_repo_crud_tools(mcp):
-    """Repo create, get, delete, push-update tools."""
+    """Repo create, get, delete, scan, and upload tools."""
 
     @mcp.tool()
     def manon_repos_create(name: str, branch: str = "main", local_path: str = "") -> str:
@@ -81,40 +81,14 @@ def register_repo_crud_tools(mcp):
         return f"仓库 {repo_id} 已删除。"
 
     @mcp.tool()
-    def manon_push_update(repo_id: str, wait: bool = False) -> str:
-        """扫描变更文件并增量上传 AST。
-
-        Args:
-            repo_id: 仓库 ID
-            wait: 是否等待同步完成（默认 False 后台执行）
-        """
-        found = find_project_by_repo_id(repo_id)
-        if not found:
-            return (
-                f"本地项目未注册。\n"
-                f"请先在项目目录执行 manon_init 注册本地项目，再调用 push_update。"
-            )
-        local_path, info = found
-        old_hashes = info.get("file_hashes", {})
-        msg = _sync._start_bg_sync(repo_id, local_path, old_hashes, wait=wait)
-        if wait:
-            return msg
-        return f"增量同步已提交后台执行。{msg}"
-
-    @mcp.tool()
     def manon_scan_files(repo_id: str) -> str:
-        """扫描项目变更文件并解析 AST（不上传）。结果缓存在内存中，供 manon_upload_batch 逐批上传。
+        """从磁盘缓存加载扫描结果到 MCP 内存。需先通过 Bash 运行 manon-scan.py 脚本。
 
         Args:
             repo_id: 仓库 ID
         """
-        found = find_project_by_repo_id(repo_id)
-        if not found:
-            return json.dumps({"status": "error", "message": "本地项目未注册。请先执行 manon_init。"}, ensure_ascii=False)
-        local_path, info = found
-        old_hashes = info.get("file_hashes", {})
         try:
-            result = _sync.scan_files(repo_id, local_path, old_hashes)
+            result = _sync.scan_files(repo_id)
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)

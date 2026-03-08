@@ -4,8 +4,6 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import subprocess
-import sys
 from pathlib import Path
 
 import importlib.util as _ilu
@@ -48,25 +46,23 @@ _client = None   # _client module
 _sync = None     # _sync module
 _hooks = None    # _hooks module
 _config = None   # _config module
-INLINE_SCAN_LIMIT = 50
 
 
 def init(client, sync, hooks, config, constants):
     """Inject dependencies from server.py."""
-    global _client, _sync, _hooks, _config, INLINE_SCAN_LIMIT
+    global _client, _sync, _hooks, _config
     _client = client
     _sync = sync
     _hooks = hooks
     _config = config
-    INLINE_SCAN_LIMIT = constants["INLINE_SCAN_LIMIT"]
 
     # Initialize sub-modules
     impact.init(client)
-    init_helpers.init(client, sync, hooks)
+    init_helpers.init(client, hooks)
 
     tools.repo.init(client)
     tools.search.init(client, impact.local_impact)
-    tools.index.init(client, sync)
+    tools.index.init(client)
     tools.repo_crud.init(client, sync)
     tools.init.init(
         client, config, _read_update_status,
@@ -76,7 +72,7 @@ def init(client, sync, hooks, config, constants):
     )
     tools.config.init(client, config)
     tools.query.init(client)
-    tools.utility.init(client, config, _read_update_status, _do_update)
+    tools.utility.init(client, config, _read_update_status)
     tools.health.init(client, hooks)
     tools.dynamic.init(client)
 
@@ -108,53 +104,6 @@ def _read_update_status() -> str | None:
         return f"[上次后台更新 {tag}] {data.get('message', '')}"
     except Exception:
         return None
-
-
-def _do_update() -> list[str]:
-    """Execute git pull + pip install. Writes result to status file."""
-    install_dir = Path(__file__).resolve().parent.parent
-    lines: list[str] = []
-    ok = False
-    branch = _config._git_branch()
-
-    try:
-        result = subprocess.run(
-            ["git", "pull", "--quiet", "origin", branch],
-            cwd=str(install_dir),
-            capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=15,
-        )
-        git_out = result.stdout.strip()
-        if "Already up to date" in git_out or "Already up-to-date" in git_out or not git_out:
-            lines.append("代码已是最新，无需更新。")
-            ok = True
-            _write_update_status(ok, lines)
-            return lines
-        lines.append(f"代码已更新:\n{git_out}")
-    except subprocess.TimeoutExpired:
-        lines.append("git pull 超时（15s），请手动执行: cd manon && git pull")
-        _write_update_status(False, lines)
-        return lines
-    except Exception as e:
-        lines.append(f"git pull 失败: {e}")
-        _write_update_status(False, lines)
-        return lines
-
-    req_file = install_dir / "mcp" / "requirements.txt"
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
-            capture_output=True, stdin=subprocess.DEVNULL, timeout=30,
-        )
-        lines.append("依赖已更新。")
-        ok = True
-    except subprocess.TimeoutExpired:
-        lines.append("pip install 超时，请手动执行: pip install -r mcp/requirements.txt")
-    except Exception as e:
-        lines.append(f"依赖安装失败: {e}")
-
-    lines.append("请重启 Claude Code 使新版本生效。")
-    _write_update_status(ok, lines)
-    return lines
 
 
 # ── Tool registration ────────────────────────────────

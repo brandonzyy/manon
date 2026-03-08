@@ -3,23 +3,20 @@ from __future__ import annotations
 
 import json
 import subprocess
-import threading
 from pathlib import Path
 
 # Will be injected by parent
 _client = None
 _config = None
 _read_update_status = None
-_do_update = None
 
 
-def init(client, config, read_update_status_func, do_update_func):
+def init(client, config, read_update_status_func):
     """Inject dependencies."""
-    global _client, _config, _read_update_status, _do_update
+    global _client, _config, _read_update_status
     _client = client
     _config = config
     _read_update_status = read_update_status_func
-    _do_update = do_update_func
 
 
 def register_utility_tools(mcp):
@@ -67,17 +64,19 @@ def register_utility_tools(mcp):
                 cwd=str(install_dir), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL, timeout=3,
             ).stdout.strip()
             if behind and int(behind) > 0:
-                threading.Thread(target=_do_update, daemon=True).start()
                 parts.append(
-                    f"发现 {behind} 个新提交（当前 {_config.CLIENT_VERSION}），"
-                    f"更新已在后台启动。\n完成后请重启 Claude Code 使新版本生效。"
+                    f"发现 {behind} 个新提交（当前 {_config.CLIENT_VERSION}）。\n"
+                    f"请通过 Bash 执行更新:\n"
+                    f"  python {install_dir / 'scripts' / 'manon-update.py'}\n"
+                    f"完成后请重启 Claude Code 使新版本生效。"
                 )
             else:
                 parts.append(f"当前版本 {_config.CLIENT_VERSION} 已是最新。")
         except Exception:
-            threading.Thread(target=_do_update, daemon=True).start()
             parts.append(
-                f"当前版本: {_config.CLIENT_VERSION}，更新已在后台启动。\n"
+                f"当前版本: {_config.CLIENT_VERSION}，无法检查更新。\n"
+                f"请通过 Bash 执行更新:\n"
+                f"  python {install_dir / 'scripts' / 'manon-update.py'}\n"
                 f"完成后请重启 Claude Code 使新版本生效。"
             )
         return "\n".join(parts)
