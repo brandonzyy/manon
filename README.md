@@ -352,7 +352,6 @@ Base URL: `http://your-server:3700/api/v1` — All endpoints require `X-API-Key`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/repos/{id}/index` | Trigger indexing |
 | `GET` | `/repos/{id}/index-status` | Check status |
 | `POST` | `/repos/{id}/push-update` | Incremental update |
 | `POST` | `/repos/{id}/sync-ast` | Upload local AST data |

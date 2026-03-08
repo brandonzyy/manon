@@ -359,7 +359,6 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/repos/{id}/index` | 触发索引 |
 | `GET` | `/repos/{id}/index-status` | 查看状态 |
 | `POST` | `/repos/{id}/push-update` | 增量更新 |
 | `POST` | `/repos/{id}/sync-ast` | 上传本地 AST 数据 |
