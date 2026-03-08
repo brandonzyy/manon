@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from shared.ast_sync import get_project, set_custom_excludes, preview_project_structure
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import Context
 
 log = logging.getLogger("manon-mcp")
 
@@ -35,7 +39,7 @@ def register_init_tools(mcp):
     """Init and configure tools."""
 
     @mcp.tool()
-    def manon_init(project_path: str, project_name: str = "") -> str:
+    async def manon_init(project_path: str, project_name: str = "", ctx: Context = None) -> str:
         """初始化当前项目的 Manon 连接。检查 API 可达性、匹配或创建仓库、展示图谱状态。
 
         IMPORTANT: 返回结果已格式化，请原样输出给用户，不要总结或改写。
@@ -43,12 +47,22 @@ def register_init_tools(mcp):
         Args:
             project_path: 项目在本机的绝对路径（通常是当前工作目录）
             project_name: 项目名称（可选，默认从路径推断）
+            ctx: FastMCP context for progress reporting
         """
+        import asyncio
         import concurrent.futures
         log.info("manon_init called: path=%s, name=%s", project_path, project_name)
+
+        # Helper to report progress safely (no-op if ctx is None)
+        async def progress(pct: float, msg: str):
+            if ctx:
+                await ctx.report_progress(pct, 100.0, msg)
+
+        await progress(5, "🔍 检查 API 连接...")
         try:
             health = _client._get_no_auth("/health")
             log.info("Health check OK")
+            await progress(10, "✅ API 连接成功")
         except Exception as e:
             log.error("Health check failed: %s", e)
             return f"❌ Manon API 不可达 ({_config.API_URL}): {e}\n   请确认 saas 服务已启动。"
@@ -63,12 +77,19 @@ def register_init_tools(mcp):
         rid = None
         graph_lines: list[str] = []
 
+        await progress(20, "📂 加载项目配置...")
         proj = get_project(project_path)
         if proj:
-            rid, proj_lines, graph_lines = _init_existing_project(project_path, proj)
+            await progress(30, "🔄 初始化已有项目...")
+            rid, proj_lines, graph_lines = await asyncio.to_thread(
+                _init_existing_project, project_path, proj
+            )
             lines.extend(proj_lines)
         else:
-            result = _init_match_or_create(project_path, project_name, lines)
+            await progress(30, "🆕 匹配或创建仓库...")
+            result = await asyncio.to_thread(
+                _init_match_or_create, project_path, project_name, lines
+            )
             if isinstance(result, str):
                 return result  # error message
             rid, proj_lines, graph_lines = result
@@ -78,24 +99,27 @@ def register_init_tools(mcp):
             lines.append("\n🕸️ 知识图谱")
             lines.extend(graph_lines)
 
+        await progress(70, "💊 获取代码健康度...")
         # Run health check and hooks installation concurrently
         health_lines: list[str] = []
         hooks_lines: list[str] = []
 
-        def _do_health():
+        async def _do_health():
             if rid:
-                health_lines.extend(_build_health_lines(rid))
+                result = await asyncio.to_thread(_build_health_lines, rid)
+                health_lines.extend(result)
 
-        def _do_hooks():
-            hooks_lines.extend(_build_hooks_lines(project_path))
+        async def _do_hooks():
+            await progress(80, "🔗 安装 Git 钩子...")
+            result = await asyncio.to_thread(_build_hooks_lines, project_path)
+            hooks_lines.extend(result)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(_do_health), pool.submit(_do_hooks)]
-            concurrent.futures.wait(futures, timeout=40)
+        await asyncio.gather(_do_health(), _do_hooks())
 
         lines.extend(health_lines)
         lines.extend(hooks_lines)
 
+        await progress(100, "✅ 初始化完成")
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
     @mcp.tool()
