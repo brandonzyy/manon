@@ -163,25 +163,35 @@ def _detect_tests(project_path: str, lines: list[str]) -> None:
 
 
 def _run_post_register(project_path: str, rid: str, proj: dict,
-                       lines: list[str], graph_lines: list[str]) -> None:
+                       lines: list[str], graph_lines: list[str],
+                       progress_cb=None) -> None:
     """Common post-registration steps: smart analysis, bg sync, index coverage.
 
     smart_analysis must run first (it may update exclude rules that affect
     scanning). After that, bg_sync and index_coverage are independent and
     run in parallel.
+
+    Args:
+        progress_cb: optional callable(pct, msg) for progress reporting (thread-safe)
     """
     # Phase 1: smart analysis (may change exclude rules)
+    if progress_cb:
+        progress_cb(35, "🧠 运行智能分析...")
     log.info("_run_post_register: smart_analysis starting")
     smart_lines = _run_smart_analysis(project_path, rid, proj)
     if smart_lines:
         lines.extend(smart_lines)
 
     # Phase 2: bg_sync + index_coverage in parallel
+    if progress_cb:
+        progress_cb(45, "📊 分析索引覆盖...")
     log.info("_run_post_register: bg_sync + coverage starting")
     bg_result = {"msg": ""}
     coverage_result = {"text": ""}
 
     def _do_bg_sync():
+        if progress_cb:
+            progress_cb(50, "🔄 启动文件同步...")
         bg_result["msg"] = _sync._start_bg_sync(
             project_path=project_path, repo_id=rid,
             old_hashes=proj.get("file_hashes", {}))
@@ -205,11 +215,15 @@ def _run_post_register(project_path: str, rid: str, proj: dict,
 
 # ── Init workflows ────────────────────────────────────
 
-def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str], list[str]]:
+def _init_existing_project(project_path: str, proj: dict,
+                           progress_cb=None) -> tuple[str, list[str], list[str]]:
     """Handle init for an already-registered local project. Returns (rid, lines, graph_lines).
 
     Phase 1 runs _detect_languages, _detect_tests, and fetch repo status concurrently.
     Phase 2 (_run_post_register) runs after Phase 1 since it depends on proj/lines.
+
+    Args:
+        progress_cb: optional callable(pct, msg) for progress reporting (thread-safe)
     """
     rid = proj["repo_id"]
     log.info("Local project found: %s (repo_id=%s)", proj['name'], rid)
@@ -219,6 +233,8 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
     tracked = len(proj.get('file_hashes', {}))
 
     # Phase 1: run independent steps concurrently
+    if progress_cb:
+        progress_cb(20, "🔍 检测项目语言...")
     lang_lines: list[str] = []
     test_lines: list[str] = []
     repo_result = {"ok": False}
@@ -227,9 +243,13 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         _detect_languages(project_path, lang_lines)
 
     def _do_detect_tests():
+        if progress_cb:
+            progress_cb(25, "🧪 检测测试框架...")
         _detect_tests(project_path, test_lines)
 
     def _do_fetch_repo():
+        if progress_cb:
+            progress_cb(28, "📡 获取服务端状态...")
         try:
             t0 = time.time()
             repo = _client._get(f"/api/v1/repos/{rid}")
@@ -248,6 +268,8 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         ]
         concurrent.futures.wait(futures, timeout=30)
 
+    if progress_cb:
+        progress_cb(30, "📋 整理项目信息...")
     lines.extend(lang_lines)
     lines.extend(test_lines)
 
@@ -263,14 +285,20 @@ def _init_existing_project(project_path: str, proj: dict) -> tuple[str, list[str
         graph_lines.append(f"  ⚠️ 获取服务端状态失败: {repo_result.get('error', '?')}")
 
     # Phase 2: post-register depends on Phase 1 results
-    _run_post_register(project_path, rid, proj, lines, graph_lines)
+    _run_post_register(project_path, rid, proj, lines, graph_lines,
+                       progress_cb=progress_cb)
     return rid, lines, graph_lines
 
 
 def _init_match_or_create(
     project_path: str, project_name: str, header_lines: list[str],
+    progress_cb=None,
 ) -> tuple[str | None, list[str], list[str]] | str:
-    """Match existing repo or create new one. Returns (rid, lines, graph_lines) or error string."""
+    """Match existing repo or create new one. Returns (rid, lines, graph_lines) or error string.
+
+    Args:
+        progress_cb: optional callable(pct, msg) for progress reporting (thread-safe)
+    """
     try:
         repos = _client._get("/api/v1/repos")
     except Exception as e:
@@ -306,9 +334,14 @@ def _init_match_or_create(
             set_project(project_path, info)
             lines.append("  ✅ 已注册到本地项目表")
 
+            if progress_cb:
+                progress_cb(20, "🔍 检测项目语言...")
             _detect_languages(project_path, lines)
+            if progress_cb:
+                progress_cb(25, "🧪 检测测试框架...")
             _detect_tests(project_path, lines)
-            _run_post_register(project_path, rid, info, lines, graph_lines)
+            _run_post_register(project_path, rid, info, lines, graph_lines,
+                               progress_cb=progress_cb)
 
         return rid, lines, graph_lines
 
@@ -320,9 +353,14 @@ def _init_match_or_create(
         set_project(project_path, info)
         lines.append(f"  🆕 {name}  ({rid[:8]})")
 
+        if progress_cb:
+            progress_cb(20, "🔍 检测项目语言...")
         _detect_languages(project_path, lines)
+        if progress_cb:
+            progress_cb(25, "🧪 检测测试框架...")
         _detect_tests(project_path, lines)
-        _run_post_register(project_path, rid, info, lines, graph_lines)
+        _run_post_register(project_path, rid, info, lines, graph_lines,
+                           progress_cb=progress_cb)
     except Exception as e:
         lines.append(f"\n  ❌ 创建仓库失败: {e}")
         rid = None

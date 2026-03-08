@@ -97,7 +97,13 @@ def _run_sync_loop(repo_id, project_path, current_hashes, max_files, full_reinde
     """
     total_synced = 0
     total_deleted = 0
+    batch_num = 0
     while True:
+        batch_num += 1
+        _write_sync_progress(
+            repo_id, "syncing",
+            f"扫描项目文件 (第 {batch_num} 轮)...",
+        )
         file_results, deleted, new_hashes = _scan(
             project_path, current_hashes,
             max_files=max_files,
@@ -105,9 +111,10 @@ def _run_sync_loop(repo_id, project_path, current_hashes, max_files, full_reinde
         if not file_results and not deleted:
             break
         n = len(file_results)
+        d = len(deleted)
         _write_sync_progress(
             repo_id, "syncing",
-            f"上传 {n} 文件... (累计 {total_synced + n})",
+            f"上传第 {batch_num} 批 ({n} 文件, {d} 删除)... 累计 {total_synced + n} 文件",
         )
         _sync_to_server(repo_id, file_results, deleted, full_reindex=full_reindex)
         full_reindex = False
@@ -138,7 +145,7 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
                     max_files: int, full_reindex: bool):
     """Background thread: scan files, upload AST, loop until complete."""
     try:
-        _write_sync_progress(repo_id, "syncing", "扫描文件中...")
+        _write_sync_progress(repo_id, "syncing", "扫描项目文件...")
         current_hashes = dict(old_hashes)
         total_synced, total_deleted = _run_sync_loop(
             repo_id, project_path, current_hashes, max_files, full_reindex,

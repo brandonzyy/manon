@@ -74,3 +74,38 @@ def register_index_tools(mcp):
             if ts:
                 msg += f"\n   更新于 {ts}"
         return "<!-- DISPLAY_VERBATIM -->\n" + msg
+
+    @mcp.tool()
+    def manon_sync_progress(repo_id: str) -> str:
+        """查看后台文件同步进度。manon_init 完成后如有后台同步任务，调用此工具获取实时进展。
+
+        Args:
+            repo_id: 仓库 ID
+        """
+        prog = _sync._read_sync_progress(repo_id)
+        is_running = _sync._is_syncing(repo_id)
+
+        if not prog:
+            if is_running:
+                return "🔄 同步刚启动，尚无详细进度。请稍后再次调用。"
+            return "没有进行中的同步任务。"
+
+        status = prog.get("status", "")
+        message = prog.get("message", "")
+        updated = prog.get("updated_at", "")
+
+        if status == "done":
+            return f"✅ 同步完成: {message}"
+        elif status == "error":
+            return f"❌ 同步失败: {message}"
+        elif status == "syncing":
+            result = f"🔄 {message}"
+            if updated:
+                result += f"\n   更新于 {updated}"
+            if is_running:
+                result += "\n⏳ 同步仍在进行中，请稍后再次调用此工具查看进展。"
+            else:
+                result += "\n⚠️ 同步线程已结束但状态未更新，可能已异常退出。"
+            return result
+
+        return f"状态: {status}, 消息: {message}"

@@ -54,6 +54,13 @@ def register_init_tools(mcp):
         async def progress(pct: float, msg: str):
             if ctx:
                 await ctx.report_progress(pct, 100.0, msg)
+                await ctx.info(msg)
+
+        # Thread-safe progress callback for sync code in to_thread
+        loop = asyncio.get_running_loop()
+
+        def sync_progress(pct: float, msg: str):
+            asyncio.run_coroutine_threadsafe(progress(pct, msg), loop)
 
         await progress(5, "🔍 检查 API 连接...")
         try:
@@ -74,18 +81,20 @@ def register_init_tools(mcp):
         rid = None
         graph_lines: list[str] = []
 
-        await progress(20, "📂 加载项目配置...")
+        await progress(15, "📂 加载项目配置...")
         proj = get_project(project_path)
         if proj:
-            await progress(30, "🔄 初始化已有项目...")
+            await progress(18, "🔄 初始化已有项目...")
             rid, proj_lines, graph_lines = await asyncio.to_thread(
-                _init_existing_project, project_path, proj
+                _init_existing_project, project_path, proj,
+                progress_cb=sync_progress,
             )
             lines.extend(proj_lines)
         else:
-            await progress(30, "🆕 匹配或创建仓库...")
+            await progress(18, "🆕 匹配或创建仓库...")
             result = await asyncio.to_thread(
-                _init_match_or_create, project_path, project_name, lines
+                _init_match_or_create, project_path, project_name, lines,
+                progress_cb=sync_progress,
             )
             if isinstance(result, str):
                 return result  # error message
@@ -96,7 +105,7 @@ def register_init_tools(mcp):
             lines.append("\n🕸️ 知识图谱")
             lines.extend(graph_lines)
 
-        await progress(70, "💊 获取代码健康度...")
+        await progress(60, "💊 获取代码健康度...")
         # Run health check and hooks installation concurrently
         health_lines: list[str] = []
         hooks_lines: list[str] = []
@@ -107,7 +116,7 @@ def register_init_tools(mcp):
                 health_lines.extend(result)
 
         async def _do_hooks():
-            await progress(80, "🔗 安装 Git 钩子...")
+            await progress(75, "🔗 安装 Git 钩子...")
             result = await asyncio.to_thread(_build_hooks_lines, project_path)
             hooks_lines.extend(result)
 
@@ -115,6 +124,16 @@ def register_init_tools(mcp):
 
         lines.extend(health_lines)
         lines.extend(hooks_lines)
+
+        # If bg_sync was started, hint LLM to poll progress
+        has_bg_sync = any("后台同步已启动" in l for l in graph_lines)
+        if has_bg_sync and rid:
+            lines.append("")
+            lines.append(
+                "<!-- LLM_INSTRUCTION: 后台文件同步已启动。"
+                f"请在 15-30 秒后调用 manon_sync_progress(repo_id=\"{rid}\") "
+                "工具查看同步进展并告知用户。 -->"
+            )
 
         await progress(100, "✅ 初始化完成")
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
