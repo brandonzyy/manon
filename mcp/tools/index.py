@@ -1,7 +1,7 @@
 """Index and status tools."""
 from __future__ import annotations
 
-from shared.ast_sync import find_project_by_repo_id
+from shared.ast_sync import find_project_by_repo_id, analyze_index_coverage
 
 # Will be injected by parent
 _client = None
@@ -73,6 +73,19 @@ def register_index_tools(mcp):
                 msg += f"\n\n❌ 本地同步失败: {pm}"
             if ts:
                 msg += f"\n   更新于 {ts}"
+
+        # Directory-level coverage
+        found = find_project_by_repo_id(repo_id)
+        if found:
+            local_path, info = found
+            try:
+                coverage = analyze_index_coverage(
+                    local_path, info.get("file_hashes", {}))
+                if coverage:
+                    msg += f"\n\n{coverage}"
+            except Exception:
+                pass
+
         return "<!-- DISPLAY_VERBATIM -->\n" + msg
 
     @mcp.tool()

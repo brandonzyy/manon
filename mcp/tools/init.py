@@ -1,10 +1,14 @@
 """Init and configure tools."""
 from __future__ import annotations
 
+import json
 import logging
 
 from mcp.server.fastmcp import Context
-from shared.ast_sync import get_project, set_custom_excludes, preview_project_structure
+from shared.ast_sync import (
+    get_project, set_project, set_custom_excludes,
+    preview_project_structure, collect_directory_signals,
+)
 
 log = logging.getLogger("manon-mcp")
 
@@ -14,21 +18,19 @@ _config = None
 _read_update_status = None
 _init_existing_project = None
 _init_match_or_create = None
-_build_health_lines = None
 _build_hooks_lines = None
 
 
 def init(client, config, read_update_status_func, init_existing_func,
-         init_match_func, build_health_func, build_hooks_func):
+         init_match_func, build_hooks_func):
     """Inject dependencies."""
     global _client, _config, _read_update_status, _init_existing_project
-    global _init_match_or_create, _build_health_lines, _build_hooks_lines
+    global _init_match_or_create, _build_hooks_lines
     _client = client
     _config = config
     _read_update_status = read_update_status_func
     _init_existing_project = init_existing_func
     _init_match_or_create = init_match_func
-    _build_health_lines = build_health_func
     _build_hooks_lines = build_hooks_func
 
 
@@ -47,7 +49,6 @@ def register_init_tools(mcp):
             ctx: FastMCP context for progress reporting
         """
         import asyncio
-        import concurrent.futures
         log.info("manon_init called: path=%s, name=%s", project_path, project_name)
 
         # Helper to report progress safely (no-op if ctx is None)
@@ -105,38 +106,32 @@ def register_init_tools(mcp):
             lines.append("\n🕸️ 知识图谱")
             lines.extend(graph_lines)
 
-        await progress(60, "💊 获取代码健康度...")
-        # Run health check and hooks installation concurrently
-        health_lines: list[str] = []
-        hooks_lines: list[str] = []
-
-        async def _do_health():
-            if rid:
-                result = await asyncio.to_thread(_build_health_lines, rid)
-                health_lines.extend(result)
-
-        async def _do_hooks():
-            await progress(75, "🔗 安装 Git 钩子...")
-            result = await asyncio.to_thread(_build_hooks_lines, project_path)
-            hooks_lines.extend(result)
-
-        await asyncio.gather(_do_health(), _do_hooks())
-
-        lines.extend(health_lines)
+        # Install hooks (<1s, must run in MCP process)
+        await progress(75, "🔗 安装 Git 钩子...")
+        hooks_lines = await asyncio.to_thread(_build_hooks_lines, project_path)
         lines.extend(hooks_lines)
 
-        # If bg_sync was started, hint LLM to poll progress
-        has_bg_sync = any("后台同步已启动" in l for l in graph_lines)
-        if has_bg_sync and rid:
-            lines.append("")
-            lines.append(
-                "<!-- LLM_INSTRUCTION: 后台文件同步已启动。"
-                f"请在 15-30 秒后调用 manon_sync_progress(repo_id=\"{rid}\") "
-                "工具查看同步进展并告知用户。 -->"
-            )
+        # Embed smart_analysis status marker for Skill layer
+        proj = get_project(project_path)
+        if proj and not proj.get("smart_analysis_done"):
+            lines.append("\n<!-- SMART_ANALYSIS_NEEDED -->")
+        else:
+            lines.append("\n<!-- SMART_ANALYSIS_DONE -->")
 
         await progress(100, "✅ 初始化完成")
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
+
+    @mcp.tool()
+    def manon_directory_signals(project_path: str) -> str:
+        """获取项目目录结构信号，用于判断哪些目录值得索引。
+
+        返回 JSON，包含每个顶级目录的文件数、扩展名分布、是否有构建配置等信号。
+
+        Args:
+            project_path: 项目在本机的绝对路径
+        """
+        signals = collect_directory_signals(project_path)
+        return json.dumps(signals, ensure_ascii=False, indent=2)
 
     @mcp.tool()
     def manon_configure_excludes(project_path: str, exclude_patterns: list[str]) -> str:
@@ -155,5 +150,10 @@ def register_init_tools(mcp):
         if not proj:
             return "❌ 项目未注册，请先调用 manon_init"
         set_custom_excludes(project_path, exclude_patterns)
+        # Mark smart analysis as done so it won't re-run
+        proj = get_project(project_path)
+        if proj:
+            proj["smart_analysis_done"] = True
+            set_project(project_path, proj)
         preview = preview_project_structure(project_path)
         return f"✅ 已设置 {len(exclude_patterns)} 条自定义排除规则\n\n📂 更新后的目录结构:\n{preview}"

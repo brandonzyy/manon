@@ -81,11 +81,12 @@ def register_repo_crud_tools(mcp):
         return f"仓库 {repo_id} 已删除。"
 
     @mcp.tool()
-    def manon_push_update(repo_id: str) -> str:
+    def manon_push_update(repo_id: str, wait: bool = False) -> str:
         """扫描变更文件并增量上传 AST。
 
         Args:
             repo_id: 仓库 ID
+            wait: 是否等待同步完成（默认 False 后台执行）
         """
         found = find_project_by_repo_id(repo_id)
         if not found:
@@ -95,5 +96,7 @@ def register_repo_crud_tools(mcp):
             )
         local_path, info = found
         old_hashes = info.get("file_hashes", {})
-        bg_msg = _sync._start_bg_sync(repo_id, local_path, old_hashes)
-        return f"增量同步已提交后台执行。{bg_msg}"
+        msg = _sync._start_bg_sync(repo_id, local_path, old_hashes, wait=wait)
+        if wait:
+            return msg
+        return f"增量同步已提交后台执行。{msg}"

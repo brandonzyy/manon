@@ -72,7 +72,6 @@ def init(client, sync, hooks, config, constants):
         client, config, _read_update_status,
         init_helpers._init_existing_project,
         init_helpers._init_match_or_create,
-        init_helpers._build_health_lines,
         init_helpers._build_hooks_lines,
     )
     tools.config.init(client, config)

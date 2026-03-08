@@ -166,14 +166,21 @@ def _bg_sync_worker(repo_id: str, project_path: str, old_hashes: dict,
 
 
 def _start_bg_sync(repo_id: str, project_path: str, old_hashes: dict,
-                   max_files: int = -1, full_reindex: bool = False) -> str:
-    """Start background sync if not already running. Returns status message.
+                   max_files: int = -1, full_reindex: bool = False,
+                   wait: bool = False) -> str:
+    """Start sync. Returns status message.
 
     Args:
         max_files: -1 = use default limit, 0 = unlimited (full reindex)
+        wait: if True, run synchronously and block until complete
     """
     if max_files == -1:
         max_files = INLINE_SCAN_LIMIT
+
+    if wait:
+        return _run_sync_foreground(repo_id, project_path, old_hashes,
+                                    max_files, full_reindex)
+
     if _is_syncing(repo_id):
         prog = _read_sync_progress(repo_id)
         msg = prog["message"] if prog else "进行中"
@@ -188,3 +195,24 @@ def _start_bg_sync(repo_id: str, project_path: str, old_hashes: dict,
         _bg_sync_threads[repo_id] = t
     t.start()
     return "后台同步已启动，用 manon_index_status 查看进度。"
+
+
+def _run_sync_foreground(repo_id: str, project_path: str, old_hashes: dict,
+                         max_files: int, full_reindex: bool) -> str:
+    """Run sync synchronously (blocking). Returns completion message."""
+    try:
+        _write_sync_progress(repo_id, "syncing", "扫描项目文件...")
+        current_hashes = dict(old_hashes)
+        total_synced, total_deleted = _run_sync_loop(
+            repo_id, project_path, current_hashes, max_files, full_reindex,
+            scan_and_parse, find_project_by_repo_id, set_project,
+        )
+        msg = f"完成: {total_synced} 文件同步, {total_deleted} 文件删除"
+        _write_sync_progress(repo_id, "done", msg)
+        log.info("Foreground sync done for %s: %d synced, %d deleted",
+                 repo_id, total_synced, total_deleted)
+        return f"✅ 同步完成: {msg}"
+    except Exception as e:
+        log.error("Foreground sync error for %s: %s", repo_id, e)
+        _write_sync_progress(repo_id, "error", str(e))
+        return f"❌ 同步失败: {e}"
