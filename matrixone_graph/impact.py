@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from mcp.codeindex.parser import parse_file
+from codeindex.parser import parse_file
 
 from .store import CodeGraph, Entity, Relation
 

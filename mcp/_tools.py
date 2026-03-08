@@ -236,7 +236,7 @@ def _find_changed_symbols(
                 continue
             total_added = sum(e - s + 1 for s, e in added_ranges)
             total_deleted = sum(e - s + 1 for s, e in deleted_ranges)
-            from mcp.codeindex.parser import parse_file
+            from codeindex.parser import parse_file
             pr = parse_file(full_path)
             for sym in pr.symbols:
                 if hasattr(sym, "line_start") and hasattr(sym, "line_end"):
@@ -707,7 +707,7 @@ def _run_smart_analysis(project_path: str, rid: str, proj: dict) -> list[str]:
         # Uses codeindex's combined extension map (specialized + generic).
         supported = set(signals.get("supported_languages", []))
         try:
-            from mcp.codeindex.parser import get_all_extensions
+            from codeindex.parser import get_all_extensions
             _EXT_TO_LANG = get_all_extensions()
         except ImportError:
             _EXT_TO_LANG = {
@@ -725,7 +725,7 @@ def _run_smart_analysis(project_path: str, rid: str, proj: dict) -> list[str]:
 
         if needed_langs:
             try:
-                from mcp.codeindex.parser_installer import install_parsers
+                from codeindex.parser_installer import install_parsers
                 install_result = install_parsers(needed_langs)
                 installed = [l for l, s in install_result.items() if s == "installed"]
                 if installed:

@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-from mcp.codeindex.adaptive_config import DEFAULT_ADAPTIVE_CONFIG, AdaptiveSymbolsConfig
+from codeindex.adaptive_config import DEFAULT_ADAPTIVE_CONFIG, AdaptiveSymbolsConfig
 
 DEFAULT_CONFIG_NAME = ".codeindex.yaml"
 DEFAULT_OUTPUT_FILE = "README_AI.md"
@@ -495,9 +495,9 @@ class Config:
         Returns:
             Config instance ready for scanning
         """
-        from mcp.codeindex.detector import quick_detect_languages
-        from mcp.codeindex.parser import FILE_EXTENSIONS
-        from mcp.codeindex.parser_installer import install_parsers
+        from codeindex.detector import quick_detect_languages
+        from codeindex.parser import FILE_EXTENSIONS
+        from codeindex.parser_installer import install_parsers
 
         # Phase 1: Detect languages
         detected_langs = quick_detect_languages(root, FILE_EXTENSIONS)
