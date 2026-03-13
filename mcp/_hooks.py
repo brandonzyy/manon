@@ -22,34 +22,78 @@ def init(config):
 # ── Claude Code hook scripts ─────────────────────────
 
 _PRE_SEARCH_HOOK = '''\
-"""PreToolUse hook: remind to use Manon graph before Grep/Glob."""
+"""PreToolUse hook: enforce Manon-first before Grep/Glob."""
 import json, sys
 data = json.load(sys.stdin)
-print(json.dumps({
-    "continue": True,
-    "message": (
-        "\\u26a0\\ufe0f 规则提醒：是否已先用 manon_search / manon_graph 查过图谱？"
-        "如未查，请先查图谱再补搜索，并声明\\'图谱未覆盖，补充搜索\\'。"
-    ),
-}))
+print(
+    "Hook 规则：执行 Grep/Glob 前，必须先用 manon_search / manon_deep_query / manon_graph 查询图谱。"
+    "图谱不足时才用 Grep/Glob 补充，并声明\\'图谱未覆盖，补充搜索\\'。",
+    file=sys.stderr,
+)
+sys.exit(2)
 '''
 
 _PRE_EDIT_HOOK = '''\
-"""PreToolUse hook: remind to check context before editing code."""
+"""PreToolUse hook: smart check before editing code."""
 import json, sys
 data = json.load(sys.stdin)
-fp = data.get("parameters", {}).get("file_path", "")
-exts = (".py",".js",".ts",".tsx",".jsx",".java",".go",".rs",".c",".cpp",".h")
-if not any(fp.endswith(e) for e in exts):
+tool_name = data.get("tool_name", "")
+params = data.get("parameters", {})
+fp = params.get("file_path", "")
+
+# Non-code files → pass
+non_code = (".json",".yaml",".yml",".md",".txt",".xml",".toml",".ini",".cfg")
+if any(fp.endswith(e) for e in non_code):
     print(json.dumps({"continue": True}))
     sys.exit(0)
-print(json.dumps({
-    "continue": True,
-    "message": (
-        "\\u26a0\\ufe0f 改代码前必查：1) manon_search/manon_graph 了解上下文 "
-        "2) git log --oneline -10 -- <file> 看近期改动，避免回退已有设计决策。"
-    ),
-}))
+
+# Code file check
+code_exts = (".py",".js",".ts",".tsx",".jsx",".java",".go",".rs",".c",".cpp",".h",".hpp")
+if not any(fp.endswith(e) for e in code_exts):
+    print(json.dumps({"continue": True}))
+    sys.exit(0)
+
+# Write (new file) → light reminder
+if tool_name == "Write":
+    print(json.dumps({"continue": True, "message": "\\ud83d\\udca1 新建代码文件，建议先用 manon_search 了解相关模块。"}))
+    sys.exit(0)
+
+# Edit → analyze changes
+if tool_name == "Edit":
+    old = params.get("old_string", "")
+    new = params.get("new_string", "")
+    critical = ["def ","class ","interface ","import ","from ","export ","function ","async def","public ","private "]
+    has_critical = any(k in old or k in new for k in critical)
+    lines = max(old.count("\\\\n")+1, new.count("\\\\n")+1)
+    if has_critical or lines > 10:
+        msg = "Hook 规则：修改"
+        if has_critical: msg += "函数/类/import等关键代码"
+        if lines > 10: msg += f"大范围代码({lines}行)"
+        msg += "前，必须先用 manon_search/manon_graph 了解上下文，并用 git log 查看近期改动。"
+        print(msg, file=sys.stderr)
+        sys.exit(2)
+    print(json.dumps({"continue": True, "message": "\\ud83d\\udca1 建议先用 manon_search 了解代码上下文。"}))
+    sys.exit(0)
+
+print(json.dumps({"continue": True}))
+'''
+
+_PRE_AGENT_PLAN_HOOK = '''\
+"""PreToolUse hook: enforce Manon-first before Explore/general-purpose agents."""
+import json, sys
+data = json.load(sys.stdin)
+tool_input = data.get("tool_input", {})
+agent_type = tool_input.get("subagent_type", "")
+if agent_type in ("Explore", "general-purpose"):
+    print(
+        "Hook 规则：spawn Explore/general-purpose agent 前，"
+        "必须先用 manon_search / manon_deep_query 查询图谱。"
+        "图谱不足时才用 Explore 补充，并声明\\'图谱未覆盖，补充搜索\\'。",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+else:
+    print(json.dumps({"continue": True}))
 '''
 
 
@@ -83,12 +127,15 @@ def _install_claude_hooks() -> str | None:
         hooks_dir.mkdir(parents=True, exist_ok=True)
         search_hook = hooks_dir / "pre_search.py"
         edit_hook = hooks_dir / "pre_edit.py"
+        agent_hook = hooks_dir / "pre_agent_plan.py"
         search_path = str(search_hook).replace("\\", "/")
         edit_path = str(edit_hook).replace("\\", "/")
+        agent_path = str(agent_hook).replace("\\", "/")
 
         # Write hook scripts (these don't trigger Claude Code reload)
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
+        agent_hook.write_text(_PRE_AGENT_PLAN_HOOK, encoding="utf-8")
 
         # Build desired hooks entries
         desired_entries = [
@@ -99,6 +146,10 @@ def _install_claude_hooks() -> str | None:
             {
                 "matcher": "Edit|Write",
                 "hooks": [{"type": "command", "command": f"python {edit_path}"}],
+            },
+            {
+                "matcher": "Agent",
+                "hooks": [{"type": "command", "command": f"python {agent_path}"}],
             },
         ]
 
@@ -115,13 +166,13 @@ def _install_claude_hooks() -> str | None:
         # Check if hooks already match — skip write to avoid triggering
         # Claude Code config reload which disrupts the MCP connection.
         existing_manon = [h for h in pre_tool
-                          if "pre_search.py" in str(h) or "pre_edit.py" in str(h)]
+                          if "pre_search.py" in str(h) or "pre_edit.py" in str(h) or "pre_agent_plan.py" in str(h)]
         if existing_manon == desired_entries:
             log.info("Claude Code hooks already up-to-date, skipping write")
             return None
 
         pre_tool[:] = [h for h in pre_tool
-                       if "pre_search.py" not in str(h) and "pre_edit.py" not in str(h)]
+                       if "pre_search.py" not in str(h) and "pre_edit.py" not in str(h) and "pre_agent_plan.py" not in str(h)]
         pre_tool.extend(desired_entries)
 
         settings_file.write_text(
@@ -129,7 +180,7 @@ def _install_claude_hooks() -> str | None:
             encoding="utf-8",
         )
         log.info("Claude Code hooks installed: %s", hooks_dir)
-        return "🔗 Claude Code hooks 已安装（Grep/Glob → 先查图谱, Edit/Write → 查上下文）"
+        return "🔗 Claude Code hooks 已安装（3个：Grep/Glob强制查图谱, Edit/Write智能检查, Agent强制查图谱）"
     except Exception as e:
         log.warning("Failed to install Claude Code hooks: %s", e)
         return None
