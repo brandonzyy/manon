@@ -88,6 +88,16 @@ def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
 
     Returns (dc_metrics, non_module_entities) since TC reuses the entity list.
     """
+    # Kinds that are structural or accessed implicitly — the graph cannot track
+    # their usage via in-degree (property access, namespace member access,
+    # constructor calls via `new`, type references, etc.).
+    _STRUCTURAL_KINDS = frozenset({
+        "type_alias", "interface", "property", "enum", "enum_member",
+        "field",        # class fields accessed via this.x — not tracked as edges
+        "namespace",    # TS namespaces accessed via Ns.member — not tracked
+        "constructor",  # called via `new Class()` — not tracked as call edges
+    })
+
     all_in_degrees = dict(g.in_degree())
     non_module_entities = [
         nid for nid, data in nodes.items()
@@ -107,6 +117,8 @@ def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
             entry_point_ids.add(nid)
         elif kind == "class":
             entry_point_ids.add(nid)
+        elif kind in _STRUCTURAL_KINDS:
+            entry_point_ids.add(nid)
         elif decorators:
             entry_point_ids.add(nid)
         elif kind == "method" and not name.startswith("_"):
@@ -114,6 +126,16 @@ def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
         elif is_script or is_main:
             entry_point_ids.add(nid)
         elif kind == "function" and not name.startswith("_"):
+            entry_point_ids.add(nid)
+        elif kind == "function" and ("ForTesting" in name or "forTesting" in name
+                                     or "ForTest" in name or "forTest" in name):
+            # Test infrastructure helpers — called from test files via dynamic
+            # import or indirect patterns the graph cannot track.
+            entry_point_ids.add(nid)
+        elif kind == "variable":
+            # All module-level variables are entry points: public ones are
+            # importable, private ones are accessed via closure by sibling
+            # functions in the same file — the graph can't track either.
             entry_point_ids.add(nid)
     checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
     dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]
