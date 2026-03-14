@@ -138,6 +138,11 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
 
 
 def main():
+    # Clear proxy env vars so httpx connects directly to the API.
+    for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+               "http_proxy", "https_proxy", "all_proxy"):
+        os.environ.pop(_k, None)
+
     if len(sys.argv) < 2:
         print("[manon] usage: post_push.py <project_path>")
         return
