@@ -285,7 +285,56 @@ def _install_codex_config() -> str | None:
                 agents_file.write_text(agents_content, encoding="utf-8")
             log.info("Codex AGENTS.md installed: %s", agents_file)
 
-        return "🔗 Codex CLI 已配置（MCP + AGENTS.md 规则）"
+        # ── 3. Skill installation ──
+        skills_dir = codex_dir / "skills" / "manon"
+        skill_file = skills_dir / "SKILL.md"
+        agents_yaml = skills_dir / "agents" / "openai.yaml"
+
+        # Read SKILL.md from Claude Code skills as source of truth
+        claude_skill_src = Path.home() / ".claude" / "skills" / "manon" / "SKILL.md"
+        manon_root = Path(__file__).resolve().parent.parent
+
+        if skill_file.exists() and "manon_init" in skill_file.read_text(encoding="utf-8"):
+            log.info("Codex skill already installed, skipping")
+        else:
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            (skills_dir / "agents").mkdir(parents=True, exist_ok=True)
+
+            # Build SKILL.md content — use Claude Code skill if available, else embedded
+            if claude_skill_src.exists():
+                skill_content = claude_skill_src.read_text(encoding="utf-8")
+                # Adapt frontmatter: remove user_invocable (Codex doesn't use it)
+                skill_content = skill_content.replace("user_invocable: true\n", "")
+                # Update description for Codex
+                skill_content = skill_content.replace(
+                    "description: /manon -- 进入 Manon 模式",
+                    "description: /manon -- 进入 Manon 模式。代码理解、架构分析、代码搜索时，使用 Manon MCP 工具进行语义搜索、图遍历、影响分析。当用户输入 /manon 或需要初始化代码智能工具时触发。",
+                )
+            else:
+                skill_content = """---
+name: manon
+description: /manon -- 进入 Manon 模式。代码理解、架构分析、代码搜索时，使用 Manon MCP 工具进行语义搜索、图遍历、影响分析。
+---
+
+# Manon -- 代码智能工具
+
+调用 `manon_init` 初始化，然后按提示完成文件同步和索引。
+
+| 场景 | 工具 |
+|------|------|
+| 代码理解/搜索 | `manon_deep_query` |
+| 调用关系/依赖 | `manon_graph` |
+| 改动影响 | `manon_impact` |
+| 初始化 | `manon_init` |
+"""
+            skill_file.write_text(skill_content, encoding="utf-8")
+
+            # Write agents/openai.yaml
+            yaml_content = 'interface:\n  display_name: "Manon 代码智能"\n  short_description: "AI 架构师工具 — 语义搜索、图遍历、影响分析"\n  default_prompt: "/manon"\n'
+            agents_yaml.write_text(yaml_content, encoding="utf-8")
+            log.info("Codex skill installed: %s", skills_dir)
+
+        return "🔗 Codex CLI 已配置（MCP + AGENTS.md + Skill）"
     except Exception as e:
         log.warning("Failed to install Codex config: %s", e)
         return None

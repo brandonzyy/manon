@@ -10,6 +10,12 @@ import os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# Clear proxy env vars so Manon connects directly to the API.
+# Claude Code's MCP env block may not reliably override inherited vars.
+for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+           "http_proxy", "https_proxy", "all_proxy"):
+    os.environ.pop(_k, None)
+
 # Remove project root from sys.path — local mcp/ directory shadows the
 # installed mcp package.  Python auto-adds the script's directory as
 # sys.path[0]; we strip it, import the real package, then re-add it.

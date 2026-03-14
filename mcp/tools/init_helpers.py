@@ -153,29 +153,66 @@ def _build_health_lines(rid: str) -> list[str]:
     return lines
 
 
+def _detect_client() -> str:
+    """Detect which AI coding tool is running this MCP server.
+
+    Returns 'claude' | 'codex' | 'unknown'.
+    """
+    import os
+    # Claude Code sets CLAUDE_CODE or runs under claude process
+    if os.environ.get("CLAUDE_CODE") or os.environ.get("CLAUDE_CODE_ENTRY"):
+        return "claude"
+    # Codex sets CODEX_CLI or CODEX_SESSION_ID
+    if os.environ.get("CODEX_CLI") or os.environ.get("CODEX_SESSION_ID"):
+        return "codex"
+    # Fallback: check parent process or common env hints
+    if os.environ.get("CODEX_SANDBOX_TYPE"):
+        return "codex"
+    # MCP_CALLER is set by some MCP hosts
+    caller = os.environ.get("MCP_CALLER", "").lower()
+    if "claude" in caller:
+        return "claude"
+    if "codex" in caller:
+        return "codex"
+    return "unknown"
+
+
 def _build_hooks_lines(project_path: str) -> list[str]:
-    """Install git hooks and Claude Code hooks.
+    """Install git hooks and client-specific hooks.
 
     Runs synchronously — hook installation is fast (<1s) and using
     ThreadPoolExecutor caused 10-20s GIL contention delays on Windows
     when background sync threads were active.
+
+    Only shows hooks relevant to the detected client environment:
+    - Claude Code: git hook + Claude Code PreToolUse hooks
+    - Codex CLI: git hook + Codex config (MCP + AGENTS.md + Skill)
+    - Unknown: install both, show both
     """
     log.info("_build_hooks_lines starting for %s", project_path)
+    client = _detect_client()
+    log.info("Detected client environment: %s", client)
     lines = ["\n🔗 钩子"]
 
     try:
+        # Git hook — always install
         t0 = time.time()
         hook_msg = _hooks._install_hook(project_path)
         log.info("Install git hook took %.1fs", time.time() - t0)
-        t1 = time.time()
-        claude_hook_msg = _hooks._install_claude_hooks()
-        log.info("Install claude hooks took %.1fs", time.time() - t1)
-        t2 = time.time()
-        codex_msg = _hooks._install_codex_config()
-        log.info("Install codex config took %.1fs", time.time() - t2)
         lines.append(f"  {hook_msg}" if hook_msg else "  ✅ Push hook 已就绪")
-        lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
-        lines.append(f"  {codex_msg}" if codex_msg else "  ✅ Codex CLI 已就绪")
+
+        if client in ("claude", "unknown"):
+            t1 = time.time()
+            claude_hook_msg = _hooks._install_claude_hooks()
+            log.info("Install claude hooks took %.1fs", time.time() - t1)
+            lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
+
+        if client in ("codex", "unknown"):
+            t2 = time.time()
+            codex_msg = _hooks._install_codex_config()
+            log.info("Install codex config took %.1fs", time.time() - t2)
+            lines.append(f"  {codex_msg}" if codex_msg else "  ✅ Codex CLI 已就绪")
+
     except Exception as e:
         log.warning("Hooks installation failed: %s", e)
         lines.append(f"  ⚠️ 钩子安装失败: {e}")
