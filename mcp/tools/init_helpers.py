@@ -170,8 +170,12 @@ def _build_hooks_lines(project_path: str) -> list[str]:
         t1 = time.time()
         claude_hook_msg = _hooks._install_claude_hooks()
         log.info("Install claude hooks took %.1fs", time.time() - t1)
+        t2 = time.time()
+        codex_msg = _hooks._install_codex_config()
+        log.info("Install codex config took %.1fs", time.time() - t2)
         lines.append(f"  {hook_msg}" if hook_msg else "  ✅ Push hook 已就绪")
         lines.append(f"  {claude_hook_msg}" if claude_hook_msg else "  ✅ Claude Code hooks 已就绪")
+        lines.append(f"  {codex_msg}" if codex_msg else "  ✅ Codex CLI 已就绪")
     except Exception as e:
         log.warning("Hooks installation failed: %s", e)
         lines.append(f"  ⚠️ 钩子安装失败: {e}")

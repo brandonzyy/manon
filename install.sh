@@ -4,7 +4,7 @@ set -euo pipefail
 # ── Manon MCP Installer ──────────────────────────────
 # Multi-platform installer for Manon code intelligence:
 #   1. Python venv + dependencies
-#   2. MCP server registration (Claude Code / Cursor / Windsurf)
+#   2. MCP server registration (Claude Code / Cursor / Windsurf / OpenCode)
 #   3. Deep-query behavior rules for each platform
 # ─────────────────────────────────────────────────────
 
@@ -86,6 +86,16 @@ detect_platforms() {
     # CodeBuddy (Tencent)
     if [ -d "$HOME/.codebuddy" ] || [ -d "$HOME/.tencent/codebuddy" ]; then
         PLATFORMS+=("codebuddy")
+    fi
+
+    # OpenCode
+    if [ -d "$HOME/.config/opencode" ] || command -v opencode >/dev/null 2>&1; then
+        PLATFORMS+=("opencode")
+    fi
+
+    # Codex (OpenAI)
+    if [ -d "$HOME/.codex" ] || command -v codex >/dev/null 2>&1; then
+        PLATFORMS+=("codex")
     fi
 }
 
@@ -389,6 +399,190 @@ SKILLEOF
 
 
 
+# --- OpenCode ---
+configure_opencode() {
+    local cfg_file="$HOME/.config/opencode/opencode.json"
+
+    # MCP config (OpenCode uses different format: type+command array+environment)
+    $VENV_PYTHON - "$cfg_file" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+import json, sys, os
+target, venv_py, server, url, key = sys.argv[1:6]
+cfg = {}
+if os.path.exists(target):
+    with open(target, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+cfg.setdefault("mcp", {})
+env = {"MANON_API_KEY": key}
+if url != "auto":
+    env["MANON_API_URL"] = url
+cfg["mcp"]["manon"] = {
+    "type": "local",
+    "command": [venv_py, server],
+    "environment": env,
+}
+os.makedirs(os.path.dirname(target), exist_ok=True)
+with open(target, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PYEOF
+    info "OpenCode MCP registered"
+
+    # Skill — OpenCode reads ~/.claude/skills/**/SKILL.md automatically
+    # so the Claude Code skill covers OpenCode too. Install it if not present.
+    local skill_dir="$HOME/.claude/skills/manon"
+    if [ ! -f "$skill_dir/SKILL.md" ]; then
+        mkdir -p "$skill_dir"
+        # Will be written by configure_claude_code if also detected;
+        # otherwise write a minimal version here
+        cat > "$skill_dir/SKILL.md" <<SKILLEOF
+---
+name: manon
+description: /manon — 进入 Manon 模式，初始化项目知识图谱连接
+user_invocable: true
+---
+
+$MANON_RULES
+
+## 初始化流程（/manon 触发时执行）
+
+执行以下步骤，按顺序完成：
+
+### Step 1: manon_init
+调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
+
+### Step 2: Smart Analysis（首次执行）
+检查 \`manon_init\` 输出中的标记：
+- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
+- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
+
+**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
+
+**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
+
+**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
+- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
+- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
+
+**2d.** 向用户展示分析结果。
+
+### Step 3: 文件同步（AST 提取 + 上传）
+
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+
+**3b.** 用 Bash 运行扫描脚本：
+\`\`\`
+python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+\`\`\`
+- 脚本输出 JSON: {total_files, deleted_files, total_batches}
+- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
+- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
+
+**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
+
+**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
+- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
+- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
+
+### Step 4: 索引覆盖率
+调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
+
+### Step 5: 代码健康度
+调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
+
+### Step 6: 激活
+告知用户 Manon 模式已激活。
+
+---
+
+## 目录判断规则
+
+1. **源码占比**：编程语言扩展名文件占比 > 30% → index
+2. **构建配置**：有 package.json/tsconfig.json/Cargo.toml 等 → index
+3. **业务关联**：核心代码/共享库 → index；静态资源/文档/数据/日志 → skip
+SKILLEOF
+        info "OpenCode /manon Skill installed (via ~/.claude/skills/)"
+    else
+        info "OpenCode Skill already present (shared with Claude Code)"
+    fi
+}
+
+
+
+# --- Codex (OpenAI) ---
+configure_codex() {
+    local config_file="$HOME/.codex/config.toml"
+    local agents_file="$HOME/AGENTS.md"
+
+    # MCP config — append [mcp_servers.manon] to config.toml if not present
+    if grep -q '\[mcp_servers\.manon\]' "$config_file" 2>/dev/null; then
+        info "Codex MCP already configured"
+    else
+        cat >> "$config_file" <<TOMLEOF
+
+[mcp_servers.manon]
+command = "$VENV_PYTHON_NORM"
+args = ["$SERVER_PY_NORM"]
+env = { MANON_API_KEY = "$API_KEY" }
+startup_timeout_sec = 30.0
+tool_timeout_sec = 120.0
+TOMLEOF
+        info "Codex MCP registered"
+    fi
+
+    # AGENTS.md — Manon rules (equivalent to Claude Code hooks)
+    if [ -f "$agents_file" ] && grep -q "manon_search" "$agents_file" 2>/dev/null; then
+        info "Codex AGENTS.md already has Manon rules"
+    else
+        cat >> "$agents_file" <<'AGENTSEOF'
+
+# Codex AGENTS.md — Manon 知识图谱规则
+
+## 核心规则（MUST）
+
+代码理解、架构分析、代码搜索时，**必须优先使用 Manon MCP 工具**，禁止跳过图谱直接搜索文件。
+
+## 工具选择
+
+| 场景 | 工具 | 说明 |
+|------|------|------|
+| 代码搜索/理解 | `manon_search` | 语义搜索实体和关系 |
+| 深度问答 | `manon_deep_query` | 多轮迭代，自动覆盖子问题 |
+| 调用关系/依赖 | `manon_graph` | symbol 级图遍历 (callers/callees/both) |
+| 改动影响 | `manon_impact` | commit 级影响传播分析 |
+| 代码健康度 | `manon_code_health` | 8 维度评分 |
+| 初始化/连接 | `manon_init` | 匹配或创建仓库 + 索引 |
+
+## 强制规则（模拟 Claude Code Hooks）
+
+### 规则 1：搜索前必查图谱
+
+在使用 grep、find、文件搜索等操作前，**必须先用 manon_search / manon_deep_query / manon_graph 查询图谱**。
+图谱不足时才用文件搜索补充，并声明"图谱未覆盖，补充搜索"。
+
+### 规则 2：编辑代码前必查上下文
+
+修改代码文件（.py/.js/.ts/.tsx/.jsx/.java/.go/.rs/.c/.cpp）前：
+- 修改函数/类/import 等关键代码，或修改超过 10 行时，**必须先用 manon_search/manon_graph 了解上下文**
+- 同时用 `git log --oneline -10 -- <file>` 查看近期改动
+- 非代码文件（.json/.yaml/.md/.toml 等）不受此限制
+
+### 规则 3：探索代码库前必查图谱
+
+在进行大范围代码探索或规划前，**必须先用 manon_search / manon_deep_query 查询图谱**。
+图谱不足时才进行文件级探索，并声明"图谱未覆盖，补充搜索"。
+
+## 执行顺序
+
+1. **先图谱，再补搜索**：不足时才用文件搜索，且声明"图谱未覆盖，补充搜索"
+2. **改代码前必查**：先 `manon_search` 或 `manon_graph` 了解上下文
+3. **查不到时**：`manon_repos_list` 返回空 → `manon_init`
+4. **改前看近史**：修改前先 `git log --oneline -10 -- <file>` 或 `manon_impact` 查最近改动
+AGENTSEOF
+        info "Codex AGENTS.md rules installed → $agents_file"
+    fi
+}
+
+
+
 echo ""
 echo "  Manon MCP — 代码智能工具"
 echo "  ────────────────────────"
@@ -430,7 +624,7 @@ info "Python $PY_MAJOR.$PY_MINOR"
 # ── Detect platforms ──────────────────────────────────
 detect_platforms
 if [ ${#PLATFORMS[@]} -eq 0 ]; then
-    err "No supported platform detected (Claude Code / Cursor / Windsurf)"
+    err "No supported platform detected (Claude Code / Cursor / Windsurf / OpenCode / Codex)"
 fi
 info "Detected: ${PLATFORMS[*]}"
 
@@ -440,14 +634,23 @@ API_KEY=""
 
 # ── Check for existing key ────────────────────────────
 for _cfg in "$HOME/.claude.json" "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
-            "$HOME/.codeium/windsurf/mcp_config.json" "$HOME/.windsurf/mcp_config.json"; do
+            "$HOME/.codeium/windsurf/mcp_config.json" "$HOME/.windsurf/mcp_config.json" \
+            "$HOME/.config/opencode/opencode.json" "$HOME/.codex/config.toml"; do
     if [ -f "$_cfg" ]; then
         _key=$(python3 -c "
-import json, sys
+import json, sys, re
+f = sys.argv[1]
 try:
-    d = json.load(open(sys.argv[1], encoding='utf-8'))
-    k = d.get('mcpServers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
-    if k.startswith('msk_'): print(k)
+    if f.endswith('.toml'):
+        text = open(f, encoding='utf-8').read()
+        m = re.search(r'MANON_API_KEY\s*=\s*\"(msk_[^\"]+)\"', text)
+        if m: print(m.group(1))
+    else:
+        d = json.load(open(f, encoding='utf-8'))
+        k = d.get('mcpServers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
+        if not k:
+            k = d.get('mcp', {}).get('manon', {}).get('environment', {}).get('MANON_API_KEY', '')
+        if k.startswith('msk_'): print(k)
 except: pass
 " "$_cfg" 2>/dev/null)
         if [ -n "$_key" ]; then
@@ -536,6 +739,8 @@ for platform in "${PLATFORMS[@]}"; do
         zed)         configure_zed ;;
         continue)    configure_continue ;;
         codebuddy)   configure_codebuddy ;;
+        opencode)    configure_opencode ;;
+        codex)       configure_codex ;;
     esac
     CONFIGURED+=("$platform")
 done
@@ -578,6 +783,8 @@ for p in "${CONFIGURED[@]}"; do
         zed)         echo "  Zed:          manon tools available in Assistant" ;;
         continue)    echo "  Continue:     manon tools available in Chat" ;;
         codebuddy)   echo "  CodeBuddy:    type /manon to initialize" ;;
+        opencode)    echo "  OpenCode:     type /manon to initialize" ;;
+        codex)       echo "  Codex:        manon tools available via MCP" ;;
     esac
 done
 echo ""

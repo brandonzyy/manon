@@ -186,6 +186,111 @@ def _install_claude_hooks() -> str | None:
         return None
 
 
+def _install_codex_config() -> str | None:
+    """Install Codex CLI MCP config + AGENTS.md rules. Returns status or None.
+
+    Codex uses TOML config (~/.codex/config.toml) for MCP servers and
+    AGENTS.md for behavioral rules (equivalent to Claude Code hooks).
+    Idempotent: skips write if config already matches.
+    """
+    codex_dir = Path.home() / ".codex"
+    config_file = codex_dir / "config.toml"
+    agents_file = Path.home() / "AGENTS.md"
+
+    if not codex_dir.exists():
+        # Codex not installed
+        return None
+
+    try:
+        # ── 1. MCP server in config.toml ──
+        # We need to read existing TOML, inject [mcp_servers.manon] if missing
+        venv_python = str(Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe")
+        if not Path(venv_python).exists():
+            # Unix path
+            venv_python = str(Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python")
+        venv_python = venv_python.replace("\\", "/")
+        server_py = str(Path(__file__).resolve().parent.parent / "run_mcp.py").replace("\\", "/")
+
+        api_key = _config.API_KEY or ""
+
+        existing_toml = ""
+        if config_file.exists():
+            existing_toml = config_file.read_text(encoding="utf-8")
+
+        # Check if manon MCP already configured
+        if "[mcp_servers.manon]" in existing_toml:
+            log.info("Codex MCP config already present, skipping")
+        else:
+            # Append MCP server config
+            mcp_block = f'\n[mcp_servers.manon]\ncommand = "{venv_python}"\nargs = ["{server_py}"]\nenv = {{ MANON_API_KEY = "{api_key}" }}\nstartup_timeout_sec = 30.0\ntool_timeout_sec = 120.0\n'
+            config_file.write_text(existing_toml.rstrip() + "\n" + mcp_block, encoding="utf-8")
+            log.info("Codex MCP config installed: %s", config_file)
+
+        # ── 2. AGENTS.md rules (equivalent to Claude Code hooks) ──
+        agents_content = """# Codex AGENTS.md — Manon 知识图谱规则
+
+## 核心规则（MUST）
+
+代码理解、架构分析、代码搜索时，**必须优先使用 Manon MCP 工具**，禁止跳过图谱直接搜索文件。
+
+## 工具选择
+
+| 场景 | 工具 | 说明 |
+|------|------|------|
+| 代码搜索/理解 | `manon_search` | 语义搜索实体和关系 |
+| 深度问答 | `manon_deep_query` | 多轮迭代，自动覆盖子问题 |
+| 调用关系/依赖 | `manon_graph` | symbol 级图遍历 (callers/callees/both) |
+| 改动影响 | `manon_impact` | commit 级影响传播分析 |
+| 代码健康度 | `manon_code_health` | 8 维度评分 |
+| 初始化/连接 | `manon_init` | 匹配或创建仓库 + 索引 |
+
+## 强制规则（模拟 Claude Code Hooks）
+
+### 规则 1：搜索前必查图谱
+
+在使用 grep、find、文件搜索等操作前，**必须先用 manon_search / manon_deep_query / manon_graph 查询图谱**。
+图谱不足时才用文件搜索补充，并声明"图谱未覆盖，补充搜索"。
+
+### 规则 2：编辑代码前必查上下文
+
+修改代码文件（.py/.js/.ts/.tsx/.jsx/.java/.go/.rs/.c/.cpp）前：
+- 修改函数/类/import 等关键代码，或修改超过 10 行时，**必须先用 manon_search/manon_graph 了解上下文**
+- 同时用 `git log --oneline -10 -- <file>` 查看近期改动，确认不会回退刚修过的设计决策
+- 非代码文件（.json/.yaml/.md/.toml 等）不受此限制
+
+### 规则 3：探索代码库前必查图谱
+
+在进行大范围代码探索或规划前，**必须先用 manon_search / manon_deep_query 查询图谱**。
+图谱不足时才进行文件级探索，并声明"图谱未覆盖，补充搜索"。
+
+## 执行顺序
+
+1. **先图谱，再补搜索**：不足时才用文件搜索，且声明"图谱未覆盖，补充搜索"
+2. **改代码前必查**：先 `manon_search` 或 `manon_graph` 了解上下文
+3. **查不到时**：`manon_repos_list` 返回空 → `manon_init`
+4. **改前看近史**：修改前先 `git log --oneline -10 -- <file>` 或 `manon_impact` 查最近改动
+"""
+        # Check if AGENTS.md already has Manon rules
+        existing_agents = ""
+        if agents_file.exists():
+            existing_agents = agents_file.read_text(encoding="utf-8")
+
+        if "Manon" in existing_agents and "manon_search" in existing_agents:
+            log.info("Codex AGENTS.md already has Manon rules, skipping")
+        else:
+            if existing_agents:
+                # Append to existing
+                agents_file.write_text(existing_agents.rstrip() + "\n\n" + agents_content, encoding="utf-8")
+            else:
+                agents_file.write_text(agents_content, encoding="utf-8")
+            log.info("Codex AGENTS.md installed: %s", agents_file)
+
+        return "🔗 Codex CLI 已配置（MCP + AGENTS.md 规则）"
+    except Exception as e:
+        log.warning("Failed to install Codex config: %s", e)
+        return None
+
+
 def _find_git_root(path: Path) -> Path | None:
     """Walk up from path to find the nearest .git directory. Pure Python, no subprocess."""
     p = path.resolve()
