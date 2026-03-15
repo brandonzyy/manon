@@ -1,7 +1,12 @@
 """Health, hooks tools."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+from shared.ast_sync import find_project_by_repo_id
+
+log = logging.getLogger("manon-mcp")
 
 # Will be injected by parent
 _client = None
@@ -13,6 +18,24 @@ def init(client, hooks):
     global _client, _hooks
     _client = client
     _hooks = hooks
+
+
+def _scan_debt_locally(repo_id: str) -> dict | None:
+    """Compute TD metrics locally where source files are available."""
+    found = find_project_by_repo_id(repo_id)
+    if not found:
+        return None
+    project_path, _ = found
+    repo_path = Path(project_path)
+    if not repo_path.is_dir():
+        return None
+    try:
+        from matrixone_graph.health import scan_directory_debt
+
+        return scan_directory_debt(repo_path)
+    except Exception as e:
+        log.warning("Local debt scan failed: %s", e)
+        return None
 
 
 def register_health_tools(mcp):
@@ -30,23 +53,41 @@ def register_health_tools(mcp):
         Args:
             repo_id: 仓库 ID（从 manon_repos_list 获取）
         """
-        result = _client._get(f"/api/v1/repos/{repo_id}/code-health", timeout=60)
+        debt = _scan_debt_locally(repo_id)
+        body = {"debt_metrics": debt} if debt else {}
+        result = _client._post(f"/api/v1/repos/{repo_id}/code-health", body, timeout=60)
         score = result.get("score", 0)
         dims = result.get("dimensions", [])
-        grade = result.get("grade", "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D")
+        grade = result.get(
+            "grade",
+            "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D",
+        )
+
         lines = [f"代码健康评分: {score}/100 ({grade})"]
-        lines.append(f"实体: {result.get('entity_count', 0)}, 关系: {result.get('relation_count', 0)}")
+        lines.append(
+            f"实体: {result.get('entity_count', 0)}, 关系: {result.get('relation_count', 0)}"
+        )
         if not result.get("reliable", True):
             lines.append("⚠ 图谱数据为空，评分不可靠。请先同步文件并重建索引。")
         lines.append("")
-        for d in dims:
-            bar = "█" * d["value"] + "░" * (10 - d["value"])
-            lines.append(f"  {d['abbr']:>2s} {d['name']:<6s} {bar} {d['value']}/10 (权重{d['weight']})")
-            detail = d.get("detail", {})
+
+        for dimension in dims:
+            value = dimension["value"]
+            bar = "█" * value + "░" * (10 - value)
+            lines.append(
+                f"  {dimension['abbr']:>2s} {dimension['name']:<6s} "
+                f"{bar} {value}/10 (权重{dimension['weight']})"
+            )
+            detail = dimension.get("detail", {})
             if detail:
-                info = ", ".join(f"{k}={v}" for k, v in detail.items() if not isinstance(v, list))
+                info = ", ".join(
+                    f"{key}={val}"
+                    for key, val in detail.items()
+                    if not isinstance(val, list)
+                )
                 if info:
                     lines.append(f"     {info}")
+
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
     @mcp.tool()
@@ -59,6 +100,7 @@ def register_health_tools(mcp):
         resolved = Path(project_path).resolve()
         if not (resolved / ".git").is_dir():
             return f"不是 git 仓库: {resolved}"
+
         result = _hooks._install_hook(project_path)
         _hooks._persist_api_config()
         if result:

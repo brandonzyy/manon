@@ -9,6 +9,7 @@ from mcp.server.fastmcp import Context
 from shared.ast_sync import (
     get_project, set_project, set_custom_excludes,
     preview_project_structure, collect_directory_signals,
+    needs_smart_analysis_refresh, smart_analysis_signature,
 )
 
 log = logging.getLogger("manon-mcp")
@@ -118,7 +119,7 @@ def register_init_tools(mcp):
 
         # Embed smart_analysis status marker for Skill layer
         proj = get_project(project_path)
-        if proj and not proj.get("smart_analysis_done"):
+        if needs_smart_analysis_refresh(project_path, proj):
             lines.append("\n<!-- SMART_ANALYSIS_NEEDED -->")
         else:
             lines.append("\n<!-- SMART_ANALYSIS_DONE -->")
@@ -159,6 +160,7 @@ def register_init_tools(mcp):
         proj = get_project(project_path)
         if proj:
             proj["smart_analysis_done"] = True
+            proj["smart_analysis_signature"] = smart_analysis_signature(project_path)
             set_project(project_path, proj)
         preview = preview_project_structure(project_path)
         return f"✅ 已设置 {len(exclude_patterns)} 条自定义排除规则\n\n📂 更新后的目录结构:\n{preview}"

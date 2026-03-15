@@ -5,7 +5,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 
 from ..auth import TenantContext, require_tenant
 from ..db import get_db
@@ -101,10 +101,12 @@ async def impact_analysis(
     return result
 
 
+@router.post("/code-health")
 @router.get("/code-health")
 async def code_health(
     repo_id: str,
     ctx: TenantContext = Depends(require_tenant),
+    body: dict | None = Body(None),
 ):
     """Compute 8-dimension code health score from the knowledge graph."""
     from matrixone_graph.health import compute_graph_metrics, compute_score, scan_directory_debt
@@ -121,9 +123,12 @@ async def code_health(
 
     graph_metrics = compute_graph_metrics(g)
 
-    # Static debt scan — only if repo has a local path on server
+    # Prefer client-supplied debt metrics (MCP scans locally where source exists),
+    # fall back to server-side scan if available.
     debt_metrics = None
-    if row["local_path"] and Path(row["local_path"]).is_dir():
+    if body and body.get("debt_metrics"):
+        debt_metrics = body["debt_metrics"]
+    elif row["local_path"] and Path(row["local_path"]).is_dir():
         debt_metrics = scan_directory_debt(Path(row["local_path"]))
 
     result = compute_score(graph_metrics, debt_metrics)

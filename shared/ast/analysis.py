@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 from pathlib import Path
 
@@ -19,6 +20,8 @@ _SKIP_DIRS = frozenset({
     "htmlcov", ".nyc_output", "coverage",
     ".cache", ".tmp", ".temp",
 })
+
+_SMART_ANALYSIS_SIGNATURE_VERSION = 1
 
 
 def _walk_safe(root: Path, *, max_files: int = 0):
@@ -198,6 +201,30 @@ def preview_project_structure(local_path: str) -> str:
     return "\n".join(lines) if lines else "（空目录）"
 
 
+def smart_analysis_signature(local_path: str) -> str:
+    """Return a stable fingerprint for top-level structure changes."""
+    root = Path(local_path).resolve()
+    try:
+        dir_names = sorted(
+            item.name for item in root.iterdir()
+            if item.is_dir() and item.name not in _SKIP_DIRS
+        )
+    except OSError:
+        dir_names = []
+    return json.dumps(
+        {"version": _SMART_ANALYSIS_SIGNATURE_VERSION, "dirs": dir_names},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def needs_smart_analysis_refresh(local_path: str, project: dict | None) -> bool:
+    """Return True when smart analysis should run or re-run."""
+    if not project or not project.get("smart_analysis_done"):
+        return True
+    return project.get("smart_analysis_signature") != smart_analysis_signature(local_path)
+
+
 def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> str:
     """Analyze index coverage: scannable vs indexed files per top-level directory.
 
@@ -205,7 +232,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     and a summary line.
     """
     from codeindex.scanner import scan_directory, should_exclude
-    from .config import _load_scan_config, get_always_exclude
+    from .config import _load_scan_config, get_auto_exclude_patterns
     from .project import get_project
 
     root = Path(local_path).resolve()
@@ -234,6 +261,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     # Collect exclude patterns for display
     proj = get_project(local_path)
     custom_excludes = proj.get("custom_excludes", []) if proj else []
+    auto_excludes = get_auto_exclude_patterns(local_path)
 
     # Build rows: (icon, name, coverage, reason)
     indexed_rows: list[tuple[str, str, str, str]] = []
@@ -246,7 +274,9 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
         dir_path = root / d
 
         if should_exclude(dir_path, config.exclude, root):
-            pat, source = _find_exclude_reason(d, config.exclude, custom_excludes, test_excludes)
+            pat, source = _find_exclude_reason(
+                d, config.exclude, custom_excludes, test_excludes, auto_excludes,
+            )
             excluded_rows.append(("✗", d, "—", f"{source}: {pat}"))
         elif scannable == 0:
             skipped_rows.append(("○", d, "—", "无可扫描文件"))
@@ -277,6 +307,7 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
 def _find_exclude_reason(
     dir_name: str, all_excludes: list[str],
     custom_excludes: list[str], test_excludes: list[str] | None,
+    auto_excludes: list[str] | None = None,
 ) -> tuple[str, str]:
     """Find which exclusion pattern matched this directory and its source.
 
@@ -285,6 +316,7 @@ def _find_exclude_reason(
     from .config import get_always_exclude
 
     _ALWAYS_EXCLUDE = get_always_exclude()
+    _AUTO_EXCLUDE = set(auto_excludes or [])
 
     # Build test paths for matching
     test_paths = [
@@ -320,6 +352,10 @@ def _find_exclude_reason(
 
     # Check _ALWAYS_EXCLUDE
     for pat in _ALWAYS_EXCLUDE:
+        if _matches(pat):
+            return pat, "内置"
+
+    for pat in _AUTO_EXCLUDE:
         if _matches(pat):
             return pat, "内置"
 

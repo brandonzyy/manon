@@ -1,6 +1,7 @@
 """Configuration loading with .gitignore support."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 # Universal directories to always exclude
@@ -26,7 +27,42 @@ _ALWAYS_EXCLUDE = [
     "**/htmlcov/**", "**/.nyc_output/**", "**/coverage/**",
     # Misc
     "**/.cache/**", "**/.tmp/**", "**/.temp/**",
+    # Common test directories
+    "**/tests/**", "**/test/**", "**/__tests__/**",
+    "**/spec/**", "**/e2e/**", "**/cypress/**",
 ]
+
+_AUTO_EXCLUDE_DIRS = {
+    "indexes",
+    "saas_indexes",
+    "saas_repos",
+}
+
+_AUTO_EXCLUDE_PATTERNS = (
+    re.compile(r"^\.(?:venv|virtualenv)(?:[._-].+)+$"),
+    re.compile(r"^(?:venv|virtualenv)(?:[._-].+)+$"),
+)
+
+
+def _should_auto_exclude_dir(name: str) -> bool:
+    """Return True for obviously generated top-level directories."""
+    lowered = name.lower()
+    if lowered in _AUTO_EXCLUDE_DIRS:
+        return True
+    return any(pattern.match(lowered) for pattern in _AUTO_EXCLUDE_PATTERNS)
+
+
+def get_auto_exclude_patterns(local_path: str) -> list[str]:
+    """Return project-specific exclude patterns for generated directories."""
+    root = Path(local_path).resolve()
+    patterns: set[str] = set()
+    try:
+        for item in root.iterdir():
+            if item.is_dir() and _should_auto_exclude_dir(item.name):
+                patterns.add(f"**/{item.name}/**")
+    except OSError:
+        return []
+    return sorted(patterns)
 
 
 def _load_scan_config(local_path: str):
@@ -44,9 +80,10 @@ def _load_scan_config(local_path: str):
     # Use new API: auto-detects languages, installs parsers, generates smart config
     config = Config.load_with_auto_setup(root)
 
-    # Merge: existing excludes + always-exclude + .gitignore + test auto-detect + custom
+    # Merge: existing excludes + always-exclude + project auto-excludes + .gitignore + test auto-detect + custom
     excludes = set(config.exclude)
     excludes.update(_ALWAYS_EXCLUDE)
+    excludes.update(get_auto_exclude_patterns(local_path))
 
     # Parse .gitignore
     gitignore = root / ".gitignore"

@@ -24,11 +24,14 @@ __all__ = [
     "_load_scan_config",
     "set_custom_excludes",
     "get_always_exclude",
+    "get_auto_exclude_patterns",
     # Analysis
     "detect_test_patterns",
     "preview_project_structure",
     "analyze_index_coverage",
     "collect_directory_signals",
+    "smart_analysis_signature",
+    "needs_smart_analysis_refresh",
     # Parser utils
     "ensure_parsers",
     # Scanner
