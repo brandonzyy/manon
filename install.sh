@@ -180,11 +180,11 @@ $MANON_RULES
 
 ### Step 3: 文件同步（AST 提取 + 上传）
 
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
 
 **3b.** 用 Bash 运行扫描脚本：
 \`\`\`
-python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
 \`\`\`
 - 脚本输出 JSON: {total_files, deleted_files, total_batches}
 - 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
@@ -361,11 +361,11 @@ $MANON_RULES
 
 ### Step 3: 文件同步（AST 提取 + 上传）
 
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
 
 **3b.** 用 Bash 运行扫描脚本：
 \`\`\`
-python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
 \`\`\`
 - 脚本输出 JSON: {total_files, deleted_files, total_batches}
 - 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
@@ -466,11 +466,11 @@ $MANON_RULES
 
 ### Step 3: 文件同步（AST 提取 + 上传）
 
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）。
+**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
 
 **3b.** 用 Bash 运行扫描脚本：
 \`\`\`
-python <MANON_DIR>/scripts/manon-scan.py <repo_id>
+<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
 \`\`\`
 - 脚本输出 JSON: {total_files, deleted_files, total_batches}
 - 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
