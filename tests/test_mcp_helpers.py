@@ -102,6 +102,7 @@ class TestPersistApiConfig:
 
         assert result is not None
         updated = hook_file.read_text(encoding="utf-8").replace("\\", "/")
+        assert "nohup" in updated
         assert "manon_mcp/hooks/post_push.py" in updated
         assert 'python "/repo/mcp/hooks/post_push.py" "/repo"' not in updated
 

@@ -298,7 +298,7 @@ def _install_hook(project_path: str) -> str | None:
     hook_file = hooks_dir / "pre-push"
     script_path = Path(__file__).resolve().parent / "hooks" / "post_push.py"
     python_exe = sys.executable or "python3"
-    manon_line = f'"{python_exe}" "{script_path}" "{resolved}"'
+    manon_line = f'nohup "{python_exe}" "{script_path}" "{resolved}" >/dev/null 2>&1 &'
     manon_marker = "# Manon push hook"
     marker_line = f"{manon_marker} - knowledge graph update + health score"
 

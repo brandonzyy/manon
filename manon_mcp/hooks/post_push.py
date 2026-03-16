@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # Add project root to path so shared modules are importable
@@ -78,6 +79,24 @@ def _write_status(ok: bool, message: str) -> None:
         }, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
+
+def _wait_for_api(api_url: str, headers: dict, *, timeout: float = 45.0, interval: float = 3.0) -> tuple[bool, str]:
+    """Wait for the API to come back before syncing graph data."""
+    import httpx
+
+    deadline = time.monotonic() + timeout
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(base_url=api_url, headers=headers, timeout=5) as c:
+                response = c.get("/health")
+                response.raise_for_status()
+            return True, ""
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(interval)
+    return False, last_error
 
 
 def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
@@ -165,6 +184,13 @@ def main():
     if "Bearer " == headers.get("Authorization", "").strip():
         print("[manon] MANON_API_KEY 未配置，跳过图谱同步。请重新运行 manon_setup_hooks。")
         _write_status(False, "API key 未配置")
+        return
+
+    ready, wait_error = _wait_for_api(api_url, headers)
+    if not ready:
+        message = f"API unavailable after restart: {wait_error}"
+        print(f"[manon] FAIL {message}")
+        _write_status(False, message)
         return
 
     sync_ok, summary_parts = _sync_ast_changes(repo_id, info, project_path, api_url, headers)
