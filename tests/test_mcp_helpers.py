@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
-from manon_mcp._hooks import _PRE_SEARCH_HOOK, _PRE_EDIT_HOOK, _persist_api_config
+from manon_mcp._hooks import _PRE_SEARCH_HOOK, _PRE_EDIT_HOOK, _persist_api_config, _install_hook
 from manon_mcp._tools import _write_update_status, _read_update_status, _UPDATE_STATUS_FILE
 from manon_mcp.tools.impact import _detect_git_root, _find_changed_symbols
 from manon_mcp.tools.init_helpers import _fmt_stats
@@ -78,6 +78,32 @@ class TestPersistApiConfig:
             mock_path.home.return_value = tmp_path
             # Just verify it doesn't crash
             _persist_api_config()
+
+    def test_install_hook_upgrades_legacy_post_push_path(self, tmp_path, monkeypatch):
+        hooks_dir = tmp_path / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        hook_file = hooks_dir / "pre-push"
+        hook_file.write_text(
+            "\n".join(
+                [
+                    "#!/bin/sh",
+                    "# Manon push hook - knowledge graph update + health score",
+                    'python "/repo/mcp/hooks/post_push.py" "/repo"',
+                    "exit 0",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr("manon_mcp._hooks._persist_api_config", lambda: None)
+
+        result = _install_hook(str(tmp_path))
+
+        assert result is not None
+        updated = hook_file.read_text(encoding="utf-8").replace("\\", "/")
+        assert "manon_mcp/hooks/post_push.py" in updated
+        assert 'python "/repo/mcp/hooks/post_push.py" "/repo"' not in updated
 
 
 class TestImpactHelpers:
