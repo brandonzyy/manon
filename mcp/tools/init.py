@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import Context
@@ -21,6 +22,38 @@ _read_update_status = None
 _init_existing_project = None
 _init_match_or_create = None
 _build_hooks_lines = None
+
+
+def _resolve_scan_python() -> str:
+    """Return a stable Python entrypoint for external scan scripts.
+
+    Prefer the base interpreter over the venv launcher so Windows sandboxes
+    can start the process even when `.venv/Scripts/python.exe` is blocked.
+    """
+    candidates: list[str] = []
+    base_executable = getattr(sys, "_base_executable", "")
+    if base_executable:
+        candidates.append(base_executable)
+
+    executable = Path(sys.executable)
+    cfg_path = executable.parent.parent / "pyvenv.cfg"
+    if cfg_path.exists():
+        cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
+        for line in cfg_text.splitlines():
+            if line.startswith("executable = "):
+                candidates.append(line.split("=", 1)[1].strip())
+                break
+
+    candidates.append(sys.executable)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if Path(candidate).exists():
+            return candidate
+    return sys.executable
 
 
 def init(client, config, read_update_status_func, init_existing_func,
@@ -113,11 +146,12 @@ def register_init_tools(mcp):
         hooks_lines = await asyncio.to_thread(_build_hooks_lines, project_path)
         lines.extend(hooks_lines)
 
-        # Embed MANON_DIR and MANON_PYTHON for Skill layer to locate scripts
+        # Embed MANON_DIR and MANON_PYTHON for Skill layer to locate scripts.
+        # Use a stable bootstrap Python for scan scripts instead of the venv
+        # launcher so external callers can survive broken or sandboxed venvs.
         manon_dir = str(Path(__file__).resolve().parent.parent.parent)
         lines.append(f"\n<!-- MANON_DIR={manon_dir} -->")
-        import sys as _sys
-        manon_python = _sys.executable
+        manon_python = _resolve_scan_python()
         lines.append(f"<!-- MANON_PYTHON={manon_python} -->")
 
         # Embed smart_analysis status marker for Skill layer

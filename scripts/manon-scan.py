@@ -12,25 +12,89 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import site
+import subprocess
 import sys
 from pathlib import Path
 
-# Add project root to sys.path so shared/ imports work
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from shared.ast.project import find_project_by_repo_id  # noqa: E402
-from shared.ast.parser_utils import ensure_parsers  # noqa: E402
-from shared.ast.scanner import scan_and_parse, SYNC_BATCH_SIZE  # noqa: E402
-
+VENV_DIR = PROJECT_ROOT / ".venv"
+REQ_FILE = PROJECT_ROOT / "mcp" / "requirements.txt"
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
+
+
+def _venv_site_packages() -> Path:
+    if os.name == "nt":
+        return VENV_DIR / "Lib" / "site-packages"
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return VENV_DIR / "lib" / version / "site-packages"
+
+
+def _scan_runtime_ready() -> bool:
+    site_packages = _venv_site_packages()
+    if not site_packages.exists():
+        return False
+
+    site.addsitedir(str(site_packages))
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+
+    try:
+        import httpx  # noqa: F401
+        import yaml  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _repair_scan_runtime() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(VENV_DIR), "--clear"],
+        check=True,
+        cwd=str(PROJECT_ROOT),
+    )
+
+    site_packages = _venv_site_packages()
+    site_packages.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "--disable-pip-version-check",
+            "--upgrade",
+            "--target",
+            str(site_packages),
+            "-r",
+            str(REQ_FILE),
+        ],
+        check=True,
+        cwd=str(PROJECT_ROOT),
+    )
+
+
+def _bootstrap_scan_runtime() -> None:
+    if _scan_runtime_ready():
+        return
+    _repair_scan_runtime()
+    if not _scan_runtime_ready():
+        raise RuntimeError("failed to bootstrap scan runtime")
 
 
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: manon-scan.py <repo_id>"}))
         sys.exit(1)
+
+    _bootstrap_scan_runtime()
+
+    from shared.ast.project import find_project_by_repo_id
+    from shared.ast.parser_utils import ensure_parsers
+    from shared.ast.scanner import SYNC_BATCH_SIZE, scan_and_parse
 
     repo_id = sys.argv[1]
 
