@@ -38,7 +38,7 @@ def scan_and_parse(
     from codeindex.parser import parse_file
     from .config import _load_scan_config
     from .parser_utils import ensure_parsers, _resolve_relative_callees, _enrich_annotations
-    from matrixone_graph.pipeline import chunk_file_from_dict
+    from .chunking import chunk_file_from_dict
 
     # Auto-install missing tree-sitter parsers
     ensure_parsers(local_path)

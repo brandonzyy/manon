@@ -37,6 +37,61 @@ _BUILTINS = frozenset({
     "bin", "vars", "dir", "staticmethod", "classmethod", "property",
 })
 
+_DEBT_EXCLUDE_PATTERNS = [
+    "**/.git/**",
+    "**/.svn/**",
+    "**/.hg/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/*.egg-info/**",
+    "**/.tox/**",
+    "**/.nox/**",
+    "**/.mypy_cache/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/node_modules/**",
+    "**/.yarn/**",
+    "**/.pnpm-store/**",
+    "**/bower_components/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/target/**",
+    "**/_build/**",
+    "**/.next/**",
+    "**/.nuxt/**",
+    "**/.output/**",
+    "**/.svelte-kit/**",
+    "**/.turbo/**",
+    "**/.gradle/**",
+    "**/.m2/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/.vs/**",
+    "**/.eclipse/**",
+    "**/htmlcov/**",
+    "**/.nyc_output/**",
+    "**/coverage/**",
+    "**/.cache/**",
+    "**/.tmp/**",
+    "**/.temp/**",
+    "**/tests/**",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/spec/**",
+    "**/e2e/**",
+    "**/cypress/**",
+    "**/indexes/**",
+    "**/saas_indexes/**",
+    "**/saas_repos/**",
+]
+
+_AUTO_EXCLUDE_PATTERNS = (
+    re.compile(r"^\.(?:venv|virtualenv)(?:[._-].+)+$"),
+    re.compile(r"^(?:venv|virtualenv)(?:[._-].+)+$"),
+)
+
 
 def _entity_module(entity_id: str) -> str:
     """Extract top-level module from entity ID (e.g. 'foo.bar.Baz' -> 'foo')."""
@@ -230,6 +285,32 @@ def _is_test_file(file_path: str) -> bool:
     return any(p in ("tests", "test", "__tests__") for p in parts[:-1])
 
 
+def _load_debt_scan_config(repo_path: Path):
+    """Load a scan config for debt analysis without importing core.ast."""
+    from codeindex.config import Config
+
+    root = repo_path.resolve()
+    config = Config.load_with_auto_setup(root)
+    excludes = set(config.exclude)
+    excludes.update(_DEBT_EXCLUDE_PATTERNS)
+    for item in root.iterdir():
+        if item.is_dir() and any(pattern.match(item.name.lower()) for pattern in _AUTO_EXCLUDE_PATTERNS):
+            excludes.add(f"**/{item.name}/**")
+
+    gitignore = root / ".gitignore"
+    if gitignore.exists():
+        for line in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("!"):
+                continue
+            pattern = line.rstrip("/")
+            excludes.add(f"**/{pattern}/**")
+            excludes.add(f"**/{pattern}")
+
+    config.exclude = sorted(excludes)
+    return config, root
+
+
 # ── TD: Static scan for tech debt markers ────────────────
 
 def scan_file(file_path: Path) -> dict[str, int]:
@@ -255,10 +336,9 @@ def scan_directory_debt(repo_path: Path) -> dict[str, int]:
     total_any = 0
     total_lines = 0
     try:
-        from core.ast.config import _load_scan_config
         from codeindex.scanner import scan_directory
 
-        config, root, _ = _load_scan_config(str(repo_path))
+        config, root = _load_debt_scan_config(repo_path)
         files = scan_directory(root, config, root).files
     except Exception:
         try:

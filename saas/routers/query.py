@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, Query
 
-from application.deep_query_service import deep_query_repo
-from application.repo_query_service import (
+from ..services.query import (
+    deep_query_repo,
     code_health_repo,
     graph_repo,
     impact_repo,
