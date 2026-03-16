@@ -50,7 +50,7 @@ def scan_files(repo_id: str) -> dict:
     if not cache_file.exists():
         raise FileNotFoundError(
             f"No scan cache at {cache_file}. "
-            "Run `python <MANON_DIR>/scripts/manon-scan.py {repo_id}` first."
+            "Run `<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py {repo_id}` first (use the Python path from manon_init output)."
         )
 
     cache_data = json.loads(cache_file.read_text(encoding="utf-8"))

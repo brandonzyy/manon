@@ -113,9 +113,12 @@ def register_init_tools(mcp):
         hooks_lines = await asyncio.to_thread(_build_hooks_lines, project_path)
         lines.extend(hooks_lines)
 
-        # Embed MANON_DIR for Skill layer to locate scripts
+        # Embed MANON_DIR and MANON_PYTHON for Skill layer to locate scripts
         manon_dir = str(Path(__file__).resolve().parent.parent.parent)
         lines.append(f"\n<!-- MANON_DIR={manon_dir} -->")
+        import sys as _sys
+        manon_python = _sys.executable
+        lines.append(f"<!-- MANON_PYTHON={manon_python} -->")
 
         # Embed smart_analysis status marker for Skill layer
         proj = get_project(project_path)
