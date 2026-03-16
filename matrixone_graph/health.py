@@ -249,8 +249,15 @@ def scan_file(file_path: Path) -> dict[str, int]:
     return result
 
 
-def scan_directory_debt(repo_path: Path) -> dict[str, int]:
-    """Scan all source files for tech debt markers. Returns totals."""
+def scan_directory_debt(repo_path: Path, timeout_seconds: float = 5.0) -> dict[str, int]:
+    """Scan all source files for tech debt markers. Returns totals.
+
+    Aborts early if scanning exceeds *timeout_seconds* to avoid blocking
+    interactive tools (e.g. MCP code_health).  Partial results are
+    extrapolated to the full file set.
+    """
+    import time
+
     total_todos = 0
     total_any = 0
     total_lines = 0
@@ -272,11 +279,24 @@ def scan_directory_debt(repo_path: Path) -> dict[str, int]:
             files = []
             for ext in ("*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.java", "*.go"):
                 files.extend(repo_path.rglob(ext))
-    for f in files:
+    file_list = list(files)
+    total_count = len(file_list)
+    scanned = 0
+    start = time.monotonic()
+    for f in file_list:
+        if time.monotonic() - start > timeout_seconds:
+            break
         h = scan_file(Path(f))
         total_todos += h.get("todos", 0)
         total_any += h.get("any_count", 0)
         total_lines += h.get("lines", 0)
+        scanned += 1
+    # Extrapolate if we timed out before scanning all files
+    if scanned < total_count and scanned > 0:
+        factor = total_count / scanned
+        total_todos = round(total_todos * factor)
+        total_any = round(total_any * factor)
+        total_lines = round(total_lines * factor)
     return {"todos": total_todos, "any_count": total_any, "total_lines": total_lines}
 
 

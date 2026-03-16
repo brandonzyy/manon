@@ -20,8 +20,11 @@ def init(client, hooks):
     _hooks = hooks
 
 
-def _scan_debt_locally(repo_id: str) -> dict | None:
-    """Compute TD metrics locally where source files are available."""
+def _scan_debt_locally(repo_id: str, timeout: float = 5.0) -> dict | None:
+    """Compute TD metrics locally where source files are available.
+
+    Capped at *timeout* seconds to avoid blocking the MCP tool call.
+    """
     found = find_project_by_repo_id(repo_id)
     if not found:
         return None
@@ -32,7 +35,7 @@ def _scan_debt_locally(repo_id: str) -> dict | None:
     try:
         from matrixone_graph.health import scan_directory_debt
 
-        return scan_directory_debt(repo_path)
+        return scan_directory_debt(repo_path, timeout_seconds=timeout)
     except Exception as e:
         log.warning("Local debt scan failed: %s", e)
         return None
@@ -55,7 +58,7 @@ def register_health_tools(mcp):
         """
         debt = _scan_debt_locally(repo_id)
         body = {"debt_metrics": debt} if debt else {}
-        result = _client._post(f"/api/v1/repos/{repo_id}/code-health", body, timeout=60)
+        result = _client._post(f"/api/v1/repos/{repo_id}/code-health", body, timeout=15)
         score = result.get("score", 0)
         dims = result.get("dimensions", [])
         grade = result.get(
