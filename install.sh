@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_PY="$SCRIPT_DIR/run_mcp.py"
+LAUNCHER="$SCRIPT_DIR/launch_mcp.sh"
 VENV_DIR="$SCRIPT_DIR/.venv"
 DEFAULT_API_URL="http://saas.matrixone.online:3700"
 
@@ -106,9 +107,9 @@ detect_platforms() {
 # --- helper: merge manon MCP entry into a JSON file ---
 write_mcp_json() {
     local target_file="$1"
-    $VENV_PYTHON - "$target_file" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+    $VENV_PYTHON - "$target_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
 import json, sys, os
-target, venv_py, server, url, key = sys.argv[1:6]
+target, launcher, url, key = sys.argv[1:5]
 cfg = {}
 if os.path.exists(target):
     with open(target, "r", encoding="utf-8") as f:
@@ -118,8 +119,8 @@ env = {"MANON_API_KEY": key}
 if url != "auto":
     env["MANON_API_URL"] = url
 cfg["mcpServers"]["manon"] = {
-    "command": venv_py,
-    "args": [server],
+    "command": "bash",
+    "args": [launcher],
     "env": env,
 }
 os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -269,9 +270,9 @@ configure_windsurf() {
 # --- Zed ---
 configure_zed() {
     local settings="$HOME/.config/zed/settings.json"
-    $VENV_PYTHON - "$settings" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+    $VENV_PYTHON - "$settings" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
 import json, sys, os
-target, venv_py, server, url, key = sys.argv[1:6]
+target, launcher, url, key = sys.argv[1:5]
 cfg = {}
 if os.path.exists(target):
     with open(target, "r", encoding="utf-8") as f:
@@ -281,7 +282,7 @@ env = {"MANON_API_KEY": key}
 if url != "auto":
     env["MANON_API_URL"] = url
 cfg["context_servers"]["manon"] = {
-    "command": {"path": venv_py, "args": [server], "env": env}
+    "command": {"path": "bash", "args": [launcher], "env": env}
 }
 os.makedirs(os.path.dirname(target), exist_ok=True)
 with open(target, "w", encoding="utf-8") as f:
@@ -293,9 +294,9 @@ PYEOF
 # --- Continue ---
 configure_continue() {
     local cfg_file="$HOME/.continue/config.json"
-    $VENV_PYTHON - "$cfg_file" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+    $VENV_PYTHON - "$cfg_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
 import json, sys, os
-target, venv_py, server, url, key = sys.argv[1:6]
+target, launcher, url, key = sys.argv[1:5]
 cfg = {}
 if os.path.exists(target):
     with open(target, "r", encoding="utf-8") as f:
@@ -305,7 +306,7 @@ env = {"MANON_API_KEY": key}
 if url != "auto":
     env["MANON_API_URL"] = url
 cfg["mcpServers"] = [s for s in cfg["mcpServers"] if s.get("name") != "manon"]
-cfg["mcpServers"].append({"name": "manon", "command": venv_py, "args": [server], "env": env})
+cfg["mcpServers"].append({"name": "manon", "command": "bash", "args": [launcher], "env": env})
 os.makedirs(os.path.dirname(target), exist_ok=True)
 with open(target, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -404,9 +405,9 @@ configure_opencode() {
     local cfg_file="$HOME/.config/opencode/opencode.json"
 
     # MCP config (OpenCode uses different format: type+command array+environment)
-    $VENV_PYTHON - "$cfg_file" "$VENV_PYTHON_NORM" "$SERVER_PY_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+    $VENV_PYTHON - "$cfg_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
 import json, sys, os
-target, venv_py, server, url, key = sys.argv[1:6]
+target, launcher, url, key = sys.argv[1:5]
 cfg = {}
 if os.path.exists(target):
     with open(target, "r", encoding="utf-8") as f:
@@ -417,7 +418,7 @@ if url != "auto":
     env["MANON_API_URL"] = url
 cfg["mcp"]["manon"] = {
     "type": "local",
-    "command": [venv_py, server],
+    "command": ["bash", launcher],
     "environment": env,
 }
 os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -519,8 +520,8 @@ configure_codex() {
         cat >> "$config_file" <<TOMLEOF
 
 [mcp_servers.manon]
-command = "$VENV_PYTHON_NORM"
-args = ["$SERVER_PY_NORM"]
+command = "bash"
+args = ["$LAUNCHER_NORM"]
 env = { MANON_API_KEY = "$API_KEY" }
 startup_timeout_sec = 30.0
 tool_timeout_sec = 120.0
@@ -727,6 +728,7 @@ fi
 # normalize paths for JSON
 SERVER_PY_NORM=$(echo "$SERVER_PY" | sed 's|\\|/|g')
 VENV_PYTHON_NORM=$(echo "$VENV_PYTHON" | sed 's|\\|/|g')
+LAUNCHER_NORM=$(echo "$LAUNCHER" | sed 's|\\|/|g')
 
 # ── Configure each platform ──────────────────────────
 CONFIGURED=()
