@@ -83,7 +83,7 @@ exit /b %errorlevel%
 ::PS head1 "Dependencies"
 ::PS if (-not (Test-Path $VENV_DIR)) { & $pythonCmd -m venv $VENV_DIR }
 ::PS if (Test-Path "$VENV_DIR\Scripts\python.exe") { $VENV_PYTHON = "$VENV_DIR\Scripts\python.exe" } else { err "Failed to locate venv python" }
-::PS & $VENV_PYTHON -m pip install -q -r "$SCRIPT_DIR\mcp\requirements.txt"
+::PS & $VENV_PYTHON -m pip install -q -r "$SCRIPT_DIR\manon_mcp\requirements.txt"
 ::PS info "Dependencies installed"
 ::PS # ── Check for existing API key ────────────────────────
 ::PS $API_KEY = ""; $API_URL = "auto"
@@ -176,7 +176,7 @@ exit /b %errorlevel%
 ::PS $CU = if ($API_URL -eq "auto") { $DEFAULT_API_URL } else { $API_URL }
 ::PS $HC = & $VENV_PYTHON -c "import httpx`ntry:`n    r=httpx.get('$CU/health',timeout=5)`n    print(r.status_code)`nexcept Exception as e:`n    print(f'error:{e}')" 2>&1
 ::PS if ($HC -eq "200") { info "API reachable" } else { warn "API not reachable ($HC) -- start the server first" }
-::PS $MV = & $VENV_PYTHON -c "import subprocess`nr=subprocess.run(['git','rev-list','--count','HEAD'],cwd=r'$SCRIPT_DIR',capture_output=True,text=True)`nprint(f'0.1.{r.stdout.strip()}' if r.returncode==0 else '0.1.0')" 2>&1; if (-not $MV) { $MV = "0.1.0" }
+::PS $MV = & $VENV_PYTHON -c "from pathlib import Path`nimport subprocess`nvf=Path(r'$SCRIPT_DIR') / 'VERSION'`ntry:`n    v=vf.read_text(encoding='utf-8').strip()`n    print(v if v else '1.0.0')`nexcept Exception:`n    r=subprocess.run(['git','rev-list','--count','HEAD'],cwd=r'$SCRIPT_DIR',capture_output=True,text=True)`n    print(f'1.0.{r.stdout.strip()}' if r.returncode==0 else '1.0.0')" 2>&1; if (-not $MV) { $MV = "1.0.0" }
 ::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host "  Manon v$MV installed"; Write-Host "  Configured: $($CONFIGURED -join ', ')"; Write-Host ""
 ::PS foreach ($p in $CONFIGURED) { switch ($p) { "claude-code" { Write-Host "  Claude Code:  type /manon to initialize" } "cursor" { Write-Host "  Cursor:       manon_deep_query available" } "windsurf" { Write-Host "  Windsurf:     manon_deep_query available" } "zed" { Write-Host "  Zed:          manon tools available" } "continue" { Write-Host "  Continue:     manon tools available" } "codebuddy" { Write-Host "  CodeBuddy:    type /manon to initialize" } "opencode" { Write-Host "  OpenCode:     type /manon to initialize" } "codex" { Write-Host "  Codex:        manon tools available via MCP" } } }
 ::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host ""

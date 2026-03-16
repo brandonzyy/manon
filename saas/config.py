@@ -4,15 +4,17 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .runtime import RUNTIME_ROOT
+
 
 class SaasSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SAAS_")
 
     port: int = 3700
-    db_path: str = "./saas.db"
-    repos_dir: str = "./saas_repos"
-    index_dir: str = "./saas_indexes"
-    data_dir: str = "./saas_data"          # JSONL training logs
+    db_path: str = str(RUNTIME_ROOT / "saas.db")
+    repos_dir: str = str(RUNTIME_ROOT / "repos")
+    index_dir: str = str(RUNTIME_ROOT / "indexes")
+    data_dir: str = str(RUNTIME_ROOT / "data")  # JSONL training logs
     embedding_url: str = "http://127.0.0.1:3002"
 
     # LLM (OpenAI-compatible)
@@ -49,8 +51,10 @@ class SaasSettings(BaseSettings):
         return {"free": self.quota_deep_query_free, "pro": self.quota_deep_query_pro, "enterprise": self.quota_deep_query_enterprise}.get(tier, self.quota_deep_query_free)
 
     def ensure_dirs(self) -> None:
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(self.repos_dir).mkdir(parents=True, exist_ok=True)
         Path(self.index_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
 
 settings = SaasSettings()

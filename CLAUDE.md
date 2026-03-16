@@ -8,8 +8,8 @@ Manon (马浓) 是 AI 架构师工具，FastAPI 后端 + 单页 HTML 前端 + We
 
 ```
 web/       — Web 客户端 (FastAPI + 前端 + coach + worker, :3600)
-mcp/       — MCP 服务端 (IDE 集成, Claude Code)
-shared/    — 共享模块 (saas_client, ast_sync)
+manon_mcp/ — MCP 服务端 (IDE 集成, Claude Code)
+core/      — 核心模块 (saas_client, ast_sync)
 saas/      — 数据服务后端 (:3700)
 ```
 

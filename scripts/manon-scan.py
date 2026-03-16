@@ -21,7 +21,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 VENV_DIR = PROJECT_ROOT / ".venv"
-REQ_FILE = PROJECT_ROOT / "mcp" / "requirements.txt"
+REQ_FILE = PROJECT_ROOT / "manon_mcp" / "requirements.txt"
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 
 
@@ -92,9 +92,9 @@ def main():
 
     _bootstrap_scan_runtime()
 
-    from shared.ast.project import find_project_by_repo_id
-    from shared.ast.parser_utils import ensure_parsers
-    from shared.ast.scanner import SYNC_BATCH_SIZE, scan_and_parse
+    from core.ast.project import find_project_by_repo_id
+    from core.ast.parser_utils import ensure_parsers
+    from core.ast.scanner import SYNC_BATCH_SIZE, scan_and_parse
 
     repo_id = sys.argv[1]
 

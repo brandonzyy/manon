@@ -156,7 +156,7 @@ install.bat
   "mcpServers": {
     "manon": {
       "command": "python",
-      "args": ["/path/to/manon/mcp/server.py"],
+      "args": ["/path/to/manon/run_mcp.py"],
       "env": {}
     }
   }

@@ -2,7 +2,7 @@
 
 ## 背景
 
-从 v0.2.2 开始，Manon 将 codeindex 从外部依赖改为内置包（`mcp/codeindex/`）。
+从 v0.2.2 开始，Manon 将 codeindex 从外部依赖改为仓库内置包（`codeindex/`）。
 
 ## 为什么内置？
 
@@ -28,8 +28,8 @@ manon/
 │   │   └── parsers/
 │   ├── _tools.py
 │   └── ...
-├── shared/
-│   └── ast_sync.py
+├── core/
+│   └── ast/
 └── requirements.txt        # 移除 codeindex 依赖
 ```
 
@@ -44,9 +44,9 @@ from codeindex.scanner import scan_directory
 
 **新代码**：
 ```python
-from mcp.codeindex.detector import quick_detect_languages
-from mcp.codeindex.parser import parse_file
-from mcp.codeindex.scanner import scan_directory
+from codeindex.detector import quick_detect_languages
+from codeindex.parser import parse_file
+from codeindex.scanner import scan_directory
 ```
 
 ### 3. 优化内容
@@ -61,7 +61,7 @@ from mcp.codeindex.scanner import scan_directory
 - PyPI 优先策略（国内镜像作为备选）
 - 更好的错误处理
 
-#### ast_sync.py
+#### core.ast
 - 新增内存缓存 `_LANG_CACHE`
 - 避免重复扫描同一项目
 
@@ -96,8 +96,8 @@ from mcp.codeindex.scanner import scan_directory
 ```bash
 cd ~/Desktop/matrixone/infrastructure/manon
 python -c "
-from mcp.codeindex.detector import quick_detect_languages
-from mcp.codeindex.parser import FILE_EXTENSIONS
+from codeindex.detector import quick_detect_languages
+from codeindex.parser import FILE_EXTENSIONS
 from pathlib import Path
 result = quick_detect_languages(Path('.'), FILE_EXTENSIONS, max_files=500)
 print(f'Detected languages: {result}')
@@ -111,7 +111,7 @@ Detected languages: {'python', 'javascript'}
 
 ## 故障排除
 
-### 问题：导入错误 "No module named 'mcp.codeindex'"
+### 问题：导入错误 "No module named 'codeindex'"
 
 **原因**：MCP 服务器未重启，仍在使用旧代码
 
@@ -137,5 +137,5 @@ Detected languages: {'python', 'javascript'}
 ## 参考
 
 - 原始 codeindex: https://github.com/brandonzyy/codeindex
-- 内置版本: `mcp/codeindex/`
+- 内置版本: `codeindex/`
 - 提交记录: bb5cdaf

@@ -11,6 +11,7 @@ build/
 web/settings.json
 indexes/
 manon.log
+.manon_runtime/
 
 # runtime artifacts
 node_modules/

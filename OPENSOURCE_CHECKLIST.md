@@ -18,10 +18,10 @@
 
 **问题文件：**
 - `saas/config.py:19` - `llm_api_url: str = "https://api.matrixone.online/v1/chat/completions"`
-- `mcp/_config.py:43` - `API_URL_CN = "http://saas.matrixone.online:3700"`
+- `manon_mcp/_config.py:43` - `API_URL_CN = "http://saas.matrixone.online:3700"`
 - `install.sh:14` - `DEFAULT_API_URL="http://saas.matrixone.online:3700"`
 - `install.bat:23` - `DEFAULT_API_URL = "http://saas.matrixone.online:3700"`
-- `mcp/hooks/post_push.py:61` - `return url or "http://saas.matrixone.online:3700"`
+- `manon_mcp/hooks/post_push.py:61` - `return url or "http://saas.matrixone.online:3700"`
 
 **建议修改：**
 ```python

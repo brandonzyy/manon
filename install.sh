@@ -512,6 +512,15 @@ SKILLEOF
 configure_codex() {
     local config_file="$HOME/.codex/config.toml"
     local agents_file="$HOME/AGENTS.md"
+    local codex_command="bash"
+    local codex_args="\"$LAUNCHER_NORM\""
+
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            codex_command="$VENV_PYTHON_NORM"
+            codex_args="\"$SERVER_PY_NORM\""
+            ;;
+    esac
 
     # MCP config — append [mcp_servers.manon] to config.toml if not present
     if grep -q '\[mcp_servers\.manon\]' "$config_file" 2>/dev/null; then
@@ -520,8 +529,8 @@ configure_codex() {
         cat >> "$config_file" <<TOMLEOF
 
 [mcp_servers.manon]
-command = "bash"
-args = ["$LAUNCHER_NORM"]
+command = "$codex_command"
+args = [$codex_args]
 env = { MANON_API_KEY = "$API_KEY" }
 startup_timeout_sec = 30.0
 tool_timeout_sec = 120.0
@@ -689,11 +698,11 @@ fi
 if [ -f "$VENV_DIR/bin/python" ]; then
     VENV_PYTHON="$VENV_DIR/bin/python"
 elif [ -f "$VENV_DIR/Scripts/python.exe" ]; then
-    VENV_PYTHON="$VENV_DIR/Scripts/python"
+    VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
 else
     err "Failed to locate venv python"
 fi
-REQ_FILE="$SCRIPT_DIR/mcp/requirements.txt"
+REQ_FILE="$SCRIPT_DIR/manon_mcp/requirements.txt"
 [ -f "$REQ_FILE" ] || err "requirements.txt not found: $REQ_FILE"
 "$VENV_PYTHON" -m pip install -q -r "$REQ_FILE"
 info "Dependencies installed"
@@ -768,10 +777,16 @@ fi
 
 # ── Summary ───────────────────────────────────────────
 MANON_VERSION=$("$VENV_PYTHON" -c "
+from pathlib import Path
 import subprocess
-r = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], cwd='$SCRIPT_DIR', capture_output=True, text=True)
-print(f'0.1.{r.stdout.strip()}' if r.returncode == 0 else '0.1.0')
-" 2>/dev/null) || MANON_VERSION="0.1.0"
+version_file = Path(r'$SCRIPT_DIR') / 'VERSION'
+try:
+    value = version_file.read_text(encoding='utf-8').strip()
+    print(value if value else '1.0.0')
+except Exception:
+    r = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], cwd=r'$SCRIPT_DIR', capture_output=True, text=True)
+    print(f'1.0.{r.stdout.strip()}' if r.returncode == 0 else '1.0.0')
+" 2>/dev/null) || MANON_VERSION="1.0.0"
 echo ""
 echo "  ────────────────────────────────────"
 echo "  Manon v${MANON_VERSION} installed"

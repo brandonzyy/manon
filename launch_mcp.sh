@@ -54,7 +54,7 @@ if needs_rebuild; then
     fi
 
     # Install dependencies
-    REQ_FILE="$SCRIPT_DIR/mcp/requirements.txt"
+REQ_FILE="$SCRIPT_DIR/manon_mcp/requirements.txt"
     if [ -f "$REQ_FILE" ]; then
         "$VENV_PYTHON" -m pip install -q -r "$REQ_FILE"
     fi

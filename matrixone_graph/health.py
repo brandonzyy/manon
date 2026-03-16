@@ -255,7 +255,7 @@ def scan_directory_debt(repo_path: Path) -> dict[str, int]:
     total_any = 0
     total_lines = 0
     try:
-        from shared.ast.config import _load_scan_config
+        from core.ast.config import _load_scan_config
         from codeindex.scanner import scan_directory
 
         config, root, _ = _load_scan_config(str(repo_path))

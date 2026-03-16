@@ -83,7 +83,7 @@ def _module_from_rel_path(rel_path: str) -> str:
 def chunk_file_from_dict(source: str, parse_result_dict: dict, rel_path: str) -> list[dict]:
     """Client-side chunking: source + parse_result dict + rel_path → chunk dict list.
 
-    Used by MCP client (shared/ast/scanner.py) to chunk locally before sending to saas.
+    Used by the MCP client (`core/ast/scanner.py`) to chunk locally before sending to saas.
     """
     module = _module_from_rel_path(rel_path)
     symbols = parse_result_dict.get("symbols", [])
@@ -394,4 +394,3 @@ async def query(
         relations=all_rels, chunks=matched_chunks,
         context=_format_query_context(matched_entities, all_rels, matched_chunks),
     )
-

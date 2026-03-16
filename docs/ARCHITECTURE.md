@@ -13,7 +13,7 @@ Manon is an AI-powered code intelligence tool with three main components:
 ┌────────────────────▼─────────────────────────────────┐
 │              Manon MCP Server (mcp/)                 │
 │  - Tool handlers (search, graph, impact, etc.)      │
-│  - AST synchronization (shared/ast_sync.py)         │
+│  - AST synchronization (core/ast_sync.py)           │
 └────────────────────┬─────────────────────────────────┘
                      │ HTTP/REST
 ┌────────────────────▼─────────────────────────────────┐
@@ -34,7 +34,7 @@ Manon is an AI-powered code intelligence tool with three main components:
 
 ## Component Details
 
-### 1. MCP Server (`mcp/`)
+### 1. MCP Server (`manon_mcp/`)
 
 **Purpose**: IDE integration layer via Model Context Protocol
 
@@ -63,11 +63,11 @@ Manon is an AI-powered code intelligence tool with three main components:
 - SQLite (`saas.db`) - Metadata, users, repos
 - File system - AST indexes, embeddings
 
-### 3. Shared Modules (`shared/`)
+### 3. Core Support Modules (`core/`)
 
 **Purpose**: Common utilities
 
-- `ast_sync.py` - AST extraction via codeindex
+- `ast/` - AST extraction via codeindex
 - `saas_client.py` - HTTP client for SaaS API
 
 ### 4. Web Client (`web/`)
@@ -163,7 +163,7 @@ Manon is an AI-powered code intelligence tool with three main components:
 
 ### Adding New Tools
 
-1. Create handler in `mcp/tools/`
+1. Create handler in `manon_mcp/tools/`
 2. Register in `run_mcp.py`
 3. Add to skill/rules documentation
 

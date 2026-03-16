@@ -8,7 +8,7 @@ Usage:
     tracer.save("dynamic-deps.json")
 
 The output JSON maps "caller->callee" to call count, e.g.:
-    {"mcp._tools.register->mcp._client._get": 3, ...}
+    {"manon_mcp._tools.register->manon_mcp._client._get": 3, ...}
 """
 
 from __future__ import annotations

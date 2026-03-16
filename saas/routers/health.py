@@ -28,7 +28,7 @@ def _get_latest_version() -> str:
         )
         if result.returncode == 0:
             count = result.stdout.strip()
-            v = f"0.1.{count}"
+            v = f"1.0.{count}"
             # Write VERSION file so it survives without .git
             try:
                 version_file.write_text(v)

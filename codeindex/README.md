@@ -13,7 +13,7 @@ This directory contains an embedded version of codeindex, optimized for Manon's 
 
 - `detector.py`: Fast language detection with `max_files` limit (500 files, 5 depth max)
 - `parser_installer.py`: Reduced timeout (30s), PyPI-first strategy
-- Memory caching in `ast_sync.py` to avoid repeated scans
+- Memory caching in `core.ast` to avoid repeated scans
 
 ## Modules
 
@@ -27,9 +27,9 @@ This directory contains an embedded version of codeindex, optimized for Manon's 
 ## Usage
 
 ```python
-from mcp.codeindex.detector import quick_detect_languages
-from mcp.codeindex.parser import parse_file, FILE_EXTENSIONS
-from mcp.codeindex.scanner import scan_directory
+from codeindex.detector import quick_detect_languages
+from codeindex.parser import parse_file, FILE_EXTENSIONS
+from codeindex.scanner import scan_directory
 ```
 
 ## Original Source

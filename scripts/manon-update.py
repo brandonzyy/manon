@@ -80,7 +80,7 @@ def main():
         return
 
     # Step 2: pip install
-    req_file = INSTALL_DIR / "mcp" / "requirements.txt"
+    req_file = INSTALL_DIR / "manon_mcp" / "requirements.txt"
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(req_file)],
@@ -89,7 +89,7 @@ def main():
         lines.append("依赖已更新。")
         ok = True
     except subprocess.TimeoutExpired:
-        lines.append("pip install 超时，请手动执行: pip install -r mcp/requirements.txt")
+        lines.append("pip install 超时，请手动执行: pip install -r manon_mcp/requirements.txt")
     except Exception as e:
         lines.append(f"依赖安装失败: {e}")
 
