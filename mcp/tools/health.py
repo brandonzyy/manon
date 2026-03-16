@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from shared.ast_sync import find_project_by_repo_id
@@ -12,6 +13,10 @@ log = logging.getLogger("manon-mcp")
 _client = None
 _hooks = None
 
+# Cached debt metrics from background scan
+_debt_cache: dict[str, dict] = {}
+_debt_lock = threading.Lock()
+
 
 def init(client, hooks):
     """Inject dependencies."""
@@ -20,11 +25,8 @@ def init(client, hooks):
     _hooks = hooks
 
 
-def _scan_debt_locally(repo_id: str, timeout: float = 5.0) -> dict | None:
-    """Compute TD metrics locally where source files are available.
-
-    Capped at *timeout* seconds to avoid blocking the MCP tool call.
-    """
+def _scan_debt_locally(repo_id: str) -> dict | None:
+    """Compute TD metrics locally where source files are available."""
     found = find_project_by_repo_id(repo_id)
     if not found:
         return None
@@ -35,10 +37,32 @@ def _scan_debt_locally(repo_id: str, timeout: float = 5.0) -> dict | None:
     try:
         from matrixone_graph.health import scan_directory_debt
 
-        return scan_directory_debt(repo_path, timeout_seconds=timeout)
+        return scan_directory_debt(repo_path)
     except Exception as e:
         log.warning("Local debt scan failed: %s", e)
         return None
+
+
+def _scan_debt_background(repo_id: str) -> None:
+    """Run debt scan in a background thread and cache the result."""
+    try:
+        result = _scan_debt_locally(repo_id)
+        if result:
+            with _debt_lock:
+                _debt_cache[repo_id] = result
+            log.info("Background debt scan done for %s", repo_id)
+    except Exception as e:
+        log.warning("Background debt scan failed: %s", e)
+
+
+def _get_cached_debt(repo_id: str) -> dict | None:
+    """Return cached debt metrics if available, and trigger a background refresh."""
+    with _debt_lock:
+        cached = _debt_cache.get(repo_id)
+    # Always refresh in background for next call
+    t = threading.Thread(target=_scan_debt_background, args=(repo_id,), daemon=True)
+    t.start()
+    return cached
 
 
 def register_health_tools(mcp):
@@ -56,7 +80,8 @@ def register_health_tools(mcp):
         Args:
             repo_id: 仓库 ID（从 manon_repos_list 获取）
         """
-        debt = _scan_debt_locally(repo_id)
+        # Use cached debt (non-blocking); background thread refreshes for next call
+        debt = _get_cached_debt(repo_id)
         body = {"debt_metrics": debt} if debt else {}
         result = _client._post(f"/api/v1/repos/{repo_id}/code-health", body, timeout=15)
         score = result.get("score", 0)

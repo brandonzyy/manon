@@ -6,7 +6,7 @@ Dimensions (weight):
   FI (15) — Fan-in Concentration: high in-degree entity ratio
   DC (10) — Dead Code: zero in-degree non-module entities
   TC (15) — Test Coverage: entities referenced by test files
-  FS (10) — Function Size: oversized function ratio (>80 lines)
+  FS (10) — Function Size: oversized function ratio (>50 lines)
   TD (15) — Tech Debt: TODO/HACK/FIXME/`:any` density
   ID (10) — Inheritance Depth: max inheritance chain depth
 
@@ -179,9 +179,9 @@ def _compute_tc(nodes: dict, edges: list, non_module_entities: list) -> dict:
 
 
 def _compute_fs(nodes: dict) -> dict:
-    """FS: Function Size — oversized function ratio (>80 lines)."""
+    """FS: Function Size — oversized function ratio (>50 lines)."""
     functions = [d for _, d in nodes.items() if d.get("kind") in ("function", "method")]
-    oversized = [f for f in functions if (f.get("line_end", 0) - f.get("line_start", 0)) > 80]
+    oversized = [f for f in functions if (f.get("line_end", 0) - f.get("line_start", 0)) > 50]
     ratio = len(oversized) / max(len(functions), 1)
     return {"ratio": round(ratio, 3), "oversized": len(oversized), "total": len(functions)}
 
@@ -249,15 +249,8 @@ def scan_file(file_path: Path) -> dict[str, int]:
     return result
 
 
-def scan_directory_debt(repo_path: Path, timeout_seconds: float = 5.0) -> dict[str, int]:
-    """Scan all source files for tech debt markers. Returns totals.
-
-    Aborts early if scanning exceeds *timeout_seconds* to avoid blocking
-    interactive tools (e.g. MCP code_health).  Partial results are
-    extrapolated to the full file set.
-    """
-    import time
-
+def scan_directory_debt(repo_path: Path) -> dict[str, int]:
+    """Scan all source files for tech debt markers. Returns totals."""
     total_todos = 0
     total_any = 0
     total_lines = 0
@@ -279,24 +272,11 @@ def scan_directory_debt(repo_path: Path, timeout_seconds: float = 5.0) -> dict[s
             files = []
             for ext in ("*.py", "*.ts", "*.tsx", "*.js", "*.jsx", "*.java", "*.go"):
                 files.extend(repo_path.rglob(ext))
-    file_list = list(files)
-    total_count = len(file_list)
-    scanned = 0
-    start = time.monotonic()
-    for f in file_list:
-        if time.monotonic() - start > timeout_seconds:
-            break
+    for f in files:
         h = scan_file(Path(f))
         total_todos += h.get("todos", 0)
         total_any += h.get("any_count", 0)
         total_lines += h.get("lines", 0)
-        scanned += 1
-    # Extrapolate if we timed out before scanning all files
-    if scanned < total_count and scanned > 0:
-        factor = total_count / scanned
-        total_todos = round(total_todos * factor)
-        total_any = round(total_any * factor)
-        total_lines = round(total_lines * factor)
     return {"todos": total_todos, "any_count": total_any, "total_lines": total_lines}
 
 
@@ -346,9 +326,9 @@ def _score_tc(ratio: float) -> int:
 
 
 def _score_fs(ratio: float) -> int:
-    if ratio <= 0.08: return 10
-    if ratio <= 0.15: return 8
-    if ratio <= 0.25: return 6
+    if ratio <= 0.05: return 10
+    if ratio <= 0.1: return 8
+    if ratio <= 0.2: return 6
     return 4
 
 
