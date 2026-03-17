@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
-from manon_mcp._hooks import _PRE_SEARCH_HOOK, _PRE_EDIT_HOOK, _persist_api_config, _install_hook
+from manon_mcp._hooks import _PRE_SEARCH_HOOK, _POST_COMMIT_HOOK, _persist_api_config, _install_hook
 from manon_mcp._tools import _write_update_status, _read_update_status, _UPDATE_STATUS_FILE
 from manon_mcp.tools.impact import _detect_git_root, _find_changed_symbols
 from manon_mcp.tools.init_helpers import _fmt_stats
@@ -62,8 +62,8 @@ class TestHookScripts:
     def test_pre_search_hook_is_valid_python(self):
         compile(_PRE_SEARCH_HOOK, "<pre_search>", "exec")
 
-    def test_pre_edit_hook_is_valid_python(self):
-        compile(_PRE_EDIT_HOOK, "<pre_edit>", "exec")
+    def test_post_commit_hook_is_valid_python(self):
+        compile(_POST_COMMIT_HOOK, "<post_commit>", "exec")
 
 
 class TestPersistApiConfig:

@@ -31,48 +31,6 @@ sys.exit(2)
 '''
 
 
-_PRE_EDIT_HOOK = '''\
-"""PreToolUse hook: smart check before editing code."""
-import json
-import sys
-
-data = json.load(sys.stdin)
-tool_name = data.get("tool_name", "")
-params = data.get("parameters", {})
-fp = params.get("file_path", "")
-
-non_code = (".json", ".yaml", ".yml", ".md", ".txt", ".xml", ".toml", ".ini", ".cfg")
-if any(fp.endswith(ext) for ext in non_code):
-    print(json.dumps({"continue": True}))
-    sys.exit(0)
-
-code_exts = (".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp")
-if not any(fp.endswith(ext) for ext in code_exts):
-    print(json.dumps({"continue": True}))
-    sys.exit(0)
-
-if tool_name == "Write":
-    print(json.dumps({"continue": True, "message": "Use manon_search before creating related code when context is unclear."}))
-    sys.exit(0)
-
-if tool_name == "Edit":
-    old = params.get("old_string", "")
-    new = params.get("new_string", "")
-    critical = ["def ", "class ", "interface ", "import ", "from ", "export ", "function ", "async def", "public ", "private "]
-    has_critical = any(token in old or token in new for token in critical)
-    lines = max(old.count("\\n") + 1, new.count("\\n") + 1)
-    if has_critical or lines > 10:
-        print(
-            "Hook rule: inspect context with manon_search/manon_graph before large or structural edits.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    print(json.dumps({"continue": True, "message": "Use manon_search first if more context is needed."}))
-    sys.exit(0)
-
-print(json.dumps({"continue": True}))
-'''
-
 
 _POST_COMMIT_HOOK = '''\
 """PostToolUse hook: suggest manon_impact after successful git commit."""
@@ -157,27 +115,25 @@ def _install_claude_hooks() -> str | None:
     try:
         hooks_dir.mkdir(parents=True, exist_ok=True)
         search_hook = hooks_dir / "pre_search.py"
-        edit_hook = hooks_dir / "pre_edit.py"
         agent_hook = hooks_dir / "pre_agent_plan.py"
         commit_hook = hooks_dir / "post_commit.py"
         search_path = str(search_hook).replace("\\", "/")
-        edit_path = str(edit_hook).replace("\\", "/")
         agent_path = str(agent_hook).replace("\\", "/")
         commit_path = str(commit_hook).replace("\\", "/")
 
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
-        edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
         agent_hook.write_text(_PRE_AGENT_PLAN_HOOK, encoding="utf-8")
         commit_hook.write_text(_POST_COMMIT_HOOK, encoding="utf-8")
+
+        # Clean up deprecated hook file
+        old_edit_hook = hooks_dir / "pre_edit.py"
+        if old_edit_hook.exists():
+            old_edit_hook.unlink()
 
         desired_pre = [
             {
                 "matcher": "Grep|Glob",
                 "hooks": [{"type": "command", "command": f"python {search_path}"}],
-            },
-            {
-                "matcher": "Edit|Write",
-                "hooks": [{"type": "command", "command": f"python {edit_path}"}],
             },
             {
                 "matcher": "Agent",
