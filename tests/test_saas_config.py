@@ -115,6 +115,41 @@ class TestSaasSettings:
             s = SaasSettings()
             assert s.port == 8888
 
+    def test_legacy_manon_llm_env_names(self):
+        """Legacy MANON_LLM_* env names should still work."""
+        with patch.dict(
+            "os.environ",
+            {
+                "MANON_LLM_API_URL": "http://legacy-llm.test/v1/chat/completions",
+                "MANON_LLM_MODEL": "legacy-model",
+                "MANON_LLM_API_KEY": "legacy-key",
+            },
+            clear=False,
+        ):
+            s = SaasSettings()
+            assert s.llm_api_url == "http://legacy-llm.test/v1/chat/completions"
+            assert s.llm_model == "legacy-model"
+            assert s.llm_api_key == "legacy-key"
+
+    def test_saas_llm_env_names_override_legacy(self):
+        """SAAS_LLM_* env names should override legacy MANON_LLM_* values."""
+        with patch.dict(
+            "os.environ",
+            {
+                "SAAS_LLM_API_URL": "http://saas-llm.test/v1/chat/completions",
+                "SAAS_LLM_MODEL": "saas-model",
+                "SAAS_LLM_API_KEY": "saas-key",
+                "MANON_LLM_API_URL": "http://legacy-llm.test/v1/chat/completions",
+                "MANON_LLM_MODEL": "legacy-model",
+                "MANON_LLM_API_KEY": "legacy-key",
+            },
+            clear=False,
+        ):
+            s = SaasSettings()
+            assert s.llm_api_url == "http://saas-llm.test/v1/chat/completions"
+            assert s.llm_model == "saas-model"
+            assert s.llm_api_key == "saas-key"
+
     def test_custom_settings(self):
         """Should accept custom settings."""
         s = SaasSettings(
