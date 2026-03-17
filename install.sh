@@ -230,6 +230,15 @@ $MANON_RULES
 - 如果不确定，偏向 index（宁多勿少）
 SKILLEOF
     info "Claude Code /manon Skill installed"
+
+    # Install Claude Code hooks (PreToolUse + PostToolUse)
+    "$VENV_PYTHON" - "$SCRIPT_DIR" <<'PYEOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+from manon_mcp._hooks import _install_claude_hooks
+result = _install_claude_hooks()
+PYEOF
+    info "Claude Code hooks installed (search/edit/agent/commit→impact)"
 }
 
 # --- Cursor ---
