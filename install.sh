@@ -649,7 +649,7 @@ fi
 info "Detected: ${PLATFORMS[*]}"
 
 # ── Config (fully automatic) ──────────────────────────
-API_URL="auto"
+API_URL="$DEFAULT_API_URL"
 API_KEY=""
 
 # ── Check for existing key ────────────────────────────
@@ -724,7 +724,6 @@ if [ -z "$API_KEY" ]; then
     head1 "Auto-register"
     # use CN endpoint for registration (always reachable from both regions)
     REG_URL="$API_URL"
-    [ "$REG_URL" = "auto" ] && REG_URL="$DEFAULT_API_URL"
     REG_RESULT=$("$VENV_PYTHON" -c "
 import httpx, json, sys
 try:
@@ -771,7 +770,6 @@ done
 # ── Verify connectivity ──────────────────────────────
 head1 "Connectivity"
 CHECK_URL="$API_URL"
-[ "$CHECK_URL" = "auto" ] && CHECK_URL="$DEFAULT_API_URL"
 HTTP_CODE=$("$VENV_PYTHON" -c "
 import httpx
 try:

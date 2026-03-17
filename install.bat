@@ -87,7 +87,7 @@ exit /b %errorlevel%
 ::PS & $VENV_PYTHON -m pip install -q -r "$SCRIPT_DIR\manon_mcp\requirements.txt"
 ::PS info "Dependencies installed"
 ::PS # ── Check for existing API key ────────────────────────
-::PS $API_KEY = ""; $API_URL = "auto"
+::PS $API_KEY = ""; $API_URL = $DEFAULT_API_URL
 ::PS foreach ($cfg in @("$HOME_DIR\.claude.json","$HOME_DIR\.claude\settings.json","$HOME_DIR\.cursor\mcp.json","$HOME_DIR\.codeium\windsurf\mcp_config.json","$HOME_DIR\.windsurf\mcp_config.json","$HOME_DIR\.config\opencode\opencode.json","$HOME_DIR\.codex\config.toml")) {
 ::PS     if (Test-Path $cfg) {
 ::PS         $key = & $VENV_PYTHON -c "import json,re,sys`nf=sys.argv[1]`ntry:`n    if f.endswith('.toml'):`n        text=open(f,encoding='utf-8').read()`n        m=re.search(r'MANON_API_KEY\s*=\s*\x22(msk_[^\x22]+)\x22',text)`n        if m: print(m.group(1))`n    else:`n        d=json.load(open(f,encoding='utf-8'))`n        k=d.get('mcpServers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n        if not k: k=d.get('mcp',{}).get('manon',{}).get('environment',{}).get('MANON_API_KEY','')`n        if k.startswith('msk_'): print(k)`nexcept: pass" "$cfg" 2>`$null
@@ -97,7 +97,7 @@ exit /b %errorlevel%
 ::PS # ── Auto-register ─────────────────────────────────────
 ::PS if (-not $API_KEY) {
 ::PS     head1 "Auto-register"
-::PS     $REG_URL = if ($API_URL -eq "auto") { $DEFAULT_API_URL } else { $API_URL }
+::PS     $REG_URL = $API_URL
 ::PS     $REG_RESULT = & $VENV_PYTHON -c "import httpx,sys`ntry:`n    r=httpx.post('$REG_URL/api/v1/register',json={'name':'$env:USERNAME'},timeout=10)`n    r.raise_for_status()`n    print(r.json()['api_key'])`nexcept Exception as e:`n    print(f'FAIL:{e}',file=sys.stderr);sys.exit(1)" 2>&1
 ::PS     if ($REG_RESULT -and $REG_RESULT.Trim().StartsWith("msk_")) { $API_KEY = $REG_RESULT.Trim(); info "Auto-registered, API key: $($API_KEY.Substring(0,12))..." }
 ::PS     else { warn "Auto-register failed ($REG_RESULT) -- set key manually later"; $API_KEY = "" }
@@ -176,7 +176,7 @@ exit /b %errorlevel%
 ::PS }
 ::PS # ── Connectivity + summary ────────────────────────────
 ::PS head1 "Connectivity"
-::PS $CU = if ($API_URL -eq "auto") { $DEFAULT_API_URL } else { $API_URL }
+::PS $CU = $API_URL
 ::PS $HC = & $VENV_PYTHON -c "import httpx`ntry:`n    r=httpx.get('$CU/health',timeout=5)`n    print(r.status_code)`nexcept Exception as e:`n    print(f'error:{e}')" 2>&1
 ::PS if ($HC -eq "200") { info "API reachable" } else { warn "API not reachable ($HC) -- start the server first" }
 ::PS $MV = & $VENV_PYTHON -c "from pathlib import Path`nimport subprocess`nvf=Path(r'$SCRIPT_DIR') / 'VERSION'`ntry:`n    v=vf.read_text(encoding='utf-8').strip()`n    print(v if v else '1.0.0')`nexcept Exception:`n    r=subprocess.run(['git','rev-list','--count','HEAD'],cwd=r'$SCRIPT_DIR',capture_output=True,text=True)`n    print(f'1.0.{r.stdout.strip()}' if r.returncode==0 else '1.0.0')" 2>&1; if (-not $MV) { $MV = "1.0.0" }
