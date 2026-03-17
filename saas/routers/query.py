@@ -7,11 +7,12 @@ from ..services.query import (
     deep_query_repo,
     code_health_repo,
     graph_repo,
+    impact_local_repo,
     impact_repo,
     search_repo,
 )
 from ..auth import TenantContext, require_tenant
-from ..models import DeepQueryRequest
+from ..models import DeepQueryRequest, ImpactLocalRequest
 
 router = APIRouter(prefix="/api/v1/repos/{repo_id}", tags=["query"])
 
@@ -56,6 +57,22 @@ async def code_health(
     body: dict | None = Body(None),
 ):
     return await code_health_repo(repo_id, ctx=ctx, body=body)
+
+
+@router.post("/impact-local")
+async def impact_local(
+    repo_id: str,
+    body: ImpactLocalRequest,
+    ctx: TenantContext = Depends(require_tenant),
+):
+    return await impact_local_repo(
+        repo_id,
+        commit_info=body.commit_info,
+        changed_files=body.changed_files,
+        changed_symbols=body.changed_symbols,
+        max_depth=body.max_depth,
+        ctx=ctx,
+    )
 
 
 @router.post("/deep-query")

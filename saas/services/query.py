@@ -172,6 +172,56 @@ async def code_health_repo(
     return result
 
 
+async def impact_local_repo(
+    repo_id: str,
+    *,
+    commit_info: str,
+    changed_files: list[str],
+    changed_symbols: list[dict],
+    max_depth: int,
+    ctx,
+) -> dict:
+    """Bulk caller resolution for client-side impact analysis.
+
+    The client does git-diff + AST locally, then sends changed symbols here.
+    We resolve all callers in one shot using the server-side graph.
+    """
+    row = await require_indexed_repo(repo_id, ctx.tenant_id)
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
+
+    sym_names = [s["name"] for s in changed_symbols[:30]]
+
+    all_callers: list[str] = []
+    affected_modules: set[str] = set()
+    chains: list[str] = []
+
+    for sym in sym_names:
+        try:
+            result = await mg.query(sym, top_k=5, depth=1, direction="callers")
+        except Exception:
+            continue
+        for r in result.relations:
+            src = r.get("src_id", "")
+            tgt = r.get("tgt_id", "")
+            kind = r.get("kind", "")
+            if kind == "calls" and tgt and sym in tgt:
+                all_callers.append(f"{src} --calls--> {tgt}")
+                mod = ".".join(src.split(".")[:-1]) if "." in src else src
+                affected_modules.add(mod)
+                caller_name = src.split(".")[-1] if "." in src else src
+                chains.append(f"{sym} → {caller_name}")
+
+    await record_usage(ctx.tenant_id, "query.impact_local", repo_id)
+    return {
+        "commit_info": commit_info,
+        "changed_files": changed_files,
+        "changed_symbols": changed_symbols,
+        "direct_callers": all_callers,
+        "affected_modules": sorted(affected_modules),
+        "propagation_chains": chains,
+    }
+
+
 async def deep_query_repo(
     repo_id: str,
     *,

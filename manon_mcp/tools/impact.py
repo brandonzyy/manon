@@ -1,7 +1,6 @@
 """Local impact analysis helpers for manon_impact tool."""
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import re
 import subprocess
@@ -151,56 +150,10 @@ def _find_changed_symbols(
     return changed_symbols
 
 
-# ── Symbol caller query ───────────────────────────────
-
-def _query_symbol_callers(
-    repo_id: str,
-    sym_names: list[str],
-    max_depth: int,
-    *,
-    client,
-) -> tuple[list[str], set[str], list[str]]:
-    """Query callers for changed symbols. Returns (all_callers, affected_modules, chains)."""
-    all_callers: list[str] = []
-    affected_modules: set[str] = set()
-    chains: list[str] = []
-
-    syms_to_query = sym_names[:30]
-
-    def _query_sym(sym: str) -> tuple[str, dict]:
-        try:
-            result = client._get(f"/api/v1/repos/{repo_id}/graph", symbol=sym, depth=1, direction="callers")
-            return sym, result
-        except Exception:
-            return sym, {}
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_query_sym, s): s for s in syms_to_query}
-        for fut in concurrent.futures.as_completed(futures, timeout=15):
-            try:
-                sym, result = fut.result()
-            except Exception:
-                continue
-            if not result:
-                continue
-            for r in result.get("relations", []):
-                src = r.get("src_id", "")
-                tgt = r.get("tgt_id", "")
-                kind = r.get("kind", "")
-                if kind == "calls" and tgt and sym in tgt:
-                    all_callers.append(f"  {src} --calls--> {tgt}")
-                    mod = ".".join(src.split(".")[:-1]) if "." in src else src
-                    affected_modules.add(mod)
-                    # Build propagation chain: sym → direct_caller
-                    caller_name = src.split(".")[-1] if "." in src else src
-                    chains.append(f"{sym} → {caller_name}")
-    return all_callers, affected_modules, chains
-
-
 # ── Local impact orchestrator ─────────────────────────
 
 def local_impact(repo_id: str, local_path: str, commit: str, max_depth: int, *, client) -> str:
-    """Client-side impact analysis for local repos using git diff + server graph."""
+    """Client-side impact analysis: local git diff + single compound API for caller resolution."""
     root = Path(local_path).resolve()
     parts: list[str] = []
 
@@ -218,28 +171,11 @@ def local_impact(repo_id: str, local_path: str, commit: str, max_depth: int, *, 
         ]
         return f"没有检测到文件变更。\n诊断: {', '.join(diag_parts)}"
 
-    parts.append(f"影响分析: {commit_info}")
-    parts.append(f"变更文件 ({len(changed_files)}):")
-    for f in changed_files:
-        parts.append(f"  {f}")
-
     changed_symbols_raw = _find_changed_symbols(
         changed_files, root, git_root, prefix_with_slash, base_commit, commit,
     )
 
-    if not changed_symbols_raw:
-        parts.append("\n未能精确定位变更符号，按文件级别分析。")
-        for cf in changed_files:
-            module = cf.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")
-            try:
-                result = client._get(f"/api/v1/repos/{repo_id}/graph", symbol=module, depth=1)
-                for r in result.get("relations", [])[:5]:
-                    parts.append(f"  {r.get('src_id', '?')} --{r.get('kind', '?')}--> {r.get('tgt_id', '?')}")
-            except Exception:
-                pass
-        return client._truncate("\n".join(parts))
-
-    # Deduplicate by name, keep first occurrence (with diff stats)
+    # Deduplicate by name
     seen_names: set[str] = set()
     changed_symbols: list[dict] = []
     for s in changed_symbols_raw:
@@ -247,41 +183,66 @@ def local_impact(repo_id: str, local_path: str, commit: str, max_depth: int, *, 
             seen_names.add(s["name"])
             changed_symbols.append(s)
 
-    # Summary mode for large commits
-    summary_mode = len(changed_symbols) > 30
-    if summary_mode:
-        parts.append(f"\n[摘要模式 — 符号过多，按文件聚合]")
-        # Aggregate symbols by file
-        file_agg: dict[str, dict] = {}
-        for s in changed_symbols:
-            f = s.get("file", "?")
-            if f not in file_agg:
-                file_agg[f] = {"count": 0, "added": 0, "deleted": 0}
-            file_agg[f]["count"] += 1
-            file_agg[f]["added"] += s.get("added", 0)
-            file_agg[f]["deleted"] += s.get("deleted", 0)
-        parts.append(f"\n变更符号 ({len(changed_symbols)}, 按文件聚合):")
-        for f, agg in sorted(file_agg.items()):
-            parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['added']}/-{agg['deleted']})")
-    else:
-        parts.append(f"\n变更符号 ({len(changed_symbols)}):")
-        for s in changed_symbols:
-            added, deleted = s.get("added", 0), s.get("deleted", 0)
-            diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
-            loc = f" ({s['file']})" if s.get("file") else ""
-            parts.append(f"  {s['name']} {diff_stat}{loc}")
+    # Single compound API call — server resolves all callers in bulk
+    try:
+        server_result = client._post(
+            f"/api/v1/repos/{repo_id}/impact-local",
+            {
+                "commit_info": commit_info,
+                "changed_files": changed_files,
+                "changed_symbols": changed_symbols,
+                "max_depth": max_depth,
+            },
+            timeout=30,
+        )
+    except Exception as exc:
+        log.warning("impact-local API failed: %s", exc)
+        server_result = {}
 
-    sym_names = [s["name"] for s in changed_symbols]
-    all_callers, affected_modules, chains = _query_symbol_callers(repo_id, sym_names, max_depth, client=client)
+    # Format output
+    parts.append(f"影响分析: {commit_info}")
+    parts.append(f"变更文件 ({len(changed_files)}):")
+    for f in changed_files:
+        parts.append(f"  {f}")
+
+    if not changed_symbols:
+        parts.append("\n未能精确定位变更符号，按文件级别分析。")
+    else:
+        summary_mode = len(changed_symbols) > 30
+        if summary_mode:
+            parts.append(f"\n[摘要模式 — 符号过多，按文件聚合]")
+            file_agg: dict[str, dict] = {}
+            for s in changed_symbols:
+                f = s.get("file", "?")
+                if f not in file_agg:
+                    file_agg[f] = {"count": 0, "added": 0, "deleted": 0}
+                file_agg[f]["count"] += 1
+                file_agg[f]["added"] += s.get("added", 0)
+                file_agg[f]["deleted"] += s.get("deleted", 0)
+            parts.append(f"\n变更符号 ({len(changed_symbols)}, 按文件聚合):")
+            for f, agg in sorted(file_agg.items()):
+                parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['added']}/-{agg['deleted']})")
+        else:
+            parts.append(f"\n变更符号 ({len(changed_symbols)}):")
+            for s in changed_symbols:
+                added, deleted = s.get("added", 0), s.get("deleted", 0)
+                diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
+                loc = f" ({s['file']})" if s.get("file") else ""
+                parts.append(f"  {s['name']} {diff_stat}{loc}")
+
+    # Append server-resolved callers
+    all_callers = server_result.get("direct_callers", [])
+    affected_modules = server_result.get("affected_modules", [])
+    chains = server_result.get("propagation_chains", [])
 
     if all_callers:
         parts.append(f"\n直接调用者 ({len(all_callers)}):")
         for c in all_callers[:20]:
-            parts.append(c)
+            parts.append(f"  {c}")
 
     if affected_modules:
         parts.append(f"\n受影响模块 ({len(affected_modules)}):")
-        for m in sorted(affected_modules)[:20]:
+        for m in affected_modules[:20]:
             parts.append(f"  {m}")
 
     if chains:

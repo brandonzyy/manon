@@ -101,6 +101,14 @@ class DeepQueryRequest(BaseModel):
     max_rounds: int = Field(3, ge=1, le=5)
 
 
+class ImpactLocalRequest(BaseModel):
+    """Client sends local git-diff results; server resolves callers in bulk."""
+    commit_info: str = ""
+    changed_files: list[str] = []
+    changed_symbols: list[dict] = []  # [{name, file, added, deleted}]
+    max_depth: int = Field(2, ge=1, le=5)
+
+
 # ── Dynamic Merge ────────────────────────────────────
 class MergeDynamicRequest(BaseModel):
     edges: dict[str, int] = {}  # {"caller->callee": count}

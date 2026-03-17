@@ -74,6 +74,45 @@ print(json.dumps({"continue": True}))
 '''
 
 
+_POST_COMMIT_HOOK = '''\
+"""PostToolUse hook: suggest manon_impact after successful git commit."""
+import json
+import sys
+
+data = json.load(sys.stdin)
+tool_name = data.get("tool_name", "")
+if tool_name != "Bash":
+    sys.exit(0)
+
+command = data.get("tool_input", {}).get("command", "")
+response = data.get("tool_response", {})
+exit_code = response.get("exitCode", -1)
+
+if exit_code != 0:
+    sys.exit(0)
+
+# Detect git commit (not amend-only, not merge commit artifacts)
+is_commit = False
+for token in ("git commit", "git commit -m", "git commit -am"):
+    if token in command:
+        is_commit = True
+        break
+
+if not is_commit:
+    sys.exit(0)
+
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": (
+            "Git commit succeeded. Run manon_impact to analyze this commit's "
+            "effects on dependencies and downstream callers."
+        ),
+    }
+}))
+'''
+
+
 _PRE_AGENT_PLAN_HOOK = '''\
 """PreToolUse hook: enforce Manon-first before Explore/general-purpose agents."""
 import json
@@ -120,15 +159,18 @@ def _install_claude_hooks() -> str | None:
         search_hook = hooks_dir / "pre_search.py"
         edit_hook = hooks_dir / "pre_edit.py"
         agent_hook = hooks_dir / "pre_agent_plan.py"
+        commit_hook = hooks_dir / "post_commit.py"
         search_path = str(search_hook).replace("\\", "/")
         edit_path = str(edit_hook).replace("\\", "/")
         agent_path = str(agent_hook).replace("\\", "/")
+        commit_path = str(commit_hook).replace("\\", "/")
 
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         edit_hook.write_text(_PRE_EDIT_HOOK, encoding="utf-8")
         agent_hook.write_text(_PRE_AGENT_PLAN_HOOK, encoding="utf-8")
+        commit_hook.write_text(_POST_COMMIT_HOOK, encoding="utf-8")
 
-        desired_entries = [
+        desired_pre = [
             {
                 "matcher": "Grep|Glob",
                 "hooks": [{"type": "command", "command": f"python {search_path}"}],
@@ -142,6 +184,14 @@ def _install_claude_hooks() -> str | None:
                 "hooks": [{"type": "command", "command": f"python {agent_path}"}],
             },
         ]
+        desired_post = [
+            {
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": f"python {commit_path}"}],
+            },
+        ]
+
+        _manon_hook_files = ("pre_search.py", "pre_edit.py", "pre_agent_plan.py", "post_commit.py")
 
         settings: dict = {}
         if settings_file.exists():
@@ -151,24 +201,24 @@ def _install_claude_hooks() -> str | None:
                 settings = {}
 
         hooks_cfg = settings.setdefault("hooks", {})
+
+        # PreToolUse
         pre_tool = hooks_cfg.setdefault("PreToolUse", [])
-        existing_manon = [
-            entry
-            for entry in pre_tool
-            if "pre_search.py" in str(entry) or "pre_edit.py" in str(entry) or "pre_agent_plan.py" in str(entry)
-        ]
-        if existing_manon == desired_entries:
+        existing_pre = [e for e in pre_tool if any(f in str(e) for f in _manon_hook_files)]
+
+        # PostToolUse
+        post_tool = hooks_cfg.setdefault("PostToolUse", [])
+        existing_post = [e for e in post_tool if any(f in str(e) for f in _manon_hook_files)]
+
+        if existing_pre == desired_pre and existing_post == desired_post:
             log.info("Claude Code hooks already up-to-date, skipping write")
             return None
 
-        pre_tool[:] = [
-            entry
-            for entry in pre_tool
-            if "pre_search.py" not in str(entry)
-            and "pre_edit.py" not in str(entry)
-            and "pre_agent_plan.py" not in str(entry)
-        ]
-        pre_tool.extend(desired_entries)
+        pre_tool[:] = [e for e in pre_tool if not any(f in str(e) for f in _manon_hook_files)]
+        pre_tool.extend(desired_pre)
+
+        post_tool[:] = [e for e in post_tool if not any(f in str(e) for f in _manon_hook_files)]
+        post_tool.extend(desired_post)
 
         settings_file.write_text(
             json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
