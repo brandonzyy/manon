@@ -12,7 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SERVER_PY="$SCRIPT_DIR/run_mcp.py"
 LAUNCHER="$SCRIPT_DIR/launch_mcp.sh"
 VENV_DIR="$SCRIPT_DIR/.venv"
-DEFAULT_API_URL="http://saas.matrixone.online:3700"
+API_URL_CN="http://saas.matrixone.online:3700"
+API_URL_INTL="http://203.208.134.27:3700"
 
 # ── Colors ────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -692,9 +693,11 @@ fi
 if [ "$REGION" = "CN" ]; then
     GIT_REMOTE="$GIT_REMOTE_CN"
     GIT_BRANCH="master"
+    DEFAULT_API_URL="$API_URL_CN"
 else
     GIT_REMOTE="$GIT_REMOTE_INTL"
     GIT_BRANCH="main"
+    DEFAULT_API_URL="$API_URL_INTL"
 fi
 cd "$SCRIPT_DIR" && git remote set-url origin "$GIT_REMOTE" 2>/dev/null || true
 info "Git remote → $GIT_REMOTE ($REGION)"

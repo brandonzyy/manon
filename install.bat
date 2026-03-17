@@ -20,7 +20,8 @@ exit /b %errorlevel%
 
 ::PS $SERVER_PY  = "$SCRIPT_DIR\run_mcp.py"
 ::PS $VENV_DIR   = "$SCRIPT_DIR\.venv"
-::PS $DEFAULT_API_URL = "http://saas.matrixone.online:3700"
+::PS $API_URL_CN = "http://saas.matrixone.online:3700"
+::PS $API_URL_INTL = "http://203.208.134.27:3700"
 ::PS $ErrorActionPreference = "Stop"
 ::PS function info($m)  { Write-Host "[+] $m" -ForegroundColor Green }
 ::PS function warn($m)  { Write-Host "[!] $m" -ForegroundColor Yellow }
@@ -76,7 +77,7 @@ exit /b %errorlevel%
 ::PS $GIT_REMOTE_INTL = "https://github.com/brandonzyy/manon.git"
 ::PS $REGION = "CN"; $REGION_FILE = "$env:USERPROFILE\.manon\region.json"
 ::PS if (Test-Path $REGION_FILE) { try { $REGION = (Get-Content $REGION_FILE -Raw | ConvertFrom-Json).region } catch { $REGION = "CN" } }
-::PS if ($REGION -eq "CN") { $GIT_REMOTE = $GIT_REMOTE_CN; $GIT_BRANCH = "master" } else { $GIT_REMOTE = $GIT_REMOTE_INTL; $GIT_BRANCH = "main" }
+::PS if ($REGION -eq "CN") { $GIT_REMOTE = $GIT_REMOTE_CN; $GIT_BRANCH = "master"; $DEFAULT_API_URL = $API_URL_CN } else { $GIT_REMOTE = $GIT_REMOTE_INTL; $GIT_BRANCH = "main"; $DEFAULT_API_URL = $API_URL_INTL }
 ::PS try { git -C $SCRIPT_DIR remote set-url origin $GIT_REMOTE 2>$null } catch {}
 ::PS info "Git remote -> $GIT_REMOTE ($REGION)"
 ::PS # ── Venv + deps ───────────────────────────────────────
