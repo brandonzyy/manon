@@ -113,7 +113,7 @@ class TestSaasModels:
 
     def test_file_sync_data(self):
         from saas.models import FileSyncData
-        f = FileSyncData(rel_path="a.py", hash="abc", source="x", parse_result={})
+        f = FileSyncData(rel_path="a.py", hash="abc", parse_result={})
         assert f.rel_path == "a.py"
 
     def test_repo_create(self):

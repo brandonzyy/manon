@@ -56,7 +56,7 @@ class TestIndexStatus:
 
 class TestFileSyncData:
     def test_create(self):
-        f = FileSyncData(rel_path="a.py", hash="abc", source="x=1", parse_result={"symbols": []})
+        f = FileSyncData(rel_path="a.py", hash="abc", parse_result={"symbols": []})
         assert f.rel_path == "a.py"
         assert f.hash == "abc"
 
@@ -69,7 +69,7 @@ class TestSyncAstRequest:
         assert r.full_reindex is False
 
     def test_with_files(self):
-        f = FileSyncData(rel_path="a.py", hash="h", source="s", parse_result={})
+        f = FileSyncData(rel_path="a.py", hash="h", parse_result={})
         r = SyncAstRequest(files=[f], deleted_files=["b.py"])
         assert len(r.files) == 1
         assert r.deleted_files == ["b.py"]
