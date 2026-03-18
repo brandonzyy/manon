@@ -138,60 +138,38 @@ def _compute_fi(edges: list) -> dict:
     return {"ratio": round(ratio, 3), "high_fanin_count": len(high_fanin), "total_called": total_called}
 
 
+_STRUCTURAL_KINDS = frozenset({
+    "type_alias", "interface", "property", "enum", "enum_member",
+    "field", "namespace", "constructor",
+})
+
+
+def _is_dc_entry_point(nid: str, data: dict) -> bool:
+    """Return True if this entity should be excluded from dead-code analysis."""
+    kind = data.get("kind", "")
+    name = nid.rsplit(".", 1)[-1] if "." in nid else nid
+    fp = data.get("file_path", "").replace("\\", "/")
+    decorators = data.get("decorators", [])
+    is_script = fp.startswith("scripts/") or "/scripts/" in fp
+    if name.startswith("__") and name.endswith("__"): return True
+    if _is_test_file(fp): return True
+    if kind == "class": return True
+    if kind in _STRUCTURAL_KINDS: return True
+    if decorators: return True
+    if kind == "method" and not name.startswith("_"): return True
+    if is_script or fp.endswith("__main__.py"): return True
+    if kind == "function" and not name.startswith("_"): return True
+    if kind == "function" and any(t in name for t in ("ForTesting", "forTesting", "ForTest", "forTest")):
+        return True
+    if kind == "variable": return True
+    return False
+
+
 def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
-    """DC: Dead Code — zero in-degree non-entry-point entities.
-
-    Returns (dc_metrics, non_module_entities) since TC reuses the entity list.
-    """
-    # Kinds that are structural or accessed implicitly — the graph cannot track
-    # their usage via in-degree (property access, namespace member access,
-    # constructor calls via `new`, type references, etc.).
-    _STRUCTURAL_KINDS = frozenset({
-        "type_alias", "interface", "property", "enum", "enum_member",
-        "field",        # class fields accessed via this.x — not tracked as edges
-        "namespace",    # TS namespaces accessed via Ns.member — not tracked
-        "constructor",  # called via `new Class()` — not tracked as call edges
-    })
-
+    """DC: Dead Code — zero in-degree non-entry-point entities."""
     all_in_degrees = dict(g.in_degree())
-    non_module_entities = [
-        nid for nid, data in nodes.items()
-        if data.get("kind") and data.get("kind") != "module"
-    ]
-    entry_point_ids: set[str] = set()
-    for nid, data in nodes.items():
-        kind = data.get("kind", "")
-        name = nid.rsplit(".", 1)[-1] if "." in nid else nid
-        fp = data.get("file_path", "").replace("\\", "/")
-        decorators = data.get("decorators", [])
-        is_script = fp.startswith("scripts/") or "/scripts/" in fp
-        is_main = fp.endswith("__main__.py")
-        if name.startswith("__") and name.endswith("__"):
-            entry_point_ids.add(nid)
-        elif _is_test_file(fp):
-            entry_point_ids.add(nid)
-        elif kind == "class":
-            entry_point_ids.add(nid)
-        elif kind in _STRUCTURAL_KINDS:
-            entry_point_ids.add(nid)
-        elif decorators:
-            entry_point_ids.add(nid)
-        elif kind == "method" and not name.startswith("_"):
-            entry_point_ids.add(nid)
-        elif is_script or is_main:
-            entry_point_ids.add(nid)
-        elif kind == "function" and not name.startswith("_"):
-            entry_point_ids.add(nid)
-        elif kind == "function" and ("ForTesting" in name or "forTesting" in name
-                                     or "ForTest" in name or "forTest" in name):
-            # Test infrastructure helpers — called from test files via dynamic
-            # import or indirect patterns the graph cannot track.
-            entry_point_ids.add(nid)
-        elif kind == "variable":
-            # All module-level variables are entry points: public ones are
-            # importable, private ones are accessed via closure by sibling
-            # functions in the same file — the graph can't track either.
-            entry_point_ids.add(nid)
+    non_module_entities = [nid for nid, d in nodes.items() if d.get("kind") and d.get("kind") != "module"]
+    entry_point_ids = {nid for nid, data in nodes.items() if _is_dc_entry_point(nid, data)}
     checkable = [nid for nid in non_module_entities if nid not in entry_point_ids]
     dead = [nid for nid in checkable if all_in_degrees.get(nid, 0) == 0]
     ratio = len(dead) / max(len(checkable), 1)
@@ -426,51 +404,39 @@ def _score_id(max_depth: int) -> int:
     return 4
 
 
+_DIM_NAMES = {
+    "mc": "模块耦合度", "cd": "循环依赖", "fi": "扇入集中度", "dc": "死代码",
+    "tc": "测试覆盖", "fs": "函数规模", "td": "技术债务", "id": "继承深度",
+}
+_DIM_ORDER = ("mc", "cd", "fi", "dc", "tc", "fs", "td", "id")
+
+
+def _build_dim_scores(graph_metrics: dict, td_density: float) -> dict[str, float]:
+    m = graph_metrics
+    return {
+        "mc": _score_mc(m["mc"]["ratio"]),
+        "cd": _score_cd(m["cd"]["cycles"]),
+        "fi": _score_fi(m["fi"]["ratio"]),
+        "dc": _score_dc(m["dc"]["ratio"]),
+        "tc": _score_tc(m["tc"]["ratio"]),
+        "fs": _score_fs(m["fs"]["ratio"]),
+        "td": _score_td(td_density),
+        "id": _score_id(m["id"]["max_depth"]),
+    }
+
+
 def compute_score(graph_metrics: dict, debt_metrics: dict | None = None) -> dict[str, Any]:
-    """Compute 8-dimension health score from graph + static metrics.
-
-    Returns {score, dimensions: [{abbr, name, weight, value, detail}]}.
-    """
-    mc = graph_metrics["mc"]
-    cd = graph_metrics["cd"]
-    fi = graph_metrics["fi"]
-    dc = graph_metrics["dc"]
-    tc = graph_metrics["tc"]
-    fs = graph_metrics["fs"]
-    id_ = graph_metrics["id"]
-
-    # TD from debt_metrics or default
+    """Compute 8-dimension health score. Returns {score, dimensions, entity_count, ...}."""
     debt = debt_metrics or {}
     total_lines = max(debt.get("total_lines", 1), 1)
     td_density = (debt.get("todos", 0) + debt.get("any_count", 0)) / (total_lines / 1000)
-
-    scores = {
-        "mc": _score_mc(mc["ratio"]),
-        "cd": _score_cd(cd["cycles"]),
-        "fi": _score_fi(fi["ratio"]),
-        "dc": _score_dc(dc["ratio"]),
-        "tc": _score_tc(tc["ratio"]),
-        "fs": _score_fs(fs["ratio"]),
-        "td": _score_td(td_density),
-        "id": _score_id(id_["max_depth"]),
-    }
-
-    names = {
-        "mc": "模块耦合度", "cd": "循环依赖", "fi": "扇入集中度", "dc": "死代码",
-        "tc": "测试覆盖", "fs": "函数规模", "td": "技术债务", "id": "继承深度",
-    }
-
+    scores = _build_dim_scores(graph_metrics, td_density)
     total = sum(scores[k] * WEIGHTS[k] for k in WEIGHTS)
-    dimensions = []
-    for k in ("mc", "cd", "fi", "dc", "tc", "fs", "td", "id"):
-        dimensions.append({
-            "abbr": k.upper(),
-            "name": names[k],
-            "weight": WEIGHTS[k],
-            "value": scores[k],
-            "detail": graph_metrics.get(k, {}) if k != "td" else {"density": round(td_density, 2), **debt},
-        })
-
+    dimensions = [
+        {"abbr": k.upper(), "name": _DIM_NAMES[k], "weight": WEIGHTS[k], "value": scores[k],
+         "detail": graph_metrics.get(k, {}) if k != "td" else {"density": round(td_density, 2), **debt}}
+        for k in _DIM_ORDER
+    ]
     return {
         "score": round(total / 10, 1),
         "grade": "A" if total >= 850 else "B" if total >= 700 else "C" if total >= 500 else "D",

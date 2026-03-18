@@ -71,56 +71,36 @@ class TypeScriptParser(BaseLanguageParser):
         parser = Parser(lang)
         return TypeScriptParser(parser, grammar_name)
 
-    def parse(self, path: Path):
-        """Parse a TypeScript/JavaScript source file.
-
-        Overrides BaseLanguageParser.parse() to add module_docstring extraction.
-        """
+    def _build_parse_result(self, tree, path, source_bytes: bytes, file_lines: int):
+        """Extract all TS/JS parse content and return a ParseResult."""
         from ..parser import ParseResult
-
-        try:
-            source_bytes = Path(path).read_bytes()
-        except Exception as e:
-            return ParseResult(path=path, error=str(e), file_lines=0)
-
-        file_lines = source_bytes.count(b"\n") + (
-            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
-        )
-
-        if not source_bytes.strip():
-            return ParseResult(path=path, file_lines=file_lines)
-
-        tree = self.parser.parse(source_bytes)
-
-        if tree.root_node.has_error:
-            return ParseResult(
-                path=path,
-                error="Syntax error in source file",
-                file_lines=file_lines,
-            )
-
         try:
             symbols = self.extract_symbols(tree, source_bytes)
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
             module_docstring = self._extract_module_docstring(tree, source_bytes)
-
-            return ParseResult(
-                path=path,
-                symbols=symbols,
-                imports=imports,
-                inheritances=inheritances,
-                calls=calls,
-                file_lines=file_lines,
-                module_docstring=module_docstring,
-            )
+            return ParseResult(path=path, symbols=symbols, imports=imports, inheritances=inheritances,
+                               calls=calls, file_lines=file_lines, module_docstring=module_docstring)
         except Exception as e:
-            return ParseResult(
-                path=path,
-                error=f"Parse error: {str(e)}",
-                file_lines=file_lines,
-            )
+            return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
+
+    def parse(self, path: Path):
+        """Parse a TypeScript/JavaScript source file."""
+        from ..parser import ParseResult
+        try:
+            source_bytes = Path(path).read_bytes()
+        except Exception as e:
+            return ParseResult(path=path, error=str(e), file_lines=0)
+        file_lines = source_bytes.count(b"\n") + (
+            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
+        )
+        if not source_bytes.strip():
+            return ParseResult(path=path, file_lines=file_lines)
+        tree = self.parser.parse(source_bytes)
+        if tree.root_node.has_error:
+            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+        return self._build_parse_result(tree, path, source_bytes, file_lines)
 
     # ==================== Symbol Extraction ====================
 
@@ -329,70 +309,45 @@ class TypeScriptParser(BaseLanguageParser):
 
         return symbols
 
+    def _scan_method_children(self, node: Node, source_bytes: bytes) -> tuple:
+        """Scan method_definition children. Returns (name, params, accessibility, is_async, is_static, is_getter, is_setter)."""
+        name, params, accessibility = "", "", ""
+        is_async = is_static = is_getter = is_setter = False
+        for child in node.children:
+            t = child.type
+            if t == "property_identifier": name = get_node_text(child, source_bytes)
+            elif t == "formal_parameters": params = get_node_text(child, source_bytes)
+            elif t == "accessibility_modifier": accessibility = get_node_text(child, source_bytes)
+            elif t == "async": is_async = True
+            elif t == "static": is_static = True
+            elif t == "get": is_getter = True
+            elif t == "set": is_setter = True
+        return name, params, accessibility, is_async, is_static, is_getter, is_setter
+
     def _parse_method_definition(
         self, node: Node, source_bytes: bytes, class_name: str
     ) -> Symbol | None:
         """Parse a method definition node."""
-        name = ""
-        params = ""
-        is_async = False
-        is_static = False
-        is_getter = False
-        is_setter = False
-        accessibility = ""
-
-        for child in node.children:
-            if child.type == "property_identifier":
-                name = get_node_text(child, source_bytes)
-            elif child.type == "formal_parameters":
-                params = get_node_text(child, source_bytes)
-            elif child.type == "async":
-                is_async = True
-            elif child.type == "static":
-                is_static = True
-            elif child.type == "get":
-                is_getter = True
-            elif child.type == "set":
-                is_setter = True
-            elif child.type == "accessibility_modifier":
-                accessibility = get_node_text(child, source_bytes)
-
+        name, params, accessibility, is_async, is_static, is_getter, is_setter = \
+            self._scan_method_children(node, source_bytes)
         if not name:
             return None
 
-        # Determine kind
-        if name == "constructor":
-            kind = "constructor"
-        else:
-            kind = "method"
-
-        full_name = f"{class_name}.{name}"
-
-        # Build signature
-        sig_parts = []
-        if accessibility:
-            sig_parts.append(accessibility)
-        if is_static:
-            sig_parts.append("static")
-        if is_async:
-            sig_parts.append("async")
-        if is_getter:
-            sig_parts.append("get")
-        if is_setter:
-            sig_parts.append("set")
+        kind = "constructor" if name == "constructor" else "method"
+        sig_parts = [p for p, flag in [
+            (accessibility, accessibility), ("static", is_static),
+            ("async", is_async), ("get", is_getter), ("set", is_setter),
+        ] if flag]
         sig_parts.append(f"{name}{params}")
-
         return_type = self._find_type_annotation(node, source_bytes)
         if return_type:
             sig_parts.append(f": {return_type}")
 
         return Symbol(
-            name=full_name,
-            kind=kind,
+            name=f"{class_name}.{name}", kind=kind,
             signature=" ".join(sig_parts),
             docstring=self._extract_jsdoc(node, source_bytes),
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
+            line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
         )
 
     def _parse_field_definition(
@@ -541,67 +496,57 @@ class TypeScriptParser(BaseLanguageParser):
 
         return symbols
 
+    def _parse_arrow_function_symbol(
+        self, name: str, value_node: Node, decl_keyword: str, node: Node, source_bytes: bytes,
+    ) -> Symbol:
+        """Build a function Symbol from an arrow_function declarator."""
+        params, is_async = "", False
+        for child in value_node.children:
+            if child.type == "formal_parameters":
+                params = get_node_text(child, source_bytes)
+            elif child.type == "async":
+                is_async = True
+            elif child.type == "identifier" and not params:
+                params = f"({get_node_text(child, source_bytes)})"
+        sig_parts = [decl_keyword] + (["async"] if is_async else [])
+        return_type = self._find_type_annotation(node, source_bytes)
+        name_part = f"{name}: {return_type} = {params} =>" if return_type else f"{name} = {params} =>"
+        sig_parts.append(name_part)
+        parent = node.parent
+        return Symbol(
+            name=name, kind="function", signature=" ".join(sig_parts),
+            docstring=self._extract_jsdoc(parent, source_bytes) if parent else "",
+            line_start=parent.start_point[0] + 1 if parent else node.start_point[0] + 1,
+            line_end=parent.end_point[0] + 1 if parent else node.end_point[0] + 1,
+        )
+
     def _parse_variable_declarator(
         self, node: Node, source_bytes: bytes, decl_keyword: str
     ) -> Symbol | None:
         """Parse a variable_declarator node."""
         name = ""
         value_node = None
-
         for child in node.children:
             if child.type == "identifier":
                 name = get_node_text(child, source_bytes)
             elif child.type in ("arrow_function", "function"):
                 value_node = child
-
         if not name:
             return None
 
         if value_node and value_node.type == "arrow_function":
-            # Arrow function → function symbol
-            params = ""
-            is_async = False
-            for child in value_node.children:
-                if child.type == "formal_parameters":
-                    params = get_node_text(child, source_bytes)
-                elif child.type == "async":
-                    is_async = True
-                elif child.type == "identifier" and not params:
-                    # Single param arrow: (x) => ... or x => ...
-                    params = f"({get_node_text(child, source_bytes)})"
+            return self._parse_arrow_function_symbol(name, value_node, decl_keyword, node, source_bytes)
 
-            sig_parts = [decl_keyword]
-            if is_async:
-                sig_parts.append("async")
-            sig_parts.append(f"{name} = {params} =>")
-
-            return_type = self._find_type_annotation(node, source_bytes)
-            if return_type:
-                sig_parts[-1] = f"{name}: {return_type} = {params} =>"
-
-            return Symbol(
-                name=name,
-                kind="function",
-                signature=" ".join(sig_parts),
-                docstring=self._extract_jsdoc(node.parent, source_bytes) if node.parent else "",
-                line_start=node.parent.start_point[0] + 1 if node.parent else node.start_point[0] + 1,
-                line_end=node.parent.end_point[0] + 1 if node.parent else node.end_point[0] + 1,
-            )
-        else:
-            # Regular variable
-            sig_parts = [decl_keyword, name]
-            type_ann = self._find_type_annotation(node, source_bytes)
-            if type_ann:
-                sig_parts.append(f": {type_ann}")
-
-            return Symbol(
-                name=name,
-                kind="variable",
-                signature=" ".join(sig_parts),
-                docstring="",
-                line_start=node.parent.start_point[0] + 1 if node.parent else node.start_point[0] + 1,
-                line_end=node.parent.end_point[0] + 1 if node.parent else node.end_point[0] + 1,
-            )
+        sig_parts = [decl_keyword, name]
+        type_ann = self._find_type_annotation(node, source_bytes)
+        if type_ann:
+            sig_parts.append(f": {type_ann}")
+        parent = node.parent
+        return Symbol(
+            name=name, kind="variable", signature=" ".join(sig_parts), docstring="",
+            line_start=parent.start_point[0] + 1 if parent else node.start_point[0] + 1,
+            line_end=parent.end_point[0] + 1 if parent else node.end_point[0] + 1,
+        )
 
     def _parse_namespace(
         self, node: Node, source_bytes: bytes
@@ -645,14 +590,30 @@ class TypeScriptParser(BaseLanguageParser):
 
         return imports
 
+    def _parse_named_imports(self, child: Node, source_bytes: bytes, module: str) -> Import | None:
+        """Parse a named_imports node into an Import, or None if no names found."""
+        names = []
+        for spec in child.children:
+            if spec.type == "import_specifier":
+                for spec_child in spec.children:
+                    if spec_child.type == "identifier":
+                        names.append(get_node_text(spec_child, source_bytes))
+                        break
+        return Import(module=module, names=names, is_from=True) if names else None
+
+    def _parse_namespace_import(self, child: Node, source_bytes: bytes, module: str) -> Import:
+        """Parse a namespace_import node into an Import."""
+        alias = next(
+            (get_node_text(c, source_bytes) for c in child.children if c.type == "identifier"), ""
+        )
+        return Import(module=module, names=["*"], is_from=True, alias=alias)
+
     def _parse_import_statement(
         self, node: Node, source_bytes: bytes
     ) -> list[Import]:
         """Parse an import statement node."""
-        imports = []
         module = ""
         import_clause = None
-
         for child in node.children:
             if child.type == "string":
                 module = self._extract_string_content(child, source_bytes)
@@ -660,55 +621,21 @@ class TypeScriptParser(BaseLanguageParser):
                 import_clause = child
 
         if not module:
-            return imports
-
+            return []
         if import_clause is None:
-            # Side-effect import: import 'module'
-            imports.append(Import(module=module, names=[], is_from=False))
-            return imports
+            return [Import(module=module, names=[], is_from=False)]
 
-        # Parse import clause
+        imports = []
         for child in import_clause.children:
             if child.type == "identifier":
-                # Default import: import X from 'module'
                 default_name = get_node_text(child, source_bytes)
-                imports.append(Import(
-                    module=module,
-                    names=[default_name],
-                    is_from=True,
-                    alias=default_name,
-                ))
+                imports.append(Import(module=module, names=[default_name], is_from=True, alias=default_name))
             elif child.type == "named_imports":
-                # Named imports: import { A, B } from 'module'
-                names = []
-                for spec in child.children:
-                    if spec.type == "import_specifier":
-                        spec_name = ""
-                        for spec_child in spec.children:
-                            if spec_child.type == "identifier":
-                                spec_name = get_node_text(spec_child, source_bytes)
-                                break
-                        if spec_name:
-                            names.append(spec_name)
-                if names:
-                    imports.append(Import(
-                        module=module,
-                        names=names,
-                        is_from=True,
-                    ))
+                imp = self._parse_named_imports(child, source_bytes, module)
+                if imp:
+                    imports.append(imp)
             elif child.type == "namespace_import":
-                # Namespace import: import * as X from 'module'
-                alias = ""
-                for ns_child in child.children:
-                    if ns_child.type == "identifier":
-                        alias = get_node_text(ns_child, source_bytes)
-                imports.append(Import(
-                    module=module,
-                    names=["*"],
-                    is_from=True,
-                    alias=alias,
-                ))
-
+                imports.append(self._parse_namespace_import(child, source_bytes, module))
         return imports
 
     def _parse_export_as_import(
@@ -961,48 +888,36 @@ class TypeScriptParser(BaseLanguageParser):
                                   "function_declaration", "generator_function_declaration"):
                 self._extract_calls_from_node(child, source_bytes, current_caller, calls, import_map)
 
+    def _parse_member_call_type(self, first_child: Node, source_bytes: bytes) -> CallType:
+        """Determine call type (METHOD or STATIC_METHOD) from a member_expression node."""
+        for child in first_child.children:
+            if child.type in ("identifier", "this", "member_expression"):
+                obj_text = get_node_text(child, source_bytes)
+                if obj_text == "this":
+                    return CallType.METHOD
+                if obj_text and obj_text[0].isupper():
+                    return CallType.STATIC_METHOD
+                return CallType.METHOD
+        return CallType.METHOD
+
     def _parse_call_expression(
         self, node: Node, source_bytes: bytes, caller: str,
         import_map: dict[str, str] | None = None,
     ) -> Call | None:
         """Parse a call_expression node."""
-        callee_text = ""
-        call_type = CallType.FUNCTION
-
         first_child = node.children[0] if node.children else None
         if not first_child:
             return None
 
         if first_child.type == "identifier":
             callee_text = get_node_text(first_child, source_bytes)
-            # Skip require() calls (handled as imports)
             if callee_text == "require":
                 return None
             call_type = CallType.FUNCTION
-
         elif first_child.type == "member_expression":
             callee_text = get_node_text(first_child, source_bytes)
-            # Determine if static or instance method
-            object_node = None
-            for child in first_child.children:
-                if child.type in ("identifier", "this"):
-                    object_node = child
-                    break
-                elif child.type == "member_expression":
-                    object_node = child
-                    break
-
-            if object_node:
-                obj_text = get_node_text(object_node, source_bytes)
-                if obj_text == "this":
-                    call_type = CallType.METHOD
-                elif obj_text and obj_text[0].isupper():
-                    call_type = CallType.STATIC_METHOD
-                else:
-                    call_type = CallType.METHOD
-
+            call_type = self._parse_member_call_type(first_child, source_bytes)
         else:
-            # Complex expression (e.g., IIFE, chained calls)
             callee_text = get_node_text(first_child, source_bytes)
             if len(callee_text) > 80:
                 callee_text = callee_text[:77] + "..."
@@ -1011,26 +926,16 @@ class TypeScriptParser(BaseLanguageParser):
         if not callee_text:
             return None
 
-        # Resolve callee using import map
         if import_map:
             callee_text = self._resolve_callee(callee_text, import_map)
 
-        # Count arguments
         args_count = None
         for child in node.children:
             if child.type == "arguments":
-                args_count = sum(
-                    1 for c in child.children
-                    if c.type not in ("(", ")", ",")
-                )
+                args_count = sum(1 for c in child.children if c.type not in ("(", ")", ","))
 
-        return Call(
-            caller=caller,
-            callee=callee_text,
-            line_number=node.start_point[0] + 1,
-            call_type=call_type,
-            arguments_count=args_count,
-        )
+        return Call(caller=caller, callee=callee_text, line_number=node.start_point[0] + 1,
+                    call_type=call_type, arguments_count=args_count)
 
     def _parse_new_expression(
         self, node: Node, source_bytes: bytes, caller: str,

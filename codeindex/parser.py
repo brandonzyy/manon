@@ -340,111 +340,79 @@ def _get_parser(language: str) -> Parser | None:
 _LOAD_FAILED: set[str] = set()
 
 
-def _load_language(language: str) -> Language | None:
-    """Load a tree-sitter Language object for the given language name.
+def _load_known_language(language: str) -> "Language | None":
+    """Load a Language for languages with known API quirks."""
+    try:
+        if language == "python":
+            import tree_sitter_python as m; return Language(m.language())
+        if language == "php":
+            import tree_sitter_php as m; return Language(m.language_php())
+        if language == "java":
+            import tree_sitter_java as m; return Language(m.language())
+        if language == "typescript":
+            import tree_sitter_typescript as m; return Language(m.language_typescript())
+        if language == "tsx":
+            import tree_sitter_typescript as m; return Language(m.language_tsx())
+        if language == "javascript":
+            import tree_sitter_javascript as m; return Language(m.language())
+    except ImportError:
+        return None
+    return None
 
-    Handles known API quirks (e.g., PHP's language_php(), TypeScript's
-    language_typescript()) and falls back to dynamic import for others.
-    """
+
+def _load_language(language: str) -> Language | None:
+    """Load a tree-sitter Language object for the given language name."""
     if language in _LOAD_FAILED:
         return None
-
     try:
-        # ── Specialized languages with known API quirks ──
-        if language == "python":
-            import tree_sitter_python as ts_mod
-            return Language(ts_mod.language())
-        elif language == "php":
-            import tree_sitter_php as ts_mod
-            return Language(ts_mod.language_php())
-        elif language == "java":
-            import tree_sitter_java as ts_mod
-            return Language(ts_mod.language())
-        elif language == "typescript":
-            import tree_sitter_typescript as ts_mod
-            return Language(ts_mod.language_typescript())
-        elif language == "tsx":
-            import tree_sitter_typescript as ts_mod
-            return Language(ts_mod.language_tsx())
-        elif language == "javascript":
-            import tree_sitter_javascript as ts_mod
-            return Language(ts_mod.language())
-
-        # ── Dynamic loading for any other language ──
+        lang = _load_known_language(language)
+        if lang is not None:
+            return lang
+        # Dynamic loading for other languages
         import importlib
-        # tree-sitter packages use underscores: tree_sitter_go, tree_sitter_rust, etc.
-        mod_name = f"tree_sitter_{language}"
-        ts_mod = importlib.import_module(mod_name)
-
-        # Try common function name patterns:
-        #   language()           — most packages (go, rust, c, ruby, swift, ...)
-        #   language_{name}()    — some packages (php → language_php)
+        ts_mod = importlib.import_module(f"tree_sitter_{language}")
         for func_name in ("language", f"language_{language}"):
             func = getattr(ts_mod, func_name, None)
             if callable(func):
                 return Language(func())
-
         _LOAD_FAILED.add(language)
         return None
-
     except ImportError:
         _LOAD_FAILED.add(language)
         return None
 
 
-def parse_file(path: Path, language: str | None = None) -> ParseResult:
-    """Parse a source file and extract symbols and imports.
-
-    Supports two tiers:
-    - Specialized parsers (Python, PHP, Java, TypeScript, JavaScript) — high quality
-    - GenericParser (Go, Rust, C, C++, Swift, Kotlin, etc.) — good enough
-
-    Args:
-        path: Path to the source file
-        language: Optional language override. If None, detected from extension.
-
-    Returns:
-        ParseResult containing symbols, imports, calls, inheritances, and docstrings
-    """
-    # Determine language from file extension if not specified
-    if language is None:
-        language = _get_language(path)
-
-    if not language:
-        try:
-            file_lines = path.read_bytes().count(b"\n") + 1
-        except Exception:
-            file_lines = 0
-        return ParseResult(
-            path=path, error=f"Unsupported file type: {path.suffix}", file_lines=file_lines
-        )
-
-    # Get tree-sitter parser (lazy loading)
-    parser = _get_parser(language)
-    if not parser:
-        try:
-            file_lines = path.read_bytes().count(b"\n") + 1
-        except Exception:
-            file_lines = 0
-        return ParseResult(path=path, error=f"Parser not available for {language}", file_lines=file_lines)
-
-    # Delegate to specialized parser if available, otherwise GenericParser
+def _create_lang_parser(language: str, parser):
+    """Instantiate the right language parser for a given language name."""
     if language in _SPECIALIZED_LANGUAGES:
         from .parsers import JavaParser, PhpParser, PythonParser, TypeScriptParser
+        if language == "python": return PythonParser(parser)
+        if language == "php": return PhpParser(parser)
+        if language == "java": return JavaParser(parser)
+        return TypeScriptParser(parser, grammar_name=language)
+    from .parsers import GenericParser
+    return GenericParser(parser, language=language)
 
-        if language == "python":
-            lang_parser = PythonParser(parser)
-        elif language == "php":
-            lang_parser = PhpParser(parser)
-        elif language == "java":
-            lang_parser = JavaParser(parser)
-        else:  # typescript, tsx, javascript
-            lang_parser = TypeScriptParser(parser, grammar_name=language)
-    else:
-        from .parsers import GenericParser
-        lang_parser = GenericParser(parser, language=language)
 
-    return lang_parser.parse(path)
+def _file_lines_safe(path: Path) -> int:
+    try:
+        return path.read_bytes().count(b"\n") + 1
+    except Exception:
+        return 0
+
+
+def parse_file(path: Path, language: str | None = None) -> ParseResult:
+    """Parse a source file and extract symbols, imports, calls, inheritances."""
+    if language is None:
+        language = _get_language(path)
+    if not language:
+        return ParseResult(path=path, error=f"Unsupported file type: {path.suffix}",
+                           file_lines=_file_lines_safe(path))
+    parser = _get_parser(language)
+    if not parser:
+        return ParseResult(path=path, error=f"Parser not available for {language}",
+                           file_lines=_file_lines_safe(path))
+    return _create_lang_parser(language, parser).parse(path)
 
 
 def parse_directory(paths: list[Path]) -> list[ParseResult]:

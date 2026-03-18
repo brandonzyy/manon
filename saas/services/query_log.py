@@ -33,62 +33,18 @@ def _ensure_log_dir() -> Path:
 
 
 def save_deep_query_log(record: dict) -> None:
-    """Append a deep_query record to the JSONL log file.
+    """Append a deep_query record to the monthly JSONL log file.
 
-    Record schema:
-    {
-        "timestamp": float,
-        "tenant_id": str,
-        "repo_id": str,
-        "question": str,
-        "rounds": [
-            {
-                "round": int,
-                "query": str,
-                "entities": [
-                    {
-                        "id": str,
-                        "name": str,
-                        "type": str,           # function/class/method/...
-                        "file_path": str,
-                        "score": float,
-                    }
-                ],
-                "chunks": [
-                    {
-                        "id": str,
-                        "entity": str,
-                        "score": float,
-                        "content": str,        # full chunk content for training
-                    }
-                ],
-            }
-        ],
-        "llm_analysis": {                      # last LLM judgment
-            "sub_questions": [str],
-            "covered": [str],
-            "missing": [str],
-            "queries": [str],
-            "reason": str,
-        },
-        "final_coverage": {
-            "sub_questions": [str],
-            "covered": [str],
-            "missing": [str],
-            "coverage_ratio": float,
-        },
-    }
+    Record contains: timestamp, tenant_id, repo_id, question, rounds (query/entities/chunks),
+    llm_analysis (sub_questions/covered/missing), and final_coverage.
     """
     try:
         log_dir = _ensure_log_dir()
         month = time.strftime("%Y-%m")
         log_file = log_dir / f"deep_query_{month}.jsonl"
-
         record["timestamp"] = time.time()
         line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-
     except Exception as e:
         log.warning("Failed to save query log: %s", e)

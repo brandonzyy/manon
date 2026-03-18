@@ -21,6 +21,24 @@ from core.ast import (
 from .deps import ToolDependencies
 
 
+def _run_manon_update() -> str:
+    """Execute git pull + install script to update Manon. Returns status message."""
+    manon_dir = Path(__file__).resolve().parent.parent.parent
+    is_windows = sys.platform == "win32"
+    result = subprocess.run(["git", "pull"], cwd=manon_dir, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return f"❌ Git pull 失败: {result.stderr}"
+    install_script = "install.bat" if is_windows else "install.sh"
+    install_path = manon_dir / install_script
+    if not install_path.exists():
+        return f"❌ 安装脚本不存在: {install_path}"
+    cmd = [str(install_path)] if is_windows else ["bash", str(install_path)]
+    result = subprocess.run(cmd, cwd=manon_dir, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        return f"❌ 安装失败: {result.stderr}"
+    return "✅ Manon 已更新到最新版本，请重启编辑器以应用更新。"
+
+
 def register_init_tools(mcp, deps: ToolDependencies):
     """Register init/configure tools."""
 
@@ -64,39 +82,6 @@ def register_init_tools(mcp, deps: ToolDependencies):
     def manon_update() -> str:
         """更新 Manon 到最新版本。"""
         try:
-            manon_dir = Path(__file__).resolve().parent.parent.parent
-            is_windows = sys.platform == "win32"
-
-            # Git pull
-            result = subprocess.run(
-                ["git", "pull"],
-                cwd=manon_dir,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                return f"❌ Git pull 失败: {result.stderr}"
-
-            # Run install script
-            install_script = "install.bat" if is_windows else "install.sh"
-            install_path = manon_dir / install_script
-
-            if not install_path.exists():
-                return f"❌ 安装脚本不存在: {install_path}"
-
-            cmd = [str(install_path)] if is_windows else ["bash", str(install_path)]
-            result = subprocess.run(
-                cmd,
-                cwd=manon_dir,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-
-            if result.returncode != 0:
-                return f"❌ 安装失败: {result.stderr}"
-
-            return "✅ Manon 已更新到最新版本，请重启编辑器以应用更新。"
+            return _run_manon_update()
         except Exception as e:
             return f"❌ 更新失败: {str(e)}"

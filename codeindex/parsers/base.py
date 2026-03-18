@@ -84,61 +84,30 @@ class BaseLanguageParser(ABC):
         """
         pass
 
-    def parse(self, path: Path):
-        """Parse a source file using this language parser.
-
-        This is the main entry point for parsing. It reads the file,
-        parses it with tree-sitter, and extracts all relevant information.
-
-        Args:
-            path: Path to the source file
-
-        Returns:
-            ParseResult containing symbols, imports, calls, and inheritances
-        """
-        # Import here to avoid circular dependency
+    def _build_parse_result(self, tree, path: Path, source_bytes: bytes, file_lines: int):
+        """Extract all parse content and return a ParseResult."""
         from ..parser import ParseResult
-
-        try:
-            source_bytes = path.read_bytes()
-        except Exception as e:
-            return ParseResult(path=path, error=str(e), file_lines=0)
-
-        # Calculate file lines
-        file_lines = source_bytes.count(b"\n") + (
-            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
-        )
-
-        # Parse with tree-sitter
-        tree = self.parser.parse(source_bytes)
-
-        # Check for syntax errors (tree-sitter doesn't throw exceptions)
-        if tree.root_node.has_error:
-            return ParseResult(
-                path=path,
-                error="Syntax error in source file",
-                file_lines=file_lines,
-            )
-
-        # Extract all information
         try:
             symbols = self.extract_symbols(tree, source_bytes)
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
-
-            return ParseResult(
-                path=path,
-                symbols=symbols,
-                imports=imports,
-                inheritances=inheritances,
-                calls=calls,
-                file_lines=file_lines,
-            )
+            return ParseResult(path=path, symbols=symbols, imports=imports,
+                               inheritances=inheritances, calls=calls, file_lines=file_lines)
         except Exception as e:
-            # Return partial result with error
-            return ParseResult(
-                path=path,
-                error=f"Parse error: {str(e)}",
-                file_lines=file_lines,
-            )
+            return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
+
+    def parse(self, path: Path):
+        """Parse a source file using this language parser."""
+        from ..parser import ParseResult
+        try:
+            source_bytes = path.read_bytes()
+        except Exception as e:
+            return ParseResult(path=path, error=str(e), file_lines=0)
+        file_lines = source_bytes.count(b"\n") + (
+            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
+        )
+        tree = self.parser.parse(source_bytes)
+        if tree.root_node.has_error:
+            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+        return self._build_parse_result(tree, path, source_bytes, file_lines)

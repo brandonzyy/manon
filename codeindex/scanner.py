@@ -105,72 +105,42 @@ def is_pass_through(dir_path: Path, config: Config) -> bool:
     return len(subdirs) == 1
 
 
-def should_exclude(path: Path, exclude_patterns: list[str], base_path: Path) -> bool:
-    """Check if path matches any exclude pattern.
-
-    Optimized for Windows path length limitations by using relative paths
-    when possible, falling back to absolute paths only when necessary.
-
-    Args:
-        path: Path to check for exclusion
-        exclude_patterns: List of glob patterns to match against
-        base_path: Base path for relative path calculation
-
-    Returns:
-        True if path matches any exclude pattern, False otherwise
-    """
-    # Try relative path first (Windows path length optimization)
-    # This avoids unnecessary .resolve() calls that make paths much longer
+def _compute_rel_path(path: Path, base_path: Path) -> str:
+    """Compute normalized relative path string, falling back gracefully on Windows."""
     try:
-        rel_path = str(path.relative_to(base_path))
+        return str(path.relative_to(base_path)).replace("\\", "/")
     except ValueError:
-        # Fall back to absolute if paths are incompatible
-        # (e.g., different drives on Windows, or one is not subpath of other)
         try:
-            # Resolve both paths to handle symlinks (e.g., /var -> /private/var on macOS)
-            rel_path = str(path.resolve().relative_to(base_path.resolve()))
+            return str(path.resolve().relative_to(base_path.resolve())).replace("\\", "/")
         except ValueError:
-            # Paths are completely incompatible, use string comparison
-            rel_path = str(path)
+            return str(path).replace("\\", "/")
 
-    # Normalize path separators for consistent pattern matching across platforms
-    rel_path = rel_path.replace("\\", "/")
 
-    for pattern in exclude_patterns:
-        # Direct pattern match
-        if fnmatch.fnmatch(rel_path, pattern):
+def _matches_exclude_pattern(rel_path: str, path_str: str, pattern: str) -> bool:
+    """Check if rel_path or path_str matches a single exclude pattern."""
+    if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(path_str, pattern):
+        return True
+    if "**" not in pattern:
+        return False
+    if fnmatch.fnmatch(rel_path, pattern.replace("**", "*")):
+        return True
+    core = pattern.strip("*/")
+    if core and core in rel_path.split("/"):
+        return True
+    if pattern.startswith("**/"):
+        suffix = pattern[3:]
+        if fnmatch.fnmatch(rel_path, suffix):
             return True
-        if fnmatch.fnmatch(str(path), pattern):
+        if suffix.endswith("/**") and fnmatch.fnmatch(rel_path, suffix[:-3]):
             return True
-
-        # Enhanced ** handling: ** should match 0 or more path segments
-        if "**" in pattern:
-            # Try matching with ** as a wildcard for any number of segments
-            simple_pattern = pattern.replace("**", "*")
-            if fnmatch.fnmatch(rel_path, simple_pattern):
-                return True
-
-            # Check if path contains any component that matches the pattern
-            # e.g., **/__pycache__/** should match any path containing __pycache__
-            # Extract the core pattern (remove leading/trailing **)
-            core_pattern = pattern.strip("*/")
-            if core_pattern and core_pattern in rel_path.split("/"):
-                return True
-
-            # Also check if rel_path matches when ** is treated as zero segments
-            # e.g., **/__pycache__/** should match __pycache__/*, __pycache__, etc.
-            if pattern.startswith("**/"):
-                suffix_pattern = pattern[3:]  # Remove leading **/
-                # Check if rel_path matches the suffix pattern
-                if fnmatch.fnmatch(rel_path, suffix_pattern):
-                    return True
-                # Also match just the directory name without trailing /**
-                if suffix_pattern.endswith("/**"):
-                    dir_pattern = suffix_pattern[:-3]  # Remove trailing /**
-                    if fnmatch.fnmatch(rel_path, dir_pattern):
-                        return True
-
     return False
+
+
+def should_exclude(path: Path, exclude_patterns: list[str], base_path: Path) -> bool:
+    """Check if path matches any exclude pattern."""
+    rel_path = _compute_rel_path(path, base_path)
+    path_str = str(path)
+    return any(_matches_exclude_pattern(rel_path, path_str, p) for p in exclude_patterns)
 
 
 def scan_directory(
