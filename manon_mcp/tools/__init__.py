@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .deps import ToolDependencies
-from .repo import register_repo_tools
 from .search import register_search_tools
 from .index import register_index_tools
 from .repo_crud import register_repo_crud_tools
@@ -16,7 +15,6 @@ from .dynamic import register_dynamic_tools
 
 def register_all_tools(mcp, deps: ToolDependencies):
     """Register all MCP tools on the given FastMCP instance."""
-    register_repo_tools(mcp, deps)
     register_search_tools(mcp, deps)
     register_index_tools(mcp, deps)
     register_repo_crud_tools(mcp, deps)
