@@ -8,7 +8,6 @@ from .init import register_init_tools
 from .config import register_config_tools
 from .utility import register_utility_tools
 from .health import register_health_tools
-from .dynamic import register_dynamic_tools
 
 
 def register_all_tools(mcp, deps: ToolDependencies):
@@ -19,4 +18,3 @@ def register_all_tools(mcp, deps: ToolDependencies):
     register_config_tools(mcp, deps)
     register_utility_tools(mcp, deps)
     register_health_tools(mcp, deps)
-    register_dynamic_tools(mcp, deps)
