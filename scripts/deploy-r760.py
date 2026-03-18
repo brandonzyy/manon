@@ -23,7 +23,7 @@ import paramiko
 HOST = "117.131.45.179"
 PORT = 2212
 USER = "root"
-PASS = "Ubuntu@2026!@#"
+KEY_PATH = os.path.expanduser("~/.ssh/id_ed25519")
 REMOTE_DIR = "/root/manon"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -102,7 +102,7 @@ def save_deploy_stamp():
 def connect():
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, port=PORT, username=USER, password=PASS, timeout=15)
+    c.connect(HOST, port=PORT, username=USER, key_filename=KEY_PATH, timeout=15)
     return c
 
 
