@@ -47,6 +47,33 @@ After installation, run `/dao` again.
 
 **Manual**: `/dao` - Execute one iteration, stop
 **Auto**: `/dao auto` - Loop until simplified (max 10 iterations)
+**Auto Risk**: `/dao -autorisk` - Loop with medium/high-risk simplifications enabled
+
+---
+
+## Risk Levels
+
+### Low Risk (Default Mode)
+- Dead code with zero callers
+- Duplicate functions (identical implementation)
+- Trivial wrapper functions (one-line return)
+- Small file merges (< 50 lines total)
+- Empty compatibility shims with no imports
+
+### Medium/High Risk (AutoRisk Mode)
+- Deprecated compatibility layers (requires updating imports)
+- Debug/test scripts in production code (scripts/_*.py)
+- Architectural refactoring (> 5 files affected)
+- Breaking circular dependencies (requires careful ordering)
+- Removing abstractions with multiple call sites
+
+**AutoRisk Mode** (`-autorisk`):
+- Automatically handles medium/high-risk simplifications
+- Updates imports when removing compatibility layers
+- Deletes debug scripts after confirming no production usage
+- Performs multi-file refactorings
+- Still commits one principle at a time
+- Still stops if tests fail
 
 ---
 
@@ -208,7 +235,8 @@ while iteration < 10:
 2. One principle per commit
 3. Update Manon after each change
 4. Stop if tests fail
-5. Ask before risky changes (> 5 files)
+5. **Default mode**: Ask before risky changes (> 5 files)
+6. **AutoRisk mode**: Execute risky changes automatically, but verify safety first
 
 ---
 
@@ -237,6 +265,19 @@ while iteration < 10:
 - Loop until simplified or max 10 iterations
 - Report after each iteration
 - Stop on: no opportunities OR max iterations OR error
+- Skip medium/high-risk opportunities (ask user first)
+
+**AutoRisk Mode** (`/dao -autorisk`):
+- Loop until simplified or max 10 iterations
+- Report after each iteration
+- Stop on: no opportunities OR max iterations OR error
+- **Execute medium/high-risk simplifications automatically**:
+  - Update imports when removing deprecated compatibility layers
+  - Delete debug scripts after verifying no production usage via `manon_graph`
+  - Perform multi-file refactorings (but still one principle per commit)
+  - Break circular dependencies with careful analysis
+- Still verify safety before each risky change
+- Still stop if tests fail
 
 **Priority**: Layer 1 > Layer 2 > Layer 3
 
