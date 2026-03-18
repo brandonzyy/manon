@@ -28,7 +28,9 @@ async def list_tenants():
     cur = await db.execute(
         "SELECT t.id, t.name, t.tier, t.created_at, t.subscription_expires, "
         "(SELECT COUNT(*) FROM repos WHERE tenant_id = t.id) as repo_count, "
-        "(SELECT COUNT(*) FROM api_keys WHERE tenant_id = t.id AND active = 1) as key_count "
+        "(SELECT COUNT(*) FROM api_keys WHERE tenant_id = t.id AND active = 1) as key_count, "
+        "(SELECT COUNT(*) FROM usage_log WHERE tenant_id = t.id) as total_calls, "
+        "(SELECT key FROM api_keys WHERE tenant_id = t.id AND active = 1 ORDER BY created_at LIMIT 1) as primary_key "
         "FROM tenants t ORDER BY t.created_at DESC"
     )
     rows = await cur.fetchall()

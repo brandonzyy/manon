@@ -294,9 +294,12 @@ tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90de
       <button class="btn btn-primary" onclick="createTenant()">+ 创建租户</button>
     </div>
   </div>
+  <div class="card">
+    <input id="searchInput" placeholder="🔍 搜索租户 (名称/ID/Key)" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:13px" oninput="filterTenants()">
+  </div>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>ID</th><th>名称</th><th>Tier</th><th>到期时间</th><th>仓库数</th><th>Key 数</th><th>创建时间</th></tr></thead>
+    <thead><tr><th>ID</th><th>名称</th><th>Tier</th><th>到期时间</th><th>总调用</th><th>主Key</th><th>仓库数</th><th>Key数</th><th>创建时间</th></tr></thead>
     <tbody id="tenantTable"></tbody>
   </table>
   </div>
@@ -362,44 +365,63 @@ function logout(){
 
 // ── Tenants ──
 let expandedTenant=null;
+let allTenants=[];
 async function loadTenants(){
   try{
-    const tenants=await api('GET','/admin/tenants');
+    allTenants=await api('GET','/admin/tenants');
+    const totalCalls=allTenants.reduce((s,t)=>s+(t.total_calls||0),0);
     $('stats').innerHTML=`
-      <div class="stat-card"><div class="num">${tenants.length}</div><div class="label">租户总数</div></div>
-      <div class="stat-card"><div class="num">${tenants.reduce((s,t)=>s+t.repo_count,0)}</div><div class="label">仓库总数</div></div>
-      <div class="stat-card"><div class="num">${tenants.reduce((s,t)=>s+t.key_count,0)}</div><div class="label">活跃 Key</div></div>`;
-    const tb=$('tenantTable');tb.innerHTML='';
-    tenants.forEach(t=>{
-      let subCell='<td class="sub-cell">';
-      if(!t.subscription_expires){
-        subCell+=`<span class="sub-forever" style="cursor:pointer" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','')" title="点击设置">∞</span>`;
-      }else{
-        const exp=new Date(t.subscription_expires);
-        const now=new Date();
-        const isExpired=exp<now;
-        const cls=isExpired?'sub-expired':'sub-active';
-        const fmt=exp.toISOString().split('T')[0];
-        subCell+=`<span class="${cls}" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','${t.subscription_expires||''}')" title="点击管理">${fmt}</span>`;
-      }
-      subCell+='</td>';
-      const openCls=expandedTenant===t.id?' open':'';
-      tb.innerHTML+=`<tr class="expandable${openCls}" onclick="toggleKeys('${t.id}')">
-        <td class="mono">${t.id}</td>
-        <td>${t.name}</td>
-        <td><select class="tier-select" onclick="event.stopPropagation()" onchange="changeTier('${t.id}',this.value)">
-          <option value="free"${t.tier==='free'?' selected':''}>Free</option>
-          <option value="pro"${t.tier==='pro'?' selected':''}>Pro</option>
-          <option value="enterprise"${t.tier==='enterprise'?' selected':''}>Enterprise</option>
-        </select></td>
-        ${subCell}
-        <td>${t.repo_count}</td><td>${t.key_count}</td>
-        <td style="color:var(--text3);font-size:12px">${t.created_at||'-'}</td>
-      </tr>`;
-      if(expandedTenant===t.id)tb.innerHTML+=`<tr class="key-row"><td colspan="7" id="keys_${t.id}"><em style="color:var(--text3)">加载中...</em></td></tr>`;
-    });
-    if(expandedTenant)loadKeys(expandedTenant);
+      <div class="stat-card"><div class="num">${allTenants.length}</div><div class="label">租户总数</div></div>
+      <div class="stat-card"><div class="num">${allTenants.reduce((s,t)=>s+t.repo_count,0)}</div><div class="label">仓库总数</div></div>
+      <div class="stat-card"><div class="num">${totalCalls.toLocaleString()}</div><div class="label">总调用次数</div></div>
+      <div class="stat-card"><div class="num">${allTenants.reduce((s,t)=>s+t.key_count,0)}</div><div class="label">活跃 Key</div></div>`;
+    renderTenants(allTenants);
   }catch(e){$('status').textContent='错误: '+e.message;$('status').style.color='var(--red)'}
+}
+function renderTenants(tenants){
+  const tb=$('tenantTable');tb.innerHTML='';
+  tenants.forEach(t=>{
+    let subCell='<td class="sub-cell">';
+    if(!t.subscription_expires){
+      subCell+=`<span class="sub-forever" style="cursor:pointer" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','')" title="点击设置">∞</span>`;
+    }else{
+      const exp=new Date(t.subscription_expires);
+      const now=new Date();
+      const isExpired=exp<now;
+      const cls=isExpired?'sub-expired':'sub-active';
+      const fmt=exp.toISOString().split('T')[0];
+      subCell+=`<span class="${cls}" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','${t.subscription_expires||''}')" title="点击管理">${fmt}</span>`;
+    }
+    subCell+='</td>';
+    const keyMasked=t.primary_key?t.primary_key.slice(0,12)+'...'+t.primary_key.slice(-4):'-';
+    const openCls=expandedTenant===t.id?' open':'';
+    tb.innerHTML+=`<tr class="expandable${openCls}" onclick="toggleKeys('${t.id}')">
+      <td class="mono">${t.id}</td>
+      <td>${t.name}</td>
+      <td><select class="tier-select" onclick="event.stopPropagation()" onchange="changeTier('${t.id}',this.value)">
+        <option value="free"${t.tier==='free'?' selected':''}>Free</option>
+        <option value="pro"${t.tier==='pro'?' selected':''}>Pro</option>
+        <option value="enterprise"${t.tier==='enterprise'?' selected':''}>Enterprise</option>
+      </select></td>
+      ${subCell}
+      <td style="color:var(--cyan);font-weight:600">${(t.total_calls||0).toLocaleString()}</td>
+      <td class="mono" style="font-size:11px">${keyMasked}${t.primary_key?` <button class="btn btn-sm" onclick="event.stopPropagation();copyKey('${t.primary_key}')">复制</button>`:''}</td>
+      <td>${t.repo_count}</td><td>${t.key_count}</td>
+      <td style="color:var(--text3);font-size:12px">${t.created_at||'-'}</td>
+    </tr>`;
+    if(expandedTenant===t.id)tb.innerHTML+=`<tr class="key-row"><td colspan="9" id="keys_${t.id}"><em style="color:var(--text3)">加载中...</em></td></tr>`;
+  });
+  if(expandedTenant)loadKeys(expandedTenant);
+}
+function filterTenants(){
+  const q=$('searchInput').value.toLowerCase();
+  if(!q){renderTenants(allTenants);return}
+  const filtered=allTenants.filter(t=>
+    t.name.toLowerCase().includes(q)||
+    t.id.toLowerCase().includes(q)||
+    (t.primary_key&&t.primary_key.toLowerCase().includes(q))
+  );
+  renderTenants(filtered);
 }
 async function createTenant(){
   const name=$('newName').value.trim();
