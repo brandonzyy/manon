@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.ast.chunking import _module_from_rel_path
+from core.ast.chunking import _make_entity_id, _module_from_rel_path
 
 from .embed import EmbeddingClient
 from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex
@@ -33,11 +33,6 @@ class QueryResult:
     relations: list[dict[str, Any]] = field(default_factory=list)
     chunks: list[dict[str, Any]] = field(default_factory=list)
     context: str = ""
-
-
-
-def _make_entity_id(module: str, symbol_name: str) -> str:
-    return f"{module}.{symbol_name}" if module else symbol_name
 
 
 def _resolve_import_by_filepath(file_path: str, import_path: str) -> str:
