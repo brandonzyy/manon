@@ -3,45 +3,276 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Manon Admin</title>
+<title>Manon Admin Console</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--cyan:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--purple:#bc8cff}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
-header{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px}
-header h1{font-size:18px;font-weight:600;color:var(--purple)}
+:root{
+  --bg:#0a0e14;--bg2:#151921;--bg3:#1d2229;--bg4:#252b35;
+  --border:#2d3340;--border-light:#3a4150;
+  --text:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+  --cyan:#4fc3f7;--cyan-dim:#1e88a8;
+  --green:#4caf50;--green-dim:#2e7d32;
+  --yellow:#ffa726;--red:#ef5350;
+  --purple:#ab47bc;--purple-dim:#7b1fa2;
+  --accent:#00d4ff;--accent-glow:rgba(0,212,255,0.15);
+  --shadow:0 2px 8px rgba(0,0,0,0.4);
+  --shadow-lg:0 8px 24px rgba(0,0,0,0.5);
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',sans-serif;
+  background:linear-gradient(135deg,#0a0e14 0%,#151921 100%);
+  color:var(--text);font-size:14px;line-height:1.6;min-height:100vh;
+}
+header{
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  padding:16px 32px;display:flex;align-items:center;gap:20px;
+  box-shadow:var(--shadow);backdrop-filter:blur(10px);
+  position:sticky;top:0;z-index:50;
+}
+header h1{
+  font-size:20px;font-weight:700;
+  background:linear-gradient(135deg,var(--accent) 0%,var(--purple) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;letter-spacing:-0.02em;
+}
 header .spacer{flex:1}
-#secretInput{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;width:280px;font-size:12px}
-#loginBtn{background:var(--purple);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px}
-#status{font-size:12px;color:var(--text2)}
-.container{max-width:1200px;margin:0 auto;padding:24px}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
-th{color:var(--text2);font-size:12px;font-weight:500}
-.btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px}
-.btn:hover{border-color:var(--cyan)}
-.btn-danger{color:var(--red)}.btn-danger:hover{border-color:var(--red)}
-.btn-primary{background:var(--cyan);color:#000;border:none;font-weight:600}
-.btn-sm{padding:3px 8px;font-size:11px}
-.form-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
-.form-row input,.form-row select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px}
+#secretInput{
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);padding:8px 14px;border-radius:8px;
+  width:300px;font-size:13px;transition:all 0.2s;
+}
+#secretInput:focus{
+  outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-glow);
+}
+#loginBtn{
+  background:linear-gradient(135deg,var(--accent) 0%,var(--cyan) 100%);
+  color:#000;border:none;padding:8px 20px;border-radius:8px;
+  cursor:pointer;font-weight:600;font-size:13px;
+  transition:all 0.2s;box-shadow:0 2px 8px rgba(0,212,255,0.3);
+}
+#loginBtn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,212,255,0.4)}
+#loginBtn:active{transform:translateY(0)}
+#logoutBtn{
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text2);padding:6px 14px;border-radius:6px;
+  cursor:pointer;font-size:12px;transition:all 0.2s;
+}
+#logoutBtn:hover{border-color:var(--red);color:var(--red)}
+#status{
+  font-size:12px;color:var(--text2);
+  padding:4px 10px;border-radius:6px;background:var(--bg3);
+}
+.container{max-width:1400px;margin:0 auto;padding:32px}
+.stat-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:20px;margin-bottom:32px;
+}
+.stat-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;padding:24px;
+  box-shadow:var(--shadow);
+  transition:all 0.3s;position:relative;overflow:hidden;
+}
+.stat-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--accent),var(--purple));
+  opacity:0;transition:opacity 0.3s;
+}
+.stat-card:hover{
+  transform:translateY(-2px);box-shadow:var(--shadow-lg);border-color:var(--border-light);
+}
+.stat-card:hover::before{opacity:1}
+.stat-card .num{
+  font-size:36px;font-weight:800;
+  background:linear-gradient(135deg,var(--accent) 0%,var(--purple) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;letter-spacing:-0.03em;
+}
+.stat-card .label{
+  font-size:12px;color:var(--text3);margin-top:8px;
+  text-transform:uppercase;letter-spacing:0.05em;font-weight:500;
+}
+.card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;padding:20px;margin-bottom:24px;
+  box-shadow:var(--shadow);
+}
+.form-row{display:flex;gap:12px;align-items:center}
+.form-row input,.form-row select{
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);padding:10px 14px;border-radius:8px;
+  font-size:13px;transition:all 0.2s;
+}
 .form-row input{flex:1}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
-.badge-free{background:var(--bg3);color:var(--text2)}
-.badge-pro{background:#1a2a3a;color:var(--cyan)}
-.badge-enterprise{background:#2a1a3a;color:var(--purple)}
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
-.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
-.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center}
-.stat-card .num{font-size:28px;font-weight:700;color:var(--purple)}
-.stat-card .label{font-size:12px;color:var(--text2);margin-top:4px}
-tr.expandable{cursor:pointer}tr.expandable:hover{background:var(--bg2)}
-.key-row{background:var(--bg2)}
-.key-row td{padding-left:32px;font-size:12px}
-.mono{font-family:monospace;font-size:12px}
-.tier-select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px}
-.toast{position:fixed;bottom:24px;right:24px;background:var(--green);color:#000;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s}
-.toast.show{opacity:1}
+.form-row input:focus,.form-row select:focus{
+  outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-glow);
+}
+.form-row select{cursor:pointer}
+.btn{
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);padding:8px 16px;border-radius:8px;
+  cursor:pointer;font-size:13px;font-weight:500;
+  transition:all 0.2s;
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn-primary{
+  background:linear-gradient(135deg,var(--accent) 0%,var(--cyan) 100%);
+  color:#000;border:none;font-weight:600;
+  box-shadow:0 2px 8px rgba(0,212,255,0.3);
+}
+.btn-primary:hover{
+  transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,212,255,0.4);
+}
+.btn-danger{color:var(--red)}
+.btn-danger:hover{border-color:var(--red);background:rgba(239,83,80,0.1)}
+.btn-sm{padding:5px 12px;font-size:12px}
+/* ── Table ── */
+.table-wrap{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;overflow:hidden;box-shadow:var(--shadow);
+}
+table{width:100%;border-collapse:collapse}
+th{
+  text-align:left;padding:14px 16px;
+  color:var(--text3);font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.06em;
+  background:var(--bg3);border-bottom:1px solid var(--border);
+}
+td{
+  text-align:left;padding:14px 16px;
+  border-bottom:1px solid var(--border);
+  font-size:13px;
+}
+tr.expandable{cursor:pointer;transition:background 0.15s}
+tr.expandable:hover{background:var(--bg3)}
+tr.expandable td:first-child{position:relative;padding-left:28px}
+tr.expandable td:first-child::before{
+  content:'›';position:absolute;left:10px;top:50%;
+  transform:translateY(-50%);color:var(--text3);
+  font-size:16px;transition:transform 0.2s;
+}
+tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90deg)}
+.key-row{background:var(--bg3)}
+.key-row td{padding:20px 24px;font-size:12px;border-bottom:1px solid var(--border)}
+.mono{font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;color:var(--cyan)}
+.tier-select{
+  background:var(--bg4);border:1px solid var(--border);
+  color:var(--text);padding:5px 10px;border-radius:6px;
+  font-size:12px;cursor:pointer;transition:all 0.2s;
+}
+.tier-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+
+/* ── Subscription ── */
+.sub-cell{white-space:nowrap}
+.sub-forever{color:var(--text3);cursor:pointer;font-size:16px;transition:color 0.2s}
+.sub-forever:hover{color:var(--text2)}
+.sub-active{
+  color:var(--green);cursor:pointer;font-weight:500;
+  padding:3px 8px;border-radius:4px;
+  background:rgba(76,175,80,0.1);transition:all 0.2s;
+}
+.sub-active:hover{background:rgba(76,175,80,0.2)}
+.sub-expired{
+  color:var(--red);cursor:pointer;font-weight:500;
+  padding:3px 8px;border-radius:4px;
+  background:rgba(239,83,80,0.1);transition:all 0.2s;
+  animation:pulse-red 2s infinite;
+}
+.sub-expired:hover{background:rgba(239,83,80,0.2)}
+@keyframes pulse-red{
+  0%,100%{box-shadow:none}
+  50%{box-shadow:0 0 8px rgba(239,83,80,0.3)}
+}
+
+/* ── Modal ── */
+.modal-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);
+  display:none;align-items:center;justify-content:center;z-index:100;
+  opacity:0;transition:opacity 0.25s;
+}
+.modal-overlay.open{display:flex;opacity:1}
+.modal{
+  background:var(--bg2);border:1px solid var(--border-light);
+  border-radius:16px;padding:28px;
+  min-width:380px;max-width:440px;
+  box-shadow:0 16px 48px rgba(0,0,0,0.6);
+  transform:scale(0.95);transition:transform 0.25s;
+}
+.modal-overlay.open .modal{transform:scale(1)}
+.modal h3{
+  font-size:16px;font-weight:700;margin-bottom:16px;
+  padding-bottom:12px;border-bottom:1px solid var(--border);
+}
+.modal .renew-btns{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.modal .renew-btns button{flex:1;min-width:70px;font-weight:600}
+.modal .manual-row{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+.modal .manual-row input{
+  flex:1;background:var(--bg3);border:1px solid var(--border);
+  color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;
+}
+.modal .manual-row input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.modal .modal-footer{
+  display:flex;justify-content:flex-end;gap:10px;
+  margin-top:16px;padding-top:12px;border-top:1px solid var(--border);
+}
+.modal-label{font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em}
+.modal-current{
+  font-size:13px;color:var(--text2);margin-bottom:16px;
+  padding:8px 12px;background:var(--bg3);border-radius:6px;
+}
+
+/* ── Usage Stats ── */
+.usage-section{
+  margin-bottom:16px;padding:16px;
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:10px;
+}
+.usage-section h4{
+  font-size:12px;margin-bottom:12px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:0.06em;font-weight:600;
+}
+.usage-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.usage-stat{
+  text-align:center;padding:12px;
+  background:var(--bg3);border-radius:8px;
+  border:1px solid var(--border);
+}
+.usage-stat .num{
+  font-size:22px;font-weight:700;
+  background:linear-gradient(135deg,var(--accent),var(--purple));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;
+}
+.usage-stat .label{font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:0.04em}
+.endpoint-label{font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em}
+.endpoint-list{font-size:12px}
+.endpoint-item{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 10px;border-radius:6px;
+  transition:background 0.15s;
+}
+.endpoint-item:hover{background:var(--bg3)}
+.endpoint-item .ep-name{color:var(--text)}
+.endpoint-item .ep-count{
+  color:var(--accent);font-weight:600;font-family:'SF Mono','Cascadia Code',monospace;
+}
+
+/* ── Toast ── */
+.toast{
+  position:fixed;bottom:24px;right:24px;
+  background:var(--green);color:#fff;
+  padding:12px 20px;border-radius:10px;
+  font-size:13px;font-weight:600;
+  box-shadow:0 4px 16px rgba(76,175,80,0.4);
+  opacity:0;transform:translateY(10px);
+  transition:all 0.3s;z-index:200;
+}
+.toast.show{opacity:1;transform:translateY(0)}
+
 #content{display:none}
 </style>
 </head>
@@ -49,9 +280,9 @@ tr.expandable{cursor:pointer}tr.expandable:hover{background:var(--bg2)}
 <header>
   <h1>Manon Admin</h1>
   <span class="spacer"></span>
-  <input id="secretInput" type="password" placeholder="Admin Secret">
+  <input id="secretInput" type="password" placeholder="输入 Admin Secret 以登录">
   <button id="loginBtn" onclick="login()">登录</button>
-  <button id="logoutBtn" style="display:none" class="btn btn-sm" onclick="logout()">登出</button>
+  <button id="logoutBtn" style="display:none" onclick="logout()">登出</button>
   <span id="status"></span>
 </header>
 <div class="container" id="content">
@@ -63,12 +294,36 @@ tr.expandable{cursor:pointer}tr.expandable:hover{background:var(--bg2)}
       <button class="btn btn-primary" onclick="createTenant()">+ 创建租户</button>
     </div>
   </div>
+  <div class="table-wrap">
   <table>
-    <thead><tr><th>ID</th><th>名称</th><th>Tier</th><th>仓库数</th><th>Key 数</th><th>创建时间</th></tr></thead>
+    <thead><tr><th>ID</th><th>名称</th><th>Tier</th><th>到期时间</th><th>仓库数</th><th>Key 数</th><th>创建时间</th></tr></thead>
     <tbody id="tenantTable"></tbody>
   </table>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal-overlay" id="subModal" onclick="if(event.target===this)closeSubModal()">
+  <div class="modal">
+    <h3>订阅管理 — <span id="subModalTenant"></span></h3>
+    <div class="modal-current">当前到期: <span id="subModalCurrent"></span></div>
+    <div class="modal-label">续费</div>
+    <div class="renew-btns">
+      <button class="btn" onclick="renewSub(1)">+1 月</button>
+      <button class="btn" onclick="renewSub(3)">+3 月</button>
+      <button class="btn" onclick="renewSub(6)">+6 月</button>
+      <button class="btn" onclick="renewSub(12)">+12 月</button>
+    </div>
+    <div class="modal-label">手动设置到期日期</div>
+    <div class="manual-row">
+      <input type="date" id="subManualDate">
+      <button class="btn btn-primary btn-sm" onclick="setSubDate()">设置</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm btn-danger" onclick="clearSub()">清除 (永久)</button>
+      <button class="btn btn-sm" onclick="closeSubModal()">关闭</button>
+    </div>
+  </div>
+</div>
 <script>
 let SECRET='';
 const $=id=>document.getElementById(id);
@@ -116,8 +371,20 @@ async function loadTenants(){
       <div class="stat-card"><div class="num">${tenants.reduce((s,t)=>s+t.key_count,0)}</div><div class="label">活跃 Key</div></div>`;
     const tb=$('tenantTable');tb.innerHTML='';
     tenants.forEach(t=>{
-      const bc={free:'badge-free',pro:'badge-pro',enterprise:'badge-enterprise'}[t.tier]||'badge-free';
-      tb.innerHTML+=`<tr class="expandable" onclick="toggleKeys('${t.id}')">
+      let subCell='<td class="sub-cell">';
+      if(!t.subscription_expires){
+        subCell+=`<span class="sub-forever" style="cursor:pointer" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','')" title="点击设置">∞</span>`;
+      }else{
+        const exp=new Date(t.subscription_expires);
+        const now=new Date();
+        const isExpired=exp<now;
+        const cls=isExpired?'sub-expired':'sub-active';
+        const fmt=exp.toISOString().split('T')[0];
+        subCell+=`<span class="${cls}" onclick="event.stopPropagation();openSubModal('${t.id}','${t.name}','${t.subscription_expires||''}')" title="点击管理">${fmt}</span>`;
+      }
+      subCell+='</td>';
+      const openCls=expandedTenant===t.id?' open':'';
+      tb.innerHTML+=`<tr class="expandable${openCls}" onclick="toggleKeys('${t.id}')">
         <td class="mono">${t.id}</td>
         <td>${t.name}</td>
         <td><select class="tier-select" onclick="event.stopPropagation()" onchange="changeTier('${t.id}',this.value)">
@@ -125,10 +392,11 @@ async function loadTenants(){
           <option value="pro"${t.tier==='pro'?' selected':''}>Pro</option>
           <option value="enterprise"${t.tier==='enterprise'?' selected':''}>Enterprise</option>
         </select></td>
+        ${subCell}
         <td>${t.repo_count}</td><td>${t.key_count}</td>
-        <td style="color:var(--text2);font-size:12px">${t.created_at||'-'}</td>
+        <td style="color:var(--text3);font-size:12px">${t.created_at||'-'}</td>
       </tr>`;
-      if(expandedTenant===t.id)tb.innerHTML+=`<tr class="key-row"><td colspan="6" id="keys_${t.id}"><em style="color:var(--text2)">加载中...</em></td></tr>`;
+      if(expandedTenant===t.id)tb.innerHTML+=`<tr class="key-row"><td colspan="7" id="keys_${t.id}"><em style="color:var(--text3)">加载中...</em></td></tr>`;
     });
     if(expandedTenant)loadKeys(expandedTenant);
   }catch(e){$('status').textContent='错误: '+e.message;$('status').style.color='var(--red)'}
@@ -146,7 +414,18 @@ async function createTenant(){
 }
 
 async function changeTier(id,tier){
-  try{await api('PATCH',`/admin/tenants/${id}?tier=${tier}`);toast('Tier 已更新')}catch(e){alert('更新失败: '+e.message)}
+  try{
+    await api('PATCH',`/admin/tenants/${id}?tier=${tier}`);
+    toast('Tier 已更新');
+    if(tier!=='free'){
+      const tenants=await api('GET','/admin/tenants');
+      const t=tenants.find(x=>x.id===id);
+      if(t&&!t.subscription_expires){
+        openSubModal(id,t.name,'');
+      }
+    }
+    loadTenants();
+  }catch(e){alert('更新失败: '+e.message)}
 }
 
 async function toggleKeys(id){
@@ -158,12 +437,28 @@ async function loadKeys(tenantId){
   const el=$('keys_'+tenantId);if(!el)return;
   try{
     const keys=await api('GET',`/admin/tenants/${tenantId}/keys`);
-    let html=`<div class="form-row" style="margin-top:8px"><input id="newKeyLabel_${tenantId}" placeholder="Key 标签" style="max-width:200px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();createKey('${tenantId}')">+ 新建 Key</button></div>`;
-    html+='<table style="margin-top:4px"><thead><tr><th>Key</th><th>标签</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+    const usage=await api('GET',`/admin/tenants/${tenantId}/usage?days=30`);
+    let html=`<div class="usage-section">
+      <h4>使用统计 · 最近 30 天</h4>
+      <div class="usage-grid">
+        <div class="usage-stat"><div class="num">${usage.total_calls}</div><div class="label">总调用</div></div>
+        <div class="usage-stat"><div class="num">${usage.total_tokens}</div><div class="label">Token</div></div>
+        <div class="usage-stat"><div class="num">${usage.by_endpoint.length}</div><div class="label">工具数</div></div>
+      </div>`;
+    if(usage.by_endpoint.length>0){
+      html+='<div class="endpoint-label">工具使用频率</div><div class="endpoint-list">';
+      usage.by_endpoint.forEach(e=>{
+        html+=`<div class="endpoint-item"><span class="ep-name">${e.endpoint}</span><span class="ep-count">${e.count}</span></div>`;
+      });
+      html+='</div>';
+    }
+    html+='</div>';
+    html+=`<div class="form-row" style="margin-top:12px"><input id="newKeyLabel_${tenantId}" placeholder="Key 标签" style="max-width:200px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();createKey('${tenantId}')">+ 新建 Key</button></div>`;
+    html+='<table style="margin-top:8px"><thead><tr><th>Key</th><th>标签</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
     keys.forEach(k=>{
       const masked=k.key.slice(0,8)+'...'+k.key.slice(-4);
       const active=k.active?'<span style="color:var(--green)">活跃</span>':'<span style="color:var(--red)">已吊销</span>';
-      html+=`<tr><td class="mono">${masked} <button class="btn btn-sm" onclick="event.stopPropagation();copyKey('${k.key}')">复制</button></td><td>${k.label}</td><td>${active}</td><td style="color:var(--text2)">${k.created_at||'-'}</td>`;
+      html+=`<tr><td class="mono">${masked} <button class="btn btn-sm" onclick="event.stopPropagation();copyKey('${k.key}')">复制</button></td><td>${k.label}</td><td>${active}</td><td style="color:var(--text3)">${k.created_at||'-'}</td>`;
       html+=k.active?`<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();revokeKey('${tenantId}','${k.key}')">吊销</button></td>`:'<td></td>';
       html+='</tr>';
     });
@@ -190,6 +485,49 @@ async function revokeKey(tenantId,key){
 
 function copyKey(key){
   navigator.clipboard.writeText(key).then(()=>toast('已复制到剪贴板'));
+}
+
+// ── Subscription ──
+let currentSubTenant=null;
+function openSubModal(id,name,expires){
+  currentSubTenant=id;
+  $('subModalTenant').textContent=name;
+  $('subModalCurrent').textContent=expires||'永久 (free)';
+  $('subModal').classList.add('open');
+}
+function closeSubModal(){
+  $('subModal').classList.remove('open');
+  currentSubTenant=null;
+}
+async function renewSub(months){
+  if(!currentSubTenant)return;
+  try{
+    await api('PATCH',`/admin/tenants/${currentSubTenant}?subscription_months=${months}`);
+    toast(`已续费 ${months} 个月`);
+    closeSubModal();
+    loadTenants();
+  }catch(e){alert('续费失败: '+e.message)}
+}
+async function setSubDate(){
+  if(!currentSubTenant)return;
+  const date=$('subManualDate').value;
+  if(!date){alert('请选择日期');return}
+  try{
+    await api('PATCH',`/admin/tenants/${currentSubTenant}?subscription_expires=${encodeURIComponent(date+'T23:59:59Z')}`);
+    toast('到期时间已设置');
+    closeSubModal();
+    loadTenants();
+  }catch(e){alert('设置失败: '+e.message)}
+}
+async function clearSub(){
+  if(!currentSubTenant)return;
+  if(!confirm('确认清除到期时间？租户将变为永久 (free)。'))return;
+  try{
+    await api('PATCH',`/admin/tenants/${currentSubTenant}?subscription_expires=`);
+    toast('已清除到期时间');
+    closeSubModal();
+    loadTenants();
+  }catch(e){alert('清除失败: '+e.message)}
 }
 
 // auto-login from cookie

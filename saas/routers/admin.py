@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
 
 from ..config import settings
 from ..db import get_db
@@ -25,7 +26,7 @@ async def require_admin(x_admin_secret: str = Header(...)):
 async def list_tenants():
     db = await get_db()
     cur = await db.execute(
-        "SELECT t.id, t.name, t.tier, t.created_at, "
+        "SELECT t.id, t.name, t.tier, t.created_at, t.subscription_expires, "
         "(SELECT COUNT(*) FROM repos WHERE tenant_id = t.id) as repo_count, "
         "(SELECT COUNT(*) FROM api_keys WHERE tenant_id = t.id AND active = 1) as key_count "
         "FROM tenants t ORDER BY t.created_at DESC"
@@ -52,15 +53,51 @@ async def create_tenant(body: TenantCreate):
 
 
 @router.patch("/tenants/{tenant_id}", dependencies=[Depends(require_admin)])
-async def update_tenant(tenant_id: str, tier: str | None = None, name: str | None = None):
+async def update_tenant(
+    tenant_id: str,
+    tier: str | None = None,
+    name: str | None = None,
+    subscription_months: int | None = None,
+    subscription_expires: str | None = None,
+):
     db = await get_db()
-    cur = await db.execute("SELECT id FROM tenants WHERE id = ?", (tenant_id,))
-    if not await cur.fetchone():
+    cur = await db.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,))
+    tenant = await cur.fetchone()
+    if not tenant:
         raise HTTPException(404, "tenant not found")
     if tier:
         await db.execute("UPDATE tenants SET tier = ? WHERE id = ?", (tier, tenant_id))
     if name:
         await db.execute("UPDATE tenants SET name = ? WHERE id = ?", (name, tenant_id))
+    if subscription_months is not None and subscription_months > 0:
+        # extend from current expiry or now
+        existing = tenant["subscription_expires"]
+        if existing:
+            try:
+                base = datetime.fromisoformat(existing)
+            except ValueError:
+                base = datetime.now(timezone.utc)
+        else:
+            base = datetime.now(timezone.utc)
+        # if already expired, extend from now instead
+        if base < datetime.now(timezone.utc):
+            base = datetime.now(timezone.utc)
+        new_month = base.month + subscription_months
+        new_year = base.year + (new_month - 1) // 12
+        new_month = (new_month - 1) % 12 + 1
+        new_day = min(base.day, [31,29 if new_year%4==0 and (new_year%100!=0 or new_year%400==0) else 28,31,30,31,30,31,31,30,31,30,31][new_month-1])
+        new_expires = base.replace(year=new_year, month=new_month, day=new_day)
+        await db.execute(
+            "UPDATE tenants SET subscription_expires = ? WHERE id = ?",
+            (new_expires.isoformat(), tenant_id),
+        )
+    elif subscription_expires is not None:
+        # direct set — empty string clears it
+        val = subscription_expires if subscription_expires else None
+        await db.execute(
+            "UPDATE tenants SET subscription_expires = ? WHERE id = ?",
+            (val, tenant_id),
+        )
     await db.commit()
     cur = await db.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,))
     return dict(await cur.fetchone())
@@ -102,3 +139,29 @@ async def revoke_key(tenant_id: str, key: str):
     )
     await db.commit()
     return {"ok": True, "key": key, "status": "revoked"}
+
+
+# ── Usage Stats ───────────────────────────────────────
+@router.get("/tenants/{tenant_id}/usage", dependencies=[Depends(require_admin)])
+async def get_tenant_usage(tenant_id: str, days: int = Query(30, ge=1, le=365)):
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(tokens),0) as tok "
+        "FROM usage_log WHERE tenant_id = ? AND created_at >= datetime('now', ?)",
+        (tenant_id, f"-{days} days"),
+    )
+    row = await cur.fetchone()
+    cur2 = await db.execute(
+        "SELECT endpoint, COUNT(*) as cnt FROM usage_log "
+        "WHERE tenant_id = ? AND created_at >= datetime('now', ?) "
+        "GROUP BY endpoint ORDER BY cnt DESC",
+        (tenant_id, f"-{days} days"),
+    )
+    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur2.fetchall()]
+    return {
+        "tenant_id": tenant_id,
+        "period_days": days,
+        "total_calls": row["cnt"],
+        "total_tokens": row["tok"],
+        "by_endpoint": by_endpoint,
+    }

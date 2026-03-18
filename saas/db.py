@@ -73,6 +73,9 @@ _MIGRATIONS = [
         coverage        REAL,
         created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+    # subscription billing
+    "ALTER TABLE tenants ADD COLUMN subscription_expires TEXT",
+    "ALTER TABLE tenants ADD COLUMN subscription_note TEXT",
 ]
 
 
