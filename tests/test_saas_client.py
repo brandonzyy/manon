@@ -99,13 +99,6 @@ class TestIndexingAPIs:
             assert result["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_push_update(self):
-        with patch("core.saas_client._post", new_callable=AsyncMock) as mock:
-            mock.return_value = {"updated": True}
-            result = await saas_client.push_update("r1")
-            assert result["updated"]
-
-    @pytest.mark.asyncio
     async def test_index_status(self):
         with patch("core.saas_client._get", new_callable=AsyncMock) as mock:
             mock.return_value = {"status": "done"}

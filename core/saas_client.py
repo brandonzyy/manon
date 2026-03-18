@@ -106,10 +106,6 @@ async def sync_ast(repo_id: str, files: list[dict], deleted_files: list[str], *,
     })
 
 
-async def push_update(repo_id: str) -> dict:
-    return await _post(f"/api/v1/repos/{repo_id}/push-update", {})
-
-
 async def index_status(repo_id: str) -> dict:
     return await _get(f"/api/v1/repos/{repo_id}/index-status")
 
