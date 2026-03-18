@@ -10,18 +10,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# Test files that require the 'web' module (not yet available in this repo)
-collect_ignore = [
-    "tests/test_compact.py",
-    "tests/test_decompose.py",
-    "tests/test_design.py",
-    "tests/test_spec.py",
-    "tests/test_web_coach.py",
-    "tests/test_web_llm.py",
-    "tests/test_web_modules.py",
-    "tests/test_worker_tools.py",
-]
-
 
 def pytest_addoption(parser):
     parser.addoption(

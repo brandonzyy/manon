@@ -156,15 +156,6 @@ def mock_httpx_response():
 
 
 @pytest.fixture
-def clean_sessions():
-    """Clear _sessions dict before and after each test."""
-    from web.coach import pipeline
-    pipeline._sessions.clear()
-    yield
-    pipeline._sessions.clear()
-
-
-@pytest.fixture
 def event_loop():
     """Create an event loop for async tests."""
     loop = asyncio.new_event_loop()
