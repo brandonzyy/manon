@@ -178,8 +178,23 @@ def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
     return metrics, non_module_entities
 
 
-def _compute_tc(nodes: dict, edges: list, non_module_entities: list) -> dict:
-    """TC: Test Coverage — entities reachable from test files (transitive)."""
+def _compute_tc(nodes: dict, edges: list, non_module_entities: list, *, coverage_map: dict | None = None) -> dict:
+    """TC: Test Coverage — via coverage_map bypass or graph-entity fallback.
+
+    Bypass (preferred): coverage_map produced by manon-scan-tests.py.
+      Intersects the covered symbol set with testable graph entities.
+    Fallback: graph-based traversal from test-file entities (requires tests
+      to be indexed — always returns 0 when tests/ is excluded).
+    """
+    if coverage_map:
+        covered_set = set(coverage_map.get("covered", []))
+        # No test files in graph when using bypass, so testable = all non-module entities
+        testable = non_module_entities
+        tested_count = len(covered_set & set(testable))
+        ratio = tested_count / max(len(testable), 1)
+        return {"ratio": round(ratio, 3), "tested": tested_count, "testable": len(testable)}
+
+    # Fallback: graph-based (requires test files to be indexed)
     test_entity_ids = set()
     for nid, data in nodes.items():
         if _is_test_file(data.get("file_path", "")):
@@ -234,7 +249,7 @@ def _compute_id(edges: list) -> dict:
     return {"max_depth": max_depth}
 
 
-def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
+def compute_graph_metrics(graph: "CodeGraph", *, coverage_map: dict | None = None) -> dict[str, Any]:
     """Compute all 8 health dimensions from the knowledge graph."""
     g = graph._g
     nodes = dict(g.nodes(data=True))
@@ -245,7 +260,7 @@ def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
         "cd": _compute_cd(edges),
         "fi": _compute_fi(edges),
         "dc": dc,
-        "tc": _compute_tc(nodes, edges, non_module_entities),
+        "tc": _compute_tc(nodes, edges, non_module_entities, coverage_map=coverage_map),
         "fs": _compute_fs(nodes),
         "id": _compute_id(edges),
         "entity_count": len(nodes),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -160,7 +161,16 @@ async def code_health_repo(
             repo_id, mg.kg_path, (mg.kg_path / "graph.json").exists(),
         )
 
-    graph_metrics = compute_graph_metrics(g)
+    # Load coverage map from local scan cache (written by manon-scan-tests.py)
+    coverage_map = None
+    coverage_cache = Path.home() / ".manon" / "scan_cache" / f"{repo_id}_coverage.json"
+    if coverage_cache.exists():
+        try:
+            coverage_map = json.loads(coverage_cache.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    graph_metrics = compute_graph_metrics(g, coverage_map=coverage_map)
     debt_metrics = None
     if body and body.get("debt_metrics"):
         debt_metrics = body["debt_metrics"]
