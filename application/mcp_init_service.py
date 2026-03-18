@@ -16,6 +16,29 @@ from core.ast import (
 log = logging.getLogger("application.mcp_init_service")
 
 
+def check_version_update(manon_dir: str) -> str | None:
+    """Check if a newer version is available on GitHub (non-blocking)."""
+    try:
+        import urllib.request
+        version_file = Path(manon_dir) / "VERSION"
+        if not version_file.exists():
+            return None
+
+        local_version = version_file.read_text().strip()
+
+        # Check GitHub for latest version
+        url = "https://raw.githubusercontent.com/brandonzyy/manon/master/VERSION"
+        req = urllib.request.Request(url, headers={"User-Agent": "Manon-MCP"})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            remote_version = response.read().decode("utf-8").strip()
+
+        if remote_version != local_version:
+            return f"\n💡 新版本可用: v{remote_version} (当前: v{local_version})\n   更新命令: cd {manon_dir} && git pull && bash install.sh"
+        return None
+    except Exception:
+        return None  # Silent fail, non-blocking
+
+
 def resolve_scan_python() -> str:
     """Return a stable Python entrypoint for external scan scripts."""
     candidates: list[str] = []
@@ -121,6 +144,11 @@ async def initialize_project(
     manon_dir = str(Path(__file__).resolve().parent.parent)
     lines.append(f"\n<!-- MANON_DIR={manon_dir} -->")
     lines.append(f"<!-- MANON_PYTHON={resolve_scan_python()} -->")
+
+    # Check for version updates (non-blocking)
+    update_msg = check_version_update(manon_dir)
+    if update_msg:
+        lines.append(update_msg)
 
     proj = get_project(project_path)
     if needs_smart_analysis_refresh(project_path, proj):
