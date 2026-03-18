@@ -188,11 +188,36 @@ def _compute_tc(nodes: dict, edges: list, non_module_entities: list, *, coverage
     """
     if coverage_map:
         covered_set = set(coverage_map.get("covered", []))
-        # No test files in graph when using bypass, so testable = all non-module entities
         testable = non_module_entities
-        tested_count = len(covered_set & set(testable))
-        ratio = tested_count / max(len(testable), 1)
-        return {"ratio": round(ratio, 3), "tested": tested_count, "testable": len(testable)}
+
+        # Build lookup: fn_name -> list of module prefixes from covered symbols.
+        # Needed because tests often import via __init__ re-exports, producing a
+        # shorter path (e.g. "core.ast.fn") that doesn't exactly match the graph
+        # entity's definition path (e.g. "core.ast.project.fn").
+        covered_by_fn: dict[str, list[str]] = {}
+        for sym in covered_set:
+            dot = sym.rfind(".")
+            if dot != -1:
+                covered_by_fn.setdefault(sym[dot + 1:], []).append(sym[:dot])
+            else:
+                covered_by_fn.setdefault(sym, []).append("")
+
+        tested: set[str] = set()
+        for entity in testable:
+            dot = entity.rfind(".")
+            if dot != -1:
+                e_prefix, fn = entity[:dot], entity[dot + 1:]
+            else:
+                e_prefix, fn = "", entity
+            for c_prefix in covered_by_fn.get(fn, []):
+                # Re-export match: covered prefix is a leading segment of entity prefix
+                # e.g. c_prefix="core.ast", e_prefix="core.ast.project" → match
+                if e_prefix.startswith(c_prefix) or c_prefix.startswith(e_prefix):
+                    tested.add(entity)
+                    break
+
+        ratio = len(tested) / max(len(testable), 1)
+        return {"ratio": round(ratio, 3), "tested": len(tested), "testable": len(testable)}
 
     # Fallback: graph-based (requires test files to be indexed)
     test_entity_ids = set()
