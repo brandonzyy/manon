@@ -22,36 +22,76 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 err()   { echo -e "${RED}[x]${NC} $1"; exit 1; }
 head1() { echo -e "\n${CYAN}── $1 ──${NC}"; }
 
-# ── Deep-query rules (shared across platforms) ────────
+# ── Shared content ────────────────────────────────────
 MANON_RULES='# Manon — 代码智能工具规则
-
-## 工具使用规则（MUST）
 
 当用户提问涉及代码理解、架构分析、代码搜索时，必须使用 Manon MCP 工具。
 
-### 默认深度查询
-
-**所有涉及代码理解的查询，必须使用 `manon_deep_query`**，不使用 `manon_search`。
-
-manon_deep_query 自动执行多轮迭代：拆解子问题 → 检查覆盖 → 补充查询 → 确保完整。
-这保证每次查询都能获取到回答问题所需的全部代码上下文。
+**默认深度查询**：所有代码理解查询使用 `manon_deep_query`（自动多轮迭代）
 
 | 场景 | 工具 |
 |------|------|
-| 任何代码理解/搜索 | `manon_deep_query` |
-| 查调用关系/依赖 | `manon_graph` |
-| 评估改动影响 | `manon_impact` |
-| 任务规划 | `manon_pipeline_start` |
+| 代码理解/搜索 | `manon_deep_query` |
+| 调用关系/依赖 | `manon_graph` |
+| 改动影响 | `manon_impact` |
 
-### 每轮对话自动查询
+**规则**：先图谱后搜索，图谱不足时声明"图谱未覆盖，补充搜索"'
 
-每轮用户对话如果涉及代码相关内容（提问、修改、分析），
-必须先调用 `manon_deep_query` 获取完整上下文，再回答或动手。
+MANON_SKILL='---
+name: manon
+description: /manon -- 进入 Manon 模式
+user_invocable: true
+---
 
-### 禁止跳过
+# Manon 初始化
 
-- 禁止跳过图谱直接搜索文件
-- 图谱不足时才可补充搜索，且必须声明"图谱未覆盖，补充搜索"'
+**核心规则**：
+- 必须按顺序执行 Step 1-6，不跳步
+- 工具返回的 `<!-- DISPLAY_VERBATIM -->` 内容必须原样输出给用户
+- 扫描脚本必须用 `MANON_PYTHON`，不用系统 python
+
+---
+
+## Step 1: Init
+`manon_init(project_path)` → 提取 `repo_id`
+
+## Step 2: Smart Analysis
+- 如果输出含 `<!-- SMART_ANALYSIS_DONE -->` → 跳到 Step 3
+- 如果输出含 `<!-- SMART_ANALYSIS_NEEDED -->` → 执行：
+  1. `manon_directory_signals(project_path)` 获取目录信号
+  2. 根据【目录角色规则】判断每个目录 index/skip
+  3. `manon_configure_excludes(project_path, ["**/skip_dir/**", ...])`
+  4. 向用户展示分析结果
+
+## Step 3: Scan & Upload
+1. 从 Step 1 输出提取 `MANON_DIR` 和 `MANON_PYTHON`
+2. Bash: `"<MANON_PYTHON>" "<MANON_DIR>/scripts/manon-scan.py" <repo_id>`
+   - 如报错（ModuleNotFoundError/ImportError/文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
+3. `manon_scan_files(repo_id)`
+4. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
+
+## Step 4: Index Status
+`manon_index_status(repo_id)` → **表格形式完整呈现**，不总结不省略
+
+## Step 5: Code Health
+`manon_code_health(repo_id)` → **表格形式完整呈现**，不总结不省略
+
+## Step 6: Activate
+告知用户 Manon 已激活，并说明 hooks 功能：
+- **git push hook** - push 后自动更新图谱 + 打印健康评分
+- **Claude Code hooks** - 强制 Manon 优先（Grep/Glob/Explore 前必须先查图谱，commit 后提示 impact）
+
+---
+
+## 目录角色规则（用于 Step 2）
+
+**排除（skip）**：
+`scripts/` `tools/` `bin/` `examples/` `demo/` `docs/` `assets/` `static/` `public/` `data/` `fixtures/` `config/`
+
+**索引（index）**：
+`src/` `lib/` `core/` `app/` `pkg/` `internal/` + 有 `__init__.py`/`package.json`/`Cargo.toml` 的目录
+
+**不确定时**：源码文件占比 > 30% → index'
 
 # ══════════════════════════════════════════════════════
 #  Platform detection
@@ -141,95 +181,7 @@ configure_claude_code() {
 
     # /manon Skill (Claude Code exclusive)
     mkdir -p "$skill_dir"
-    cat > "$skill_dir/SKILL.md" <<SKILLEOF
----
-name: manon
-description: /manon — 进入 Manon 模式，初始化项目知识图谱连接
-user_invocable: true
----
-
-$MANON_RULES
-
-## 初始化流程（/manon 触发时执行）
-
-执行以下步骤，按顺序完成：
-
-### Step 1: manon_init
-调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
-
-### Step 2: Smart Analysis（首次执行）
-检查 \`manon_init\` 输出中的标记：
-- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
-- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
-
-**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
-
-**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
-
-**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
-- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
-- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
-
-**2d.** 向用户展示分析结果：
-\`\`\`
-🧠 智能分析
-  ✅ src/     核心源码
-  ✅ lib/     共享库
-  ⊘  docs/   纯文档目录
-  ⊘  data/   数据文件
-💡 已自动排除: docs, data
-\`\`\`
-
-### Step 3: 文件同步（AST 提取 + 上传）
-
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
-
-**3b.** 用 Bash 运行扫描脚本：
-\`\`\`
-<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
-\`\`\`
-- 脚本输出 JSON: {total_files, deleted_files, total_batches}
-- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
-- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
-
-**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
-
-**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
-- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
-- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
-
-### Step 4: 索引覆盖率
-调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
-原样输出结果给用户。
-
-### Step 5: 代码健康度
-调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
-原样输出结果给用户。
-
-### Step 6: 激活
-告知用户 Manon 模式已激活，可以开始使用代码智能工具。
-
----
-
-## 目录判断规则
-
-用于 Step 2b，判断每个顶级目录是否值得索引：
-
-### 判断标准（按优先级）
-
-1. **源码占比**：目录内编程语言扩展名（.py .js .ts .tsx .java .go .rs .cpp .c .php .rb .swift .kt 等）文件占比 > 30% → index。纯文档(.md)、配置(.json/.yaml)、图片、数据文件等目录 → skip。
-
-2. **构建配置**：有 package.json / tsconfig.json / Cargo.toml / go.mod / CMakeLists.txt / build.gradle 等构建配置的目录，通常是可构建的源码模块 → index。
-
-3. **业务关联**：
-   - 核心业务代码、共享库、扩展模块 → index
-   - 静态资源（images/fonts/icons）、文档站（docs）、数据目录（data/fixtures）、日志（logs） → skip
-
-### 注意事项
-- codeindex 有 GenericParser 可处理任意 tree-sitter 支持的语言，不必因语言"不支持"而跳过
-- 测试目录（test/tests/__tests__）中的测试文件由 codeindex 的测试排除机制自动处理，不需要手动排除整个目录
-- 如果不确定，偏向 index（宁多勿少）
-SKILLEOF
+    echo "$MANON_SKILL" > "$skill_dir/SKILL.md"
     info "Claude Code /manon Skill installed"
 
     # Install Claude Code hooks (PreToolUse + PostToolUse)
@@ -347,72 +299,7 @@ configure_codebuddy() {
 
     # /manon Skill
     mkdir -p "$skill_dir"
-    cat > "$skill_dir/SKILL.md" <<SKILLEOF
----
-name: manon
-description: /manon — 进入 Manon 模式，初始化项目知识图谱连接
-user_invocable: true
----
-
-$MANON_RULES
-
-## 初始化流程（/manon 触发时执行）
-
-执行以下步骤，按顺序完成：
-
-### Step 1: manon_init
-调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
-
-### Step 2: Smart Analysis（首次执行）
-检查 \`manon_init\` 输出中的标记：
-- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
-- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
-
-**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
-
-**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
-
-**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
-- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
-- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
-
-**2d.** 向用户展示分析结果。
-
-### Step 3: 文件同步（AST 提取 + 上传）
-
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
-
-**3b.** 用 Bash 运行扫描脚本：
-\`\`\`
-<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
-\`\`\`
-- 脚本输出 JSON: {total_files, deleted_files, total_batches}
-- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
-- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
-
-**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
-
-**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
-- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
-- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
-
-### Step 4: 索引覆盖率
-调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
-
-### Step 5: 代码健康度
-调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
-
-### Step 6: 激活
-告知用户 Manon 模式已激活。
-
----
-
-## 目录判断规则
-
-1. **源码占比**：编程语言扩展名文件占比 > 30% → index
-2. **构建配置**：有 package.json/tsconfig.json/Cargo.toml 等 → index
-3. **业务关联**：核心代码/共享库 → index；静态资源/文档/数据/日志 → skip
-SKILLEOF
+    echo "$MANON_SKILL" > "$skill_dir/SKILL.md"
     info "CodeBuddy /manon Skill installed"
 }
 
@@ -450,74 +337,7 @@ PYEOF
     local skill_dir="$HOME/.claude/skills/manon"
     if [ ! -f "$skill_dir/SKILL.md" ]; then
         mkdir -p "$skill_dir"
-        # Will be written by configure_claude_code if also detected;
-        # otherwise write a minimal version here
-        cat > "$skill_dir/SKILL.md" <<SKILLEOF
----
-name: manon
-description: /manon — 进入 Manon 模式，初始化项目知识图谱连接
-user_invocable: true
----
-
-$MANON_RULES
-
-## 初始化流程（/manon 触发时执行）
-
-执行以下步骤，按顺序完成：
-
-### Step 1: manon_init
-调用 \`manon_init\`，传入当前工作目录。从输出中提取 \`repo_id\`（格式如 \`(xxxxxxxx)\`）。
-
-### Step 2: Smart Analysis（首次执行）
-检查 \`manon_init\` 输出中的标记：
-- 含 \`<!-- SMART_ANALYSIS_DONE -->\` → 跳到 Step 3
-- 含 \`<!-- SMART_ANALYSIS_NEEDED -->\` → 执行以下子步骤：
-
-**2a.** 调用 \`manon_directory_signals(project_path)\` 获取目录信号 JSON。
-
-**2b.** 根据下方【目录判断规则】，对每个顶级目录判断 index 或 skip。
-
-**2c.** 将 skip 目录转为排除模式，调用 \`manon_configure_excludes(project_path, exclude_patterns)\`：
-- 格式：\`["**/dirname1/**", "**/dirname2/**"]\`
-- 如果所有目录都应 index，传空列表 \`[]\`（仍会标记 smart_analysis_done）
-
-**2d.** 向用户展示分析结果。
-
-### Step 3: 文件同步（AST 提取 + 上传）
-
-**3a.** 从 \`manon_init\` 输出中提取 \`MANON_DIR\`（\`<!-- MANON_DIR=xxx -->\` 标记）和 \`MANON_PYTHON\`（\`<!-- MANON_PYTHON=xxx -->\` 标记）。
-
-**3b.** 用 Bash 运行扫描脚本：
-\`\`\`
-<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>
-\`\`\`
-- 脚本输出 JSON: {total_files, deleted_files, total_batches}
-- 展示: "🔍 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除"
-- 如果 total_files == 0 且 deleted_files == 0 → "✅ 无变更" → 跳到 Step 4
-
-**3c.** 调用 \`manon_scan_files(repo_id)\` 加载扫描缓存到 MCP 内存。
-
-**3d.** 循环调用 \`manon_upload_batch(repo_id)\` 直到 status == "done":
-- 每次展示: "📤 上传中: {uploaded}/{total} ({batch}/{total_batches})"
-- 完成时展示: "✅ 同步完成: {uploaded} 文件同步, {deleted} 文件删除"
-
-### Step 4: 索引覆盖率
-调用 \`manon_index_status(repo_id)\` 展示索引状态和目录级覆盖率。
-
-### Step 5: 代码健康度
-调用 \`manon_code_health(repo_id)\` 展示代码健康评分。
-
-### Step 6: 激活
-告知用户 Manon 模式已激活。
-
----
-
-## 目录判断规则
-
-1. **源码占比**：编程语言扩展名文件占比 > 30% → index
-2. **构建配置**：有 package.json/tsconfig.json/Cargo.toml 等 → index
-3. **业务关联**：核心代码/共享库 → index；静态资源/文档/数据/日志 → skip
-SKILLEOF
+        echo "$MANON_SKILL" > "$skill_dir/SKILL.md"
         info "OpenCode /manon Skill installed (via ~/.claude/skills/)"
     else
         info "OpenCode Skill already present (shared with Claude Code)"

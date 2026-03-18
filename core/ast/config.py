@@ -85,20 +85,21 @@ def _load_scan_config(local_path: str):
     excludes.update(_ALWAYS_EXCLUDE)
     excludes.update(get_auto_exclude_patterns(local_path))
 
-    # Parse .gitignore
-    gitignore = root / ".gitignore"
-    if gitignore.exists():
-        for line in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("!"):
-                continue
-            pattern = line.rstrip("/")
-            if "/" not in pattern:
-                excludes.add(f"**/{pattern}/**")
-                excludes.add(f"**/{pattern}")
-            else:
-                excludes.add(f"**/{pattern}/**")
-                excludes.add(f"**/{pattern}")
+    # NOTE: .gitignore parsing disabled - git version control rules shouldn't
+    # affect code indexing. Use custom_excludes for index-specific exclusions.
+    # gitignore = root / ".gitignore"
+    # if gitignore.exists():
+    #     for line in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
+    #         line = line.strip()
+    #         if not line or line.startswith("#") or line.startswith("!"):
+    #             continue
+    #         pattern = line.rstrip("/")
+    #         if "/" not in pattern:
+    #             excludes.add(f"**/{pattern}/**")
+    #             excludes.add(f"**/{pattern}")
+    #         else:
+    #             excludes.add(f"**/{pattern}/**")
+    #             excludes.add(f"**/{pattern}")
 
     # Auto-detect test frameworks
     test_excludes, _test_report = detect_test_patterns(root)

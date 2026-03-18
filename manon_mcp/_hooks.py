@@ -63,8 +63,10 @@ print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": (
-            "Git commit succeeded. Run manon_impact to analyze this commit's "
-            "effects on dependencies and downstream callers."
+            "CRITICAL: Git commit succeeded. You MUST immediately run "
+            "manon_impact(<repo_id>) to analyze this commit's impact on "
+            "dependencies and downstream callers. Do NOT proceed with other "
+            "tasks until impact analysis is complete."
         ),
     }
 }))
