@@ -166,7 +166,20 @@ async def get_usage_overview(days: int = Query(30, ge=1, le=365)):
         "GROUP BY endpoint ORDER BY cnt DESC",
         (f"-{days} days",),
     )
-    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
+    by_endpoint_raw = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
+
+    # Merge query.impact and query.impact_local
+    by_endpoint = []
+    impact_count = 0
+    for item in by_endpoint_raw:
+        if item["endpoint"] in ("query.impact", "query.impact_local"):
+            impact_count += item["count"]
+        else:
+            by_endpoint.append(item)
+    if impact_count > 0:
+        by_endpoint.append({"endpoint": "query.impact", "count": impact_count})
+    by_endpoint.sort(key=lambda x: x["count"], reverse=True)
+
     return {
         "period_days": days,
         "total_calls": row["cnt"],
@@ -198,7 +211,20 @@ async def get_tenant_usage(tenant_id: str, days: int = Query(30, ge=1, le=365)):
         "GROUP BY endpoint ORDER BY cnt DESC",
         (tenant_id, f"-{days} days"),
     )
-    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
+    by_endpoint_raw = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
+
+    # Merge query.impact and query.impact_local
+    by_endpoint = []
+    impact_count = 0
+    for item in by_endpoint_raw:
+        if item["endpoint"] in ("query.impact", "query.impact_local"):
+            impact_count += item["count"]
+        else:
+            by_endpoint.append(item)
+    if impact_count > 0:
+        by_endpoint.append({"endpoint": "query.impact", "count": impact_count})
+    by_endpoint.sort(key=lambda x: x["count"], reverse=True)
+
     return {
         "tenant_id": tenant_id,
         "period_days": days,
