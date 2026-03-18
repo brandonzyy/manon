@@ -144,6 +144,7 @@ async def revoke_key(tenant_id: str, key: str):
 
 
 # ── Usage Stats ───────────────────────────────────────
+# Merge query.impact and query.impact_local for unified statistics
 @router.get("/usage/overview", dependencies=[Depends(require_admin)])
 async def get_usage_overview(days: int = Query(30, ge=1, le=365)):
     db = await get_db()
