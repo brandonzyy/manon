@@ -35,18 +35,18 @@ SYSTEMD_UNIT = """\
 [Unit]
 Description=Manon SaaS API
 After=network.target
+# Stop restart loop after 5 failures in 60s — prevents endless cycle when port is stuck
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 WorkingDirectory=/root/manon
 # Kill any process holding port 3700 before starting (handles orphans from SSH sessions)
 ExecStartPre=-/usr/bin/fuser -k 3700/tcp
-ExecStartPre=/bin/sleep 1
+ExecStartPre=-/bin/sleep 1
 ExecStart=/usr/bin/python3 -m saas
 Restart=on-failure
 RestartSec=3
-# Stop restart loop after 5 failures in 60s — prevents endless cycle when port is stuck
-StartLimitIntervalSec=60
-StartLimitBurst=5
 # Kill the entire process group on stop, not just the main PID
 KillMode=mixed
 KillSignal=SIGTERM
@@ -228,7 +228,7 @@ def restart(c):
     # 3. Clear failure counter so StartLimitBurst doesn't block a fresh start.
     run(c, "systemctl reset-failed manon-saas 2>/dev/null || true")
     # 4. Start fresh.
-    run(c, "systemctl start manon-saas", timeout=10)
+    run(c, "systemctl start manon-saas", timeout=20)
     if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
         print("  WARN: manon-saas did not report active within the wait window")
     out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
