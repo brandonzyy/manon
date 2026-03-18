@@ -1,0 +1,10 @@
+[
+  {"action": "inspect"},
+  {"action": "send-chat", "text": "donnie 的主进程入口文件是什么？一句话回答"},
+  {"action": "wait", "selector": "#thinking", "state": "visible", "timeout": 10000, "stopOnError": false},
+  {"action": "wait", "selector": "#thinking", "state": "hidden", "timeout": 120000, "stopOnError": false},
+  {"action": "wait-time", "ms": 3000},
+  {"action": "read-messages", "last": 5},
+  {"action": "inspect"},
+  {"action": "check-errors"}
+]

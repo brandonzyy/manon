@@ -113,7 +113,6 @@ exit /b %errorlevel%
 ::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcp',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcp']['manon']={'type':'local','command':[vp,sv],'environment':env}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
 ::PS }
 ::PS $MANON_RULES = "# Manon -- 代码智能工具规则`n`n当用户提问涉及代码理解、架构分析时，必须使用 Manon MCP 工具。`n`n| 场景 | 工具 |`n|------|------|`n| 代码理解/搜索 | ``manon_deep_query`` |`n| 调用关系/依赖 | ``manon_graph`` |`n| 改动影响 | ``manon_impact`` |"
-::PS $MANON_SKILL = "---`nname: manon`ndescription: /manon -- 进入 Manon 模式`nuser_invocable: true`n---`n`n# Manon 初始化`n`n**核心规则**：`n- 必须按顺序执行 Step 1-6，不跳步`n- 工具返回的 ``<!-- DISPLAY_VERBATIM -->`` 内容必须原样输出给用户`n- 扫描脚本必须用 ``MANON_PYTHON``，不用系统 python`n`n---`n`n## Step 1: Init`n``manon_init(project_path)`` → 提取 ``repo_id```n`n## Step 2: Smart Analysis`n- 如果输出含 ``<!-- SMART_ANALYSIS_DONE -->`` → 跳到 Step 3`n- 如果输出含 ``<!-- SMART_ANALYSIS_NEEDED -->`` → 执行：`n  1. ``manon_directory_signals(project_path)`` 获取目录信号`n  2. 根据【目录角色规则】判断每个目录 index/skip`n  3. ``manon_configure_excludes(project_path, [\x22**/skip_dir/**\x22, ...])```n  4. 向用户展示分析结果`n`n## Step 3: Scan & Upload`n1. 从 Step 1 输出提取 ``MANON_DIR`` 和 ``MANON_PYTHON```n2. Bash: ``\x22<MANON_PYTHON>\x22 \x22<MANON_DIR>/scripts/manon-scan.py\x22 <repo_id>```n   - 如报错（ModuleNotFoundError/ImportError/文件不存在）→ 运行 ``bash \x22<MANON_DIR>/install.sh\x22`` 后重试`n3. ``manon_scan_files(repo_id)```n4. 循环 ``manon_upload_batch(repo_id)`` 直到 status == \x22done\x22`n`n## Step 4: Index Status`n``manon_index_status(repo_id)`` → **表格形式完整呈现**，不总结不省略`n`n## Step 5: Code Health`n``manon_code_health(repo_id)`` → **表格形式完整呈现**，不总结不省略`n`n## Step 6: Activate`n告知用户 Manon 已激活，并说明 hooks 功能：`n- **git push hook** - push 后自动更新图谱 + 打印健康评分`n- **Claude Code hooks** - 强制 Manon 优先（Grep/Glob/Explore 前必须先查图谱，commit 后提示 impact）`n`n---`n`n## 目录角色规则（用于 Step 2）`n`n**排除（skip）**：`n``scripts/`` ``tools/`` ``bin/`` ``examples/`` ``demo/`` ``docs/`` ``assets/`` ``static/`` ``public/`` ``data/`` ``fixtures/`` ``config/```n`n**索引（index）**：`n``src/`` ``lib/`` ``core/`` ``app/`` ``pkg/`` ``internal/`` + 有 ``__init__.py``/``package.json``/``Cargo.toml`` 的目录`n`n**不确定时**：源码文件占比 > 30% → index"
 ::PS # ── Configure platforms ───────────────────────────────
 ::PS head1 "Configuration"; $CONFIGURED = @()
 ::PS foreach ($platform in $PLATFORMS) {
@@ -121,11 +120,11 @@ exit /b %errorlevel%
 ::PS         "claude-code" {
 ::PS             Write-McpJson "$HOME_DIR\.claude.json"; info "Claude Code MCP registered"
 ::PS             $sd = "$HOME_DIR\.claude\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS             Set-Content -Path "$sd\SKILL.md" -Encoding UTF8 -Value $MANON_SKILL
+::PS             Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
 ::PS             info "Claude Code /manon Skill installed"
 ::PS             & $VENV_PYTHON -c "import sys; sys.path.insert(0, r'$SCRIPT_DIR'); from manon_mcp._hooks import _install_claude_hooks; _install_claude_hooks()"
 ::PS             info "Claude Code hooks installed (search/edit/agent/commit->impact)"
-::PS             $dao_sd = "$HOME_DIR\.claude\skills\dao"; if (Test-Path "$SCRIPT_DIR\skills\dao\SKILL.md") { if (-not (Test-Path $dao_sd)) { New-Item -ItemType Directory -Path $dao_sd -Force | Out-Null }; Copy-Item "$SCRIPT_DIR\skills\dao\SKILL.md" "$dao_sd\SKILL.md"; info "Claude Code /dao Skill installed (code simplification with Manon)" }
+::PS             $dao_sd = "$HOME_DIR\.claude\skills\dao"; if (-not (Test-Path $dao_sd)) { New-Item -ItemType Directory -Path $dao_sd -Force | Out-Null }; Copy-Item "$SCRIPT_DIR\skills\dao\SKILL.md" "$dao_sd\SKILL.md"; info "Claude Code /dao Skill installed (code simplification with Manon)"
 ::PS         }
 ::PS         "cursor" {
 ::PS             Write-McpJson "$HOME_DIR\.cursor\mcp.json"; info "Cursor MCP registered"
@@ -153,7 +152,7 @@ exit /b %errorlevel%
 ::PS             Write-McpJson $mf; info "CodeBuddy MCP registered"
 ::PS             $cbDir = if (Test-Path "$HOME_DIR\.codebuddy") { "$HOME_DIR\.codebuddy" } else { "$HOME_DIR\.tencent\codebuddy" }
 ::PS             $sd = "$cbDir\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS             Set-Content -Path "$sd\SKILL.md" -Encoding UTF8 -Value $MANON_SKILL
+::PS             Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
 ::PS             info "CodeBuddy /manon Skill installed"
 ::PS         }
 ::PS         "opencode" {
@@ -161,7 +160,7 @@ exit /b %errorlevel%
 ::PS             $sd = "$HOME_DIR\.claude\skills\manon"
 ::PS             if (-not (Test-Path "$sd\SKILL.md")) {
 ::PS                 if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS                 Set-Content -Path "$sd\SKILL.md" -Encoding UTF8 -Value "---`nname: manon`ndescription: /manon -- 进入 Manon 模式`nuser_invocable: true`n---`n`n$MANON_RULES`n`n## 初始化流程（/manon 触发时执行）`n`n执行以下步骤，按顺序完成：`n`n### Step 1: manon_init`n调用 ``manon_init``，传入当前工作目录。从输出中提取 ``repo_id``。`n`n### Step 2: Smart Analysis（首次执行）`n检查 ``manon_init`` 输出中的标记：`n- 含 ``<!-- SMART_ANALYSIS_DONE -->`` → 跳到 Step 3`n- 含 ``<!-- SMART_ANALYSIS_NEEDED -->`` → 执行以下子步骤：`n  2a. 调用 ``manon_directory_signals(project_path)`` 获取目录信号 JSON`n  2b. 根据目录判断规则，对每个顶级目录判断 index 或 skip`n  2c. 调用 ``manon_configure_excludes(project_path, exclude_patterns)`` 应用排除`n  2d. 向用户展示分析结果`n`n### Step 3: 文件同步（AST 提取 + 上传）`n**3a.** 从 ``manon_init`` 输出中提取 ``MANON_DIR``（``<!-- MANON_DIR=xxx -->`` 标记）和 ``MANON_PYTHON``（``<!-- MANON_PYTHON=xxx -->`` 标记）。`n`n**3b.** 用 Bash 运行扫描脚本：`n<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>`n- 脚本输出 JSON: {total_files, deleted_files, total_batches}`n- 展示: 扫描完成: {total_files} 个文件待同步, {deleted_files} 个已删除`n- 如果 total_files == 0 且 deleted_files == 0 → 无变更 → 跳到 Step 4`n`n**3c.** 调用 ``manon_scan_files(repo_id)`` 加载扫描缓存到 MCP 内存。`n`n**3d.** 循环调用 ``manon_upload_batch(repo_id)`` 直到 status == done:`n- 每次展示: 上传中: {uploaded}/{total} ({batch}/{total_batches})`n- 完成时展示: 同步完成: {uploaded} 文件同步, {deleted} 文件删除`n`n### Step 4: 索引覆盖率`n调用 ``manon_index_status(repo_id)`` 展示索引状态和覆盖率。`n`n### Step 5: 代码健康度`n调用 ``manon_code_health(repo_id)`` 展示代码健康评分。`n`n### Step 6: 激活`n告知用户 Manon 模式已激活。`n`n## 目录判断规则`n1. 源码占比：编程语言扩展名文件占比 > 30% → index`n2. 构建配置：有 package.json/tsconfig.json/Cargo.toml 等 → index`n3. 业务关联：核心代码/共享库 → index；静态资源/文档/数据/日志 → skip"
+::PS                 Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
 ::PS                 info "OpenCode /manon Skill installed (via ~/.claude/skills/)"
 ::PS             } else { info "OpenCode Skill already present (shared with Claude Code)" }
 ::PS         }

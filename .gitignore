@@ -23,6 +23,9 @@ saas_data/
 web/static/reports/
 web/static/test-results/
 app/static/test-results/
+tests/e2e-logs/
+tests/e2e-runtime/
+tests/mcp-config.json
 
 # internal docs (business plans, etc.)
 docs/_*.md
@@ -38,7 +41,6 @@ scripts/deploy-r760.py
 
 # not public
 web/
-tests/
 scripts/run-saas.py
 scripts/_*.py
 tests/_*.py

@@ -1,0 +1,10 @@
+[
+  {"action": "send-chat", "text": "/feature 给 donnie 主窗口添加一个显示当前时间的状态栏"},
+  {"action": "wait-time", "ms": 5000},
+  {"action": "inspect"},
+  {"action": "wait-pipeline", "state": "需求", "timeout": 60000, "stopOnError": false},
+  {"action": "wait-time", "ms": 10000},
+  {"action": "inspect"},
+  {"action": "read-messages", "last": 5},
+  {"action": "check-errors"}
+]
