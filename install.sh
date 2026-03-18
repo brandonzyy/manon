@@ -240,6 +240,14 @@ from manon_mcp._hooks import _install_claude_hooks
 result = _install_claude_hooks()
 PYEOF
     info "Claude Code hooks installed (search/edit/agent/commit→impact)"
+
+    # Install dao skill (大道至简 - code simplification)
+    local dao_skill_dir="$HOME/.claude/skills/dao"
+    if [ -f "$SCRIPT_DIR/skills/dao/SKILL.md" ]; then
+        mkdir -p "$dao_skill_dir"
+        cp "$SCRIPT_DIR/skills/dao/SKILL.md" "$dao_skill_dir/SKILL.md"
+        info "Claude Code /dao Skill installed (code simplification with Manon)"
+    fi
 }
 
 # --- Cursor ---
