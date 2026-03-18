@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import Context
 
@@ -56,3 +59,44 @@ def register_init_tools(mcp, deps: ToolDependencies):
             set_project(project_path, proj)
         preview = preview_project_structure(project_path)
         return f"configured {len(exclude_patterns)} custom exclude patterns\n\nupdated structure:\n{preview}"
+
+    @mcp.tool()
+    def manon_update() -> str:
+        """更新 Manon 到最新版本。"""
+        try:
+            manon_dir = Path(__file__).resolve().parent.parent.parent
+            is_windows = sys.platform == "win32"
+
+            # Git pull
+            result = subprocess.run(
+                ["git", "pull"],
+                cwd=manon_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                return f"❌ Git pull 失败: {result.stderr}"
+
+            # Run install script
+            install_script = "install.bat" if is_windows else "install.sh"
+            install_path = manon_dir / install_script
+
+            if not install_path.exists():
+                return f"❌ 安装脚本不存在: {install_path}"
+
+            cmd = [str(install_path)] if is_windows else ["bash", str(install_path)]
+            result = subprocess.run(
+                cmd,
+                cwd=manon_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0:
+                return f"❌ 安装失败: {result.stderr}"
+
+            return "✅ Manon 已更新到最新版本，请重启编辑器以应用更新。"
+        except Exception as e:
+            return f"❌ 更新失败: {str(e)}"

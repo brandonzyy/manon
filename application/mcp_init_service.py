@@ -16,7 +16,7 @@ from core.ast import (
 log = logging.getLogger("application.mcp_init_service")
 
 
-def check_version_update(manon_dir: str) -> str | None:
+def check_version_update(manon_dir: str) -> dict | None:
     """Check if a newer version is available on GitHub (non-blocking)."""
     try:
         import urllib.request
@@ -33,7 +33,12 @@ def check_version_update(manon_dir: str) -> str | None:
             remote_version = response.read().decode("utf-8").strip()
 
         if remote_version != local_version:
-            return f"\n💡 新版本可用: v{remote_version} (当前: v{local_version})\n   更新: 重新运行安装脚本 (bash install.sh 或 install.bat)"
+            return {
+                "update_available": True,
+                "current": local_version,
+                "latest": remote_version,
+                "manon_dir": manon_dir,
+            }
         return None
     except Exception:
         return None  # Silent fail, non-blocking
@@ -146,9 +151,11 @@ async def initialize_project(
     lines.append(f"<!-- MANON_PYTHON={resolve_scan_python()} -->")
 
     # Check for version updates (non-blocking)
-    update_msg = check_version_update(manon_dir)
-    if update_msg:
-        lines.append(update_msg)
+    update_info = check_version_update(manon_dir)
+    if update_info:
+        lines.append(f"\n<!-- UPDATE_AVAILABLE: {update_info['latest']} -->")
+        lines.append(f"\n💡 检测到新版本 v{update_info['latest']} (当前: v{update_info['current']})")
+        lines.append("   请询问用户是否需要更新，如果用户同意，调用 manon_update 工具进行更新。")
 
     proj = get_project(project_path)
     if needs_smart_analysis_refresh(project_path, proj):
