@@ -7,7 +7,7 @@ import pytest
 from saas.auth import TenantContext
 from saas.config import SaasSettings, settings
 from saas.db import SCHEMA
-from saas.runtime import RUNTIME_ROOT
+from saas.config import RUNTIME_ROOT
 
 
 class TestSaasSettings:

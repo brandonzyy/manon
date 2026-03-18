@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from matrixone_graph import MatrixoneGraph, IndexResult, QueryResult
+from matrixone_graph import MatrixoneGraph, QueryResult
 from matrixone_graph.embed import EmbeddingClient
 from matrixone_graph.merge_dynamic import (
     DYNAMIC_FILE_PATH, merge_dynamic_edges, load_dynamic_deps,

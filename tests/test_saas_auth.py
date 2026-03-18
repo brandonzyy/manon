@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 
 from saas.auth import TenantContext, require_tenant
+from saas.config import SaasSettings
 
 
 class TestTenantContext:
@@ -48,7 +49,7 @@ class TestRequireTenant:
 
         with patch("saas.auth.get_db", return_value=mock_db):
             with patch("saas.auth.limiter.check", return_value=True):
-                with patch("saas.auth.settings.rate_for", return_value=100):
+                with patch.object(SaasSettings, "rate_for", return_value=100):
                     result = await require_tenant(mock_cred)
 
         assert isinstance(result, TenantContext)
@@ -89,7 +90,7 @@ class TestRequireTenant:
 
         with patch("saas.auth.get_db", return_value=mock_db):
             with patch("saas.auth.limiter.check", return_value=False):
-                with patch("saas.auth.settings.rate_for", return_value=10):
+                with patch.object(SaasSettings, "rate_for", return_value=10):
                     with pytest.raises(HTTPException) as exc_info:
                         await require_tenant(mock_cred)
 
@@ -130,7 +131,7 @@ class TestRequireTenant:
 
         with patch("saas.auth.get_db", return_value=mock_db):
             with patch("saas.auth.limiter.check", return_value=True):
-                with patch("saas.auth.settings.rate_for") as mock_rate:
+                with patch.object(SaasSettings, "rate_for") as mock_rate:
                     mock_rate.return_value = 500
                     result = await require_tenant(mock_cred)
 

@@ -150,7 +150,11 @@ After installation, run `/dao` again.
 **C2. Avoid Over-Fragmentation**
 - Pattern: Single-function files (< 50 lines, 1 export)
 - Detection: `mcp__manon__manon_search "single function small file"`
-- Action: Merge related code
+- Pre-merge validation (ALL three must pass — skip if any fails):
+  1. **Git history check**: `git log --oneline -10 -- <file>` → if file was intentionally created or split in recent commits, SKIP (do not undo a deliberate design decision)
+  2. **Operation type parity**: use `manon_graph` to verify both files are the same op type (query vs mutation); do NOT merge a mutation file into a query file or vice versa
+  3. **Name accuracy after merge**: confirm the target file name still accurately describes all content after merge; if not, rename target as part of the same commit
+- Action: Merge into semantically compatible target (max 1 C2 merge per auto iteration)
 
 **C3. Reduce Directory Depth**
 - Pattern: Single-file directories, > 4 levels nesting
@@ -178,9 +182,10 @@ After installation, run `/dao` again.
 - Action: Break cycles
 
 **C8. Increase Cohesion**
-- Pattern: Unrelated code in same module
-- Detection: Module responsibility analysis
-- Action: Split unrelated, merge related
+- Pattern: Unrelated code in same module (e.g. mutations mixed into query files, config mixed into business logic)
+- Detection: For each file, ask "can this file's responsibility be described in one sentence?" — if not, it has cohesion debt
+- Reverse detection (C2 correction): after any C2 merge, re-check the target file with `manon_search`; if it now contains mixed op types or unrelated concerns, treat as C8 violation and prioritize fixing it next iteration
+- Action: Split unrelated code into separate files; rename files whose names no longer match their content
 
 ---
 
@@ -190,11 +195,19 @@ After installation, run `/dao` again.
 
 1. **Check Manon**: `mcp__manon__manon_repos_list` (if fails: show install instructions and STOP)
 2. **Init if needed**: If repo not found, run `mcp__manon__manon_init`
-3. **Analyze**: Search Layer 1 → Layer 2 → Layer 3 patterns
-4. **Select**: Pick highest impact + lowest risk + lowest effort
-5. **Execute**: Read → Simplify → Commit → `mcp__manon__manon_push_update`
-6. **Report**: Show progress
-7. **Loop** (auto mode only): Continue or stop
+3. **Analyze**: Search Layer 1 → Layer 2 → Layer 3 patterns; also check for open C_PENDING items from previous iterations
+4. **Select**: Pick highest impact + lowest risk + lowest effort; C_PENDING items from prior merges take priority over new C2 candidates
+5. **Validate** (required before any file merge or delete):
+   - C2 merges: run the three-question gate (git history / op type parity / name accuracy)
+   - Any deletion: confirm zero callers via `manon_graph`
+   - Skip and pick next candidate if validation fails — never force through
+6. **Execute**: Read → Simplify → Commit → `mcp__manon__manon_push_update`
+7. **Post-check** (after every merge commit): scan the target file for complexity debt:
+   - Any function with ≥ 6 parameters → mark as C_PENDING (parameter complexity)
+   - Any function > 60 lines → mark as C_PENDING (function body complexity)
+   - If C_PENDING found: note in Report as "⚠ 复杂度未消化", carry forward to next iteration
+8. **Report**: Show progress
+9. **Loop** (auto mode only): Continue or stop
 
 ### Auto Mode Logic
 
@@ -222,6 +235,7 @@ while iteration < 10:
 **Files**: [list]
 **Impact**: [-X lines, -Y files]
 **Commit**: [hash]
+**Complexity debt**: [⚠ 复杂度未消化: <description> | ✓ clean]
 
 [Auto: "Continuing..." OR "✓ Done"]
 [Manual: "Run /dao to continue"]
@@ -237,6 +251,8 @@ while iteration < 10:
 4. Stop if tests fail
 5. **Default mode**: Ask before risky changes (> 5 files)
 6. **AutoRisk mode**: Execute risky changes automatically, but verify safety first
+7. **One C2 merge per iteration**: Never batch-merge multiple small files in a single auto run — each merge needs its own validation
+8. **Fewer files ≠ simpler**: A merge is only valid if the result can be described in one sentence; if not, it introduced complexity debt, not simplicity
 
 ---
 
@@ -266,6 +282,8 @@ while iteration < 10:
 - Report after each iteration
 - Stop on: no opportunities OR max iterations OR error
 - Skip medium/high-risk opportunities (ask user first)
+- Max 1 C2 merge per iteration — never batch
+- Carry C_PENDING complexity debt forward; resolve before taking new C2 candidates
 
 **AutoRisk Mode** (`/dao -autorisk`):
 - Loop until simplified or max 10 iterations

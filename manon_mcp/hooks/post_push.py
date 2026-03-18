@@ -99,9 +99,44 @@ def _wait_for_api(api_url: str, headers: dict, *, timeout: float = 45.0, interva
     return False, last_error
 
 
+def _upload_ast_batches(file_results, deleted, repo_id, api_url, headers):
+    """Upload AST data in batches. Raises on HTTP error."""
+    import httpx
+    for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
+        batch = file_results[i:i + SYNC_BATCH_SIZE]
+        payload = {
+            "files": batch,
+            "deleted_files": deleted if i == 0 else [],
+            "full_reindex": False,
+        }
+        with httpx.Client(base_url=api_url, headers=headers, timeout=45) as c:
+            r = c.post(f"/api/v1/repos/{repo_id}/sync-ast", json=payload)
+            r.raise_for_status()
+
+
+def _sync_local_hashes(info, file_results, deleted, new_hashes, old_hashes, repo_id, api_url, headers):
+    """Sync file hashes to info dict from server or locally-computed fallback."""
+    import httpx
+    partial_hashes = dict(old_hashes)
+    for f in file_results:
+        rp = f["rel_path"]
+        if rp in new_hashes:
+            partial_hashes[rp] = new_hashes[rp]
+    for d in deleted:
+        partial_hashes.pop(d, None)
+    try:
+        with httpx.Client(base_url=api_url, headers=headers, timeout=10) as c:
+            r2 = c.get(f"/api/v1/repos/{repo_id}/index-status")
+            r2.raise_for_status()
+            server_stats = r2.json().get("stats") or {}
+            server_hashes = server_stats.get("file_hashes")
+            info["file_hashes"] = server_hashes if server_hashes is not None else partial_hashes
+    except Exception:
+        info["file_hashes"] = partial_hashes
+
+
 def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
     """Scan and upload AST changes. Returns (sync_ok, summary_parts)."""
-    import httpx
     summary_parts = []
     sync_ok = False
     print("[manon] 扫描变更文件...")
@@ -119,42 +154,14 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
                 print(f"[manon] 删除 {len(deleted)} 个文件: {', '.join(deleted[:5])}"
                       + (" 等" if len(deleted) > 5 else ""))
             print("[manon] 上传 AST 并更新知识图谱...")
-            for i in range(0, max(len(file_results), 1), SYNC_BATCH_SIZE):
-                batch = file_results[i:i + SYNC_BATCH_SIZE]
-                payload = {
-                    "files": batch,
-                    "deleted_files": deleted if i == 0 else [],
-                    "full_reindex": False,
-                }
-                with httpx.Client(base_url=api_url, headers=headers, timeout=45) as c:
-                    r = c.post(f"/api/v1/repos/{repo_id}/sync-ast", json=payload)
-                    r.raise_for_status()
+            _upload_ast_batches(file_results, deleted, repo_id, api_url, headers)
             msg = f"图谱已更新（{len(file_results)} 个文件重建 AST"
             if deleted:
                 msg += f", {len(deleted)} 个文件移除"
             msg += "）"
             print(f"[manon] {msg}")
             summary_parts.append(msg)
-            # 从服务端同步实际入图的文件哈希
-            partial_hashes = dict(old_hashes)
-            for f in file_results:
-                rp = f["rel_path"]
-                if rp in new_hashes:
-                    partial_hashes[rp] = new_hashes[rp]
-            for d in deleted:
-                partial_hashes.pop(d, None)
-            try:
-                with httpx.Client(base_url=api_url, headers=headers, timeout=10) as c:
-                    r2 = c.get(f"/api/v1/repos/{repo_id}/index-status")
-                    r2.raise_for_status()
-                    server_stats = r2.json().get("stats") or {}
-                    server_hashes = server_stats.get("file_hashes")
-                    if server_hashes is not None:
-                        info["file_hashes"] = server_hashes
-                    else:
-                        info["file_hashes"] = partial_hashes
-            except Exception:
-                info["file_hashes"] = partial_hashes  # fallback
+            _sync_local_hashes(info, file_results, deleted, new_hashes, old_hashes, repo_id, api_url, headers)
             info["last_sync"] = datetime.datetime.now().isoformat()
             set_project(project_path, info)
             sync_ok = True
@@ -168,10 +175,25 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
     return sync_ok, summary_parts
 
 
+def _fetch_health_score(repo_id, api_url, headers) -> str | None:
+    """Fetch code health score. Returns formatted string or None on error."""
+    import httpx
+    try:
+        with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
+            r = c.get(f"/api/v1/repos/{repo_id}/code-health")
+            r.raise_for_status()
+            health = r.json()
+        score = health.get("score", 0)
+        grade = health.get("grade", "?")
+        print(f"[manon] => 代码健康: {score}/100 ({grade})")
+        return f"健康评分: {score}/100 ({grade})"
+    except Exception as e:
+        print(f"[manon] FAIL 健康评分获取失败: {e}")
+        return None
+
+
 def main():
-    # Clear proxy env vars so httpx connects directly to the API.
-    for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-               "http_proxy", "https_proxy", "all_proxy"):
+    for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         os.environ.pop(_k, None)
 
     if len(sys.argv) < 2:
@@ -189,7 +211,6 @@ def main():
         print("[manon] 未找到 repo_id，请重新运行 manon_init。")
         return
 
-    import httpx
     api_url = _api_url()
     headers = _headers()
 
@@ -208,17 +229,9 @@ def main():
     sync_ok, summary_parts = _sync_ast_changes(repo_id, info, project_path, api_url, headers)
 
     print("[manon] 计算代码健康评分...")
-    try:
-        with httpx.Client(base_url=api_url, headers=headers, timeout=60) as c:
-            r = c.get(f"/api/v1/repos/{repo_id}/code-health")
-            r.raise_for_status()
-            health = r.json()
-        score = health.get("score", 0)
-        grade = health.get("grade", "?")
-        summary_parts.append(f"健康评分: {score}/100 ({grade})")
-        print(f"[manon] => 代码健康: {score}/100 ({grade})")
-    except Exception as e:
-        print(f"[manon] FAIL 健康评分获取失败: {e}")
+    health_msg = _fetch_health_score(repo_id, api_url, headers)
+    if health_msg:
+        summary_parts.append(health_msg)
 
     _write_status(sync_ok, " | ".join(summary_parts))
 

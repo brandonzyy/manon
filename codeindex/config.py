@@ -204,40 +204,30 @@ class IndexingConfig:
     leaf_level: str = "detailed"
 
     @classmethod
+    def _load_adaptive_config(cls, adaptive_data: dict) -> "AdaptiveSymbolsConfig":
+        """Build AdaptiveSymbolsConfig by merging user data with defaults."""
+        d = DEFAULT_ADAPTIVE_CONFIG
+        if adaptive_data:
+            return AdaptiveSymbolsConfig(
+                enabled=adaptive_data.get("enabled", d.enabled),
+                thresholds={**d.thresholds, **adaptive_data.get("thresholds", {})},
+                limits={**d.limits, **adaptive_data.get("limits", {})},
+                min_symbols=adaptive_data.get("min_symbols", d.min_symbols),
+                max_symbols=adaptive_data.get("max_symbols", d.max_symbols),
+            )
+        return AdaptiveSymbolsConfig(
+            enabled=d.enabled, thresholds=d.thresholds.copy(), limits=d.limits.copy(),
+            min_symbols=d.min_symbols, max_symbols=d.max_symbols,
+        )
+
+    @classmethod
     def from_dict(cls, data: dict) -> "IndexingConfig":
         """Create from config dict."""
         if not data:
             return cls()
 
         symbols_data = data.get("symbols", {})
-
-        # Load adaptive_symbols configuration
-        adaptive_data = symbols_data.get("adaptive_symbols", {})
-        if adaptive_data:
-            # Merge user config with defaults
-            adaptive_config = AdaptiveSymbolsConfig(
-                enabled=adaptive_data.get("enabled", DEFAULT_ADAPTIVE_CONFIG.enabled),
-                thresholds={
-                    **DEFAULT_ADAPTIVE_CONFIG.thresholds,
-                    **adaptive_data.get("thresholds", {})
-                },
-                limits={
-                    **DEFAULT_ADAPTIVE_CONFIG.limits,
-                    **adaptive_data.get("limits", {})
-                },
-                min_symbols=adaptive_data.get("min_symbols", DEFAULT_ADAPTIVE_CONFIG.min_symbols),
-                max_symbols=adaptive_data.get("max_symbols", DEFAULT_ADAPTIVE_CONFIG.max_symbols),
-            )
-        else:
-            # Use default adaptive config
-            adaptive_config = AdaptiveSymbolsConfig(
-                enabled=DEFAULT_ADAPTIVE_CONFIG.enabled,
-                thresholds=DEFAULT_ADAPTIVE_CONFIG.thresholds.copy(),
-                limits=DEFAULT_ADAPTIVE_CONFIG.limits.copy(),
-                min_symbols=DEFAULT_ADAPTIVE_CONFIG.min_symbols,
-                max_symbols=DEFAULT_ADAPTIVE_CONFIG.max_symbols,
-            )
-
+        adaptive_config = cls._load_adaptive_config(symbols_data.get("adaptive_symbols", {}))
         symbols = SymbolsConfig(
             max_per_file=symbols_data.get("max_per_file", 15),
             include_visibility=symbols_data.get("include_visibility", ["public", "protected"]),
@@ -252,16 +242,11 @@ class IndexingConfig:
             patterns=grouping_data.get("patterns", DEFAULT_INDEXING["grouping"]["patterns"].copy()),
         )
 
-        # Load semantic configuration
-        semantic_data = data.get("semantic", {})
-        semantic = SemanticConfig.from_dict(semantic_data)
-
+        semantic = SemanticConfig.from_dict(data.get("semantic", {}))
         levels = data.get("levels", {})
         return cls(
             max_readme_size=data.get("max_readme_size", 50 * 1024),
-            symbols=symbols,
-            grouping=grouping,
-            semantic=semantic,
+            symbols=symbols, grouping=grouping, semantic=semantic,
             root_level=levels.get("root", "overview"),
             module_level=levels.get("module", "navigation"),
             leaf_level=levels.get("leaf", "detailed"),
@@ -454,29 +439,6 @@ class Config:
             parallel_workers=data.get("parallel_workers", DEFAULT_PARALLEL_WORKERS),
             batch_size=data.get("batch_size", DEFAULT_BATCH_SIZE),
         )
-
-    @classmethod
-    def from_yaml(cls, path: Path) -> "Config":
-        """Load config from YAML file (alias for load()).
-
-        Args:
-            path: Path to YAML config file
-
-        Returns:
-            Config instance
-        """
-        return cls.load(path)
-
-    @staticmethod
-    def create_default(path: Optional[Path] = None) -> Path:
-        """Create default config file."""
-        if path is None:
-            path = Path.cwd() / DEFAULT_CONFIG_NAME
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_CONFIG_TEMPLATE)
-
-        return path
 
     @classmethod
     def load_with_auto_setup(cls, root: Path) -> "Config":

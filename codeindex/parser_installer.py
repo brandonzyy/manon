@@ -43,20 +43,23 @@ def check_parser_installed(language: str) -> bool:
         return False
 
 
+def _try_pip_install(packages: list[str], timeout: int, mirror: str | None = None) -> bool:
+    """Try installing packages via pip, optionally with a mirror. Returns True on success."""
+    cmd = [sys.executable, "-m", "pip", "install", "--quiet"] + packages
+    if mirror:
+        cmd += ["-i", mirror]
+    try:
+        subprocess.check_call(cmd, timeout=timeout)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        log.warning("Install via %s failed: %s", mirror or "PyPI", e)
+        return False
+
+
 def install_parsers(languages: set[str], timeout: int = 30) -> dict[str, str]:
-    """Install missing parsers for detected languages.
-
-    Args:
-        languages: Set of language names to install parsers for
-        timeout: Maximum seconds to wait for pip install (default 30)
-
-    Returns:
-        Dict mapping language -> status ("installed" | "already_installed" | "failed")
-    """
+    """Install missing parsers for detected languages."""
     results = {}
     to_install = []
-
-    # Check which parsers are missing
     for lang in languages:
         if check_parser_installed(lang):
             results[lang] = "already_installed"
@@ -70,39 +73,15 @@ def install_parsers(languages: set[str], timeout: int = 30) -> dict[str, str]:
         return results
 
     log.info("Installing parsers: %s", ", ".join(to_install))
-
-    # Try default PyPI first (fastest for most users)
-    cmd = [sys.executable, "-m", "pip", "install", "--quiet"] + to_install
-
-    try:
-        subprocess.check_call(cmd, timeout=timeout)
-        for lang in languages:
-            if results.get(lang) == "pending":
-                results[lang] = "installed"
-        log.info("Parsers installed successfully")
-        return results
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        log.warning("Install via PyPI failed: %s, trying mirrors", e)
-
-    # Try mirrors only if default failed
-    for mirror in PIP_MIRRORS[1:]:  # Skip None (already tried)
-        cmd = [sys.executable, "-m", "pip", "install", "--quiet"] + to_install
-        cmd += ["-i", mirror]
-
-        try:
-            subprocess.check_call(cmd, timeout=timeout)
+    for mirror in PIP_MIRRORS:
+        if _try_pip_install(to_install, timeout, mirror):
             for lang in languages:
                 if results.get(lang) == "pending":
                     results[lang] = "installed"
-            log.info("Parsers installed successfully via %s", mirror)
+            log.info("Parsers installed successfully via %s", mirror or "PyPI")
             return results
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            log.warning("Install via %s failed: %s", mirror, e)
-            continue
 
-    # All attempts failed
     for lang in languages:
         if results.get(lang) == "pending":
             results[lang] = "failed"
-
     return results

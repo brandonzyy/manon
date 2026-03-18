@@ -111,11 +111,11 @@ def cmd_usage(args):
 
 # ── Argument parser ───────────────────────────────────
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
     p = argparse.ArgumentParser(prog="manon-cli", description="Manon SaaS CLI")
     sub = p.add_subparsers(dest="command")
 
-    # repos
     rp = sub.add_parser("repos", help="Manage repos")
     rs = rp.add_subparsers(dest="sub")
     rs.add_parser("list", help="List repos")
@@ -129,39 +129,38 @@ def main():
     rd = rs.add_parser("delete", help="Delete repo")
     rd.add_argument("id")
 
-    # index
     ip = sub.add_parser("index", help="Trigger indexing")
     ip.add_argument("repo_id")
     ip.add_argument("--full", action="store_true", help="Full re-index (not incremental)")
     ip.add_argument("--wait", action="store_true", help="Poll until done")
 
-    # index-status
     isp = sub.add_parser("index-status", help="Check index status")
     isp.add_argument("repo_id")
 
-    # search
     sp = sub.add_parser("search", help="Semantic search")
     sp.add_argument("repo_id")
     sp.add_argument("query")
     sp.add_argument("--top-k", type=int, default=10)
     sp.add_argument("--depth", type=int, default=1)
 
-    # graph
     gp = sub.add_parser("graph", help="Graph traversal")
     gp.add_argument("repo_id")
     gp.add_argument("symbol")
     gp.add_argument("--depth", type=int, default=1)
 
-    # impact
     imp = sub.add_parser("impact", help="Impact analysis")
     imp.add_argument("repo_id")
     imp.add_argument("--commit", default="HEAD")
     imp.add_argument("--max-depth", type=int, default=2)
 
-    # usage
     up = sub.add_parser("usage", help="View usage stats")
     up.add_argument("--days", type=int, default=30)
 
+    return p
+
+
+def main():
+    p = _build_arg_parser()
     args = p.parse_args()
     if not args.command:
         p.print_help()

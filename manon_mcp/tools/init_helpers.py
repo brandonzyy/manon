@@ -106,22 +106,6 @@ def _init_match_or_create(
         return "\n".join(header_lines + ["", f"  failed to create repo: {exc}"])
 
 
-def _build_health_lines(repo_id: str, *, client) -> list[str]:
-    """Fetch and format code health score when available."""
-    lines: list[str] = []
-    try:
-        health = client._get(f"/api/v1/repos/{repo_id}/code-health", timeout=5)
-        score = health.get("score", 0)
-        grade = health.get("grade", "?")
-        dims = health.get("dimensions", {})
-        dim_str = " ".join(f"{key}{value}" for key, value in dims.items())
-        lines.append("\nCode Health")
-        lines.append(f"  {grade} {score:.1f}/100 {dim_str}".rstrip())
-    except Exception as exc:
-        log.debug("Code health not available yet: %s", exc)
-    return lines
-
-
 def _detect_client() -> str:
     """Detect the host client environment."""
     if os.environ.get("CLAUDE_CODE") or os.environ.get("CLAUDE_CODE_ENTRY"):

@@ -11,7 +11,7 @@ from matrixone_graph.merge_dynamic import (
     merge_dynamic_edges,
     DYNAMIC_FILE_PATH,
 )
-from matrixone_graph.store import CodeGraph, Entity, EntityKind
+from matrixone_graph.store import CodeGraph, Entity, Relation
 
 
 class TestComputeWeight:
@@ -97,11 +97,11 @@ class TestRemoveDynamicEdges:
     def test_remove_no_dynamic_edges(self):
         """Should return 0 if no dynamic edges."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         # Add static edge
-        graph.add_relation(graph._create_relation("a", "b", "calls", file_path="test.py"))
+        graph.add_relation(Relation(src_id="a", tgt_id="b", kind="calls", file_path="test.py"))
 
         removed = _remove_dynamic_edges(graph)
         assert removed == 0
@@ -109,11 +109,11 @@ class TestRemoveDynamicEdges:
     def test_remove_dynamic_edges(self):
         """Should remove dynamic edges."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         # Add dynamic edge
-        graph.add_relation(graph._create_relation("a", "b", "calls", file_path=DYNAMIC_FILE_PATH))
+        graph.add_relation(Relation(src_id="a", tgt_id="b", kind="calls", file_path=DYNAMIC_FILE_PATH))
 
         removed = _remove_dynamic_edges(graph)
         assert removed == 1
@@ -122,12 +122,12 @@ class TestRemoveDynamicEdges:
     def test_remove_mixed_edges(self):
         """Should only remove dynamic edges, keep static."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         # Add both types
-        graph.add_relation(graph._create_relation("a", "b", "calls", file_path="test.py"))
-        graph.add_relation(graph._create_relation("b", "a", "calls", file_path=DYNAMIC_FILE_PATH))
+        graph.add_relation(Relation(src_id="a", tgt_id="b", kind="calls", file_path="test.py"))
+        graph.add_relation(Relation(src_id="b", tgt_id="a", kind="calls", file_path=DYNAMIC_FILE_PATH))
 
         removed = _remove_dynamic_edges(graph)
         assert removed == 1
@@ -140,8 +140,8 @@ class TestMergeDynamicEdges:
     def test_merge_basic(self):
         """Basic merge should add edges."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="mod.func_a", name="func_a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="mod.func_b", name="func_b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="mod.func_a", name="func_a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="mod.func_b", name="func_b", kind="function", file_path="test.py"))
 
         edges = {"mod.func_a->mod.func_b": 5}
 
@@ -152,11 +152,11 @@ class TestMergeDynamicEdges:
     def test_merge_replaces_existing(self):
         """replace=True should remove old dynamic edges first."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         # Add old dynamic edge
-        graph.add_relation(graph._create_relation("a", "b", "calls", file_path=DYNAMIC_FILE_PATH))
+        graph.add_relation(Relation(src_id="a", tgt_id="b", kind="calls", file_path=DYNAMIC_FILE_PATH))
 
         edges = {"a->b": 10}
         result = merge_dynamic_edges(graph, edges, replace=True)
@@ -167,11 +167,11 @@ class TestMergeDynamicEdges:
     def test_merge_appends(self):
         """replace=False should keep old dynamic edges."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         # Add old dynamic edge
-        graph.add_relation(graph._create_relation("a", "b", "calls", file_path=DYNAMIC_FILE_PATH))
+        graph.add_relation(Relation(src_id="a", tgt_id="b", kind="calls", file_path=DYNAMIC_FILE_PATH))
 
         edges = {"b->a": 5}
         result = merge_dynamic_edges(graph, edges, replace=False)
@@ -182,7 +182,7 @@ class TestMergeDynamicEdges:
     def test_merge_skips_invalid_edge_key(self):
         """Invalid edge key (no ->) should be skipped."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
 
         edges = {"invalid_key": 5, "also_invalid": 3}
         result = merge_dynamic_edges(graph, edges)
@@ -203,7 +203,7 @@ class TestMergeDynamicEdges:
     def test_merge_adds_if_one_endpoint_exists(self):
         """Edge with at least one endpoint existing should be added."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
 
         edges = {"a->nonexistent_b": 5}
         result = merge_dynamic_edges(graph, edges)
@@ -215,8 +215,8 @@ class TestMergeDynamicEdges:
     def test_merge_weight_in_edge(self):
         """Merged edge should have correct weight."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         edges = {"a->b": 8}  # weight should be 4.0
         merge_dynamic_edges(graph, edges)
@@ -228,8 +228,8 @@ class TestMergeDynamicEdges:
     def test_merge_dynamic_file_path_marker(self):
         """Merged edge should have __dynamic__ file_path."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         edges = {"a->b": 5}
         merge_dynamic_edges(graph, edges)
@@ -240,9 +240,9 @@ class TestMergeDynamicEdges:
     def test_merge_multiple_edges(self):
         """Multiple edges should all be processed."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="c", name="c", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="c", name="c", kind="function", file_path="test.py"))
 
         edges = {"a->b": 5, "b->c": 3, "invalid": 1}
         result = merge_dynamic_edges(graph, edges)
@@ -266,8 +266,8 @@ class TestDynamicEdgeProperties:
     def test_edge_has_dynamic_description(self):
         """Dynamic edge should have descriptive text."""
         graph = CodeGraph()
-        graph.add_entity(Entity(id="a", name="a", kind=EntityKind.FUNCTION, file_path="test.py"))
-        graph.add_entity(Entity(id="b", name="b", kind=EntityKind.FUNCTION, file_path="test.py"))
+        graph.add_entity(Entity(id="a", name="a", kind="function", file_path="test.py"))
+        graph.add_entity(Entity(id="b", name="b", kind="function", file_path="test.py"))
 
         edges = {"a->b": 42}
         merge_dynamic_edges(graph, edges)
