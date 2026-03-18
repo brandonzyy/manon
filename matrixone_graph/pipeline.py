@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.ast.chunking import _module_from_rel_path
+
 from .embed import EmbeddingClient
 from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex
 
@@ -67,17 +69,6 @@ def _build_description(symbol) -> str:
     if symbol.docstring:
         parts.append(symbol.docstring[:200])
     return " | ".join(parts)
-
-
-
-def _module_from_rel_path(rel_path: str) -> str:
-    """Compute module prefix from a relative path string (forward-slash separated)."""
-    from pathlib import PurePosixPath
-    p = PurePosixPath(rel_path)
-    parts = list(p.with_suffix("").parts)
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join(parts)
 
 
 def chunk_file_from_dict(source: str, parse_result_dict: dict, rel_path: str) -> list[dict]:
