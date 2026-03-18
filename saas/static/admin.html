@@ -462,7 +462,7 @@ function renderPieChart(pieId,legendId,byEndpoint){
     pie.style.background='none';
     legend.innerHTML='';return;
   }
-  const MANON_TOOLS=['manon_search','manon_deep_query','manon_graph','manon_impact'];
+  const MANON_TOOLS=['query.search','query.deep_query','query.graph','query.impact'];
   const epMap=Object.fromEntries(byEndpoint.map(e=>[e.endpoint,e.count]));
   const data=MANON_TOOLS.map(t=>({endpoint:t,count:epMap[t]||0}));
   const total=data.reduce((s,e)=>s+e.count,0);
