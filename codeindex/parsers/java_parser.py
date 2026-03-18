@@ -348,13 +348,6 @@ class JavaParser(BaseLanguageParser):
 
         return arguments
 
-    def _find_child_by_type(self, node: Node, type_name: str) -> Node | None:
-        """Find first child node of a specific type."""
-        for child in node.children:
-            if child.type == type_name:
-                return child
-        return None
-
     def _extract_java_docstring(self, node: Node, source_bytes: bytes) -> str:
         """Extract JavaDoc comment from a node."""
         if (hasattr(node, 'prev_sibling') and node.prev_sibling and
@@ -1116,48 +1109,3 @@ class JavaParser(BaseLanguageParser):
                 ))
         return calls
 
-
-# ==================== Backward Compatibility Functions ====================
-
-def is_java_file(path: str) -> bool:
-    """Check if file is a Java source file."""
-    return path.endswith('.java')
-
-
-def get_java_parser():
-    """Get the Java parser instance (lazy loading)."""
-    from ..parser import _get_parser
-    return _get_parser("java")
-
-
-def parse_java_file(file_path: str, content: str):
-    """Parse a Java source file.
-
-    Args:
-        file_path: Path to the Java file (for error reporting)
-        content: Java source code content
-
-    Returns:
-        ParseResult containing symbols, imports, and docstrings
-    """
-    import os
-    import tempfile
-    from pathlib import Path
-
-    from ..parser import parse_file
-
-    # Create temporary file with Java content
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False) as f:
-        f.write(content)
-        temp_path = f.name
-
-    try:
-        # Parse using the main parser
-        result = parse_file(Path(temp_path), language="java")
-        # Update path to original file path
-        result.path = Path(file_path)
-        return result
-    finally:
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)

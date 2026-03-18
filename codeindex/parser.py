@@ -61,16 +61,6 @@ class Call:
     call_type: CallType
     arguments_count: Optional[int] = None
 
-    @property
-    def is_dynamic(self) -> bool:
-        """Whether this is a dynamic call (callee unknown)."""
-        return self.call_type == CallType.DYNAMIC
-
-    @property
-    def is_resolved(self) -> bool:
-        """Whether the callee was successfully resolved."""
-        return self.callee is not None
-
     def to_dict(self) -> dict:
         """Convert Call to JSON-serializable dict."""
         return {
@@ -413,11 +403,6 @@ def parse_file(path: Path, language: str | None = None) -> ParseResult:
         return ParseResult(path=path, error=f"Parser not available for {language}",
                            file_lines=_file_lines_safe(path))
     return _create_lang_parser(language, parser).parse(path)
-
-
-def parse_directory(paths: list[Path]) -> list[ParseResult]:
-    """Parse multiple files."""
-    return [parse_file(p) for p in paths]
 
 
 def _get_language(file_path: Path) -> str | None:

@@ -11,7 +11,7 @@ A single TypeScriptParser class handles all 4 file types with 3 grammar variants
 
 from pathlib import Path
 
-from tree_sitter import Language, Node, Parser, Tree
+from tree_sitter import Node, Parser, Tree
 
 from ..parser import Call, CallType, Import, Inheritance, Symbol
 from .base import BaseLanguageParser
@@ -42,34 +42,6 @@ class TypeScriptParser(BaseLanguageParser):
         """
         super().__init__(parser)
         self.grammar_name = grammar_name
-
-    @staticmethod
-    def create_for_file(file_path: Path) -> "TypeScriptParser":
-        """Create a TypeScriptParser configured for the given file extension.
-
-        Args:
-            file_path: Path to the source file
-
-        Returns:
-            TypeScriptParser with correct grammar loaded
-        """
-        ext = file_path.suffix.lower()
-        grammar_name = TypeScriptParser.GRAMMAR_MAP.get(ext, "typescript")
-
-        if grammar_name == "typescript":
-            import tree_sitter_typescript as ts_ts
-            lang = Language(ts_ts.language_typescript())
-        elif grammar_name == "tsx":
-            import tree_sitter_typescript as ts_ts
-            lang = Language(ts_ts.language_tsx())
-        elif grammar_name == "javascript":
-            import tree_sitter_javascript as ts_js
-            lang = Language(ts_js.language())
-        else:
-            raise ValueError(f"Unknown grammar: {grammar_name}")
-
-        parser = Parser(lang)
-        return TypeScriptParser(parser, grammar_name)
 
     def _build_parse_result(self, tree, path, source_bytes: bytes, file_lines: int):
         """Extract all TS/JS parse content and return a ParseResult."""
@@ -1035,12 +1007,4 @@ class TypeScriptParser(BaseLanguageParser):
 # ==================== Backward Compatibility Functions ====================
 
 
-def is_typescript_file(path: str) -> bool:
-    """Check if file is a TypeScript/JavaScript source file."""
-    return any(path.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx"))
 
-
-def get_typescript_parser():
-    """Get the TypeScript parser instance (lazy loading)."""
-    from ..parser import _get_parser
-    return _get_parser("typescript")

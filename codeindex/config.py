@@ -441,29 +441,6 @@ class Config:
         )
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "Config":
-        """Load config from YAML file (alias for load()).
-
-        Args:
-            path: Path to YAML config file
-
-        Returns:
-            Config instance
-        """
-        return cls.load(path)
-
-    @staticmethod
-    def create_default(path: Optional[Path] = None) -> Path:
-        """Create default config file."""
-        if path is None:
-            path = Path.cwd() / DEFAULT_CONFIG_NAME
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_CONFIG_TEMPLATE)
-
-        return path
-
-    @classmethod
     def load_with_auto_setup(cls, root: Path) -> "Config":
         """Load config with automatic language detection and parser installation.
 

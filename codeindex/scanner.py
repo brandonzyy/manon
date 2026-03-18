@@ -15,36 +15,6 @@ class ScanResult:
     files: list[Path]
     subdirs: list[Path]
 
-    @property
-    def indexable_files(self) -> list[Path]:
-        """Get all indexable files (Python, PHP, etc.)."""
-        return self.files
-
-    @property
-    def python_files(self) -> list[Path]:
-        """Get Python files only."""
-        return [f for f in self.files if f.suffix == ".py"]
-
-    @property
-    def php_files(self) -> list[Path]:
-        """Get PHP files only."""
-        return [f for f in self.files if f.suffix in (".php", ".phtml")]
-
-    @property
-    def java_files(self) -> list[Path]:
-        """Get Java files only."""
-        return [f for f in self.files if f.suffix == ".java"]
-
-    @property
-    def typescript_files(self) -> list[Path]:
-        """Get TypeScript files only."""
-        return [f for f in self.files if f.suffix in (".ts", ".tsx")]
-
-    @property
-    def javascript_files(self) -> list[Path]:
-        """Get JavaScript files only."""
-        return [f for f in self.files if f.suffix in (".js", ".jsx")]
-
 
 LANGUAGE_EXTENSIONS = {
     "python": [".py"],
@@ -62,47 +32,6 @@ def get_language_extensions(languages: list[str]) -> set[str]:
     for lang in languages:
         extensions.update(LANGUAGE_EXTENSIONS.get(lang, []))
     return extensions
-
-
-def is_pass_through(dir_path: Path, config: Config) -> bool:
-    """Check if directory is a pass-through (no code files, single subdirectory).
-
-    A pass-through directory has:
-    1. No code files of its own (only subdirectories/non-code files)
-    2. Exactly one non-excluded subdirectory
-
-    This avoids redundant README_AI.md generation in deep directory structures
-    like Java Maven: src/main/java/com/zcyl/module/
-
-    Args:
-        dir_path: Directory path to check
-        config: Configuration with language and exclude settings
-
-    Returns:
-        True if directory is a pass-through, False otherwise
-    """
-    supported_exts = get_language_extensions(config.languages)
-
-    try:
-        items = list(dir_path.iterdir())
-    except (PermissionError, OSError):
-        return False
-
-    # Check for code files
-    code_files = [
-        item for item in items
-        if item.is_file() and item.suffix in supported_exts
-    ]
-    if code_files:
-        return False
-
-    # Count non-excluded subdirectories
-    subdirs = [
-        item for item in items
-        if item.is_dir() and not should_exclude(item, config.exclude, dir_path)
-    ]
-
-    return len(subdirs) == 1
 
 
 def _compute_rel_path(path: Path, base_path: Path) -> str:
@@ -189,51 +118,4 @@ def scan_directory(
     return ScanResult(path=path, files=files, subdirs=subdirs)
 
 
-def find_all_directories(root: Path, config: Config) -> list[Path]:
-    """
-    Find all directories that should be indexed.
 
-    If config.include is specified, recursively finds all subdirectories
-    with indexable files under those paths.
-    Otherwise, walks the entire directory tree.
-
-    Args:
-        root: Root directory to start from
-        config: Configuration object
-
-    Returns:
-        List of directory paths to index
-    """
-    dirs_to_index: list[Path] = []
-
-    def walk_directory(current: Path):
-        """Recursively walk a directory and collect all dirs with files."""
-        if should_exclude(current, config.exclude, root):
-            return
-
-        # Check if this directory has indexable files (non-recursive scan)
-        supported_exts = get_language_extensions(config.languages)
-        has_files = any(
-            item.is_file() and item.suffix in supported_exts
-            for item in current.iterdir()
-        )
-
-        if has_files:
-            dirs_to_index.append(current)
-
-        # Recurse into subdirectories
-        for item in sorted(current.iterdir()):
-            if item.is_dir() and not should_exclude(item, config.exclude, root):
-                walk_directory(item)
-
-    # If include paths are specified, walk each one recursively
-    if config.include:
-        for include_path in config.include:
-            full_path = root / include_path
-            if full_path.exists() and full_path.is_dir():
-                walk_directory(full_path)
-        return dirs_to_index
-
-    # Otherwise, walk the entire directory tree from root
-    walk_directory(root)
-    return dirs_to_index
