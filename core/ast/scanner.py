@@ -82,17 +82,3 @@ def count_scannable_files(local_path: str) -> int:
     return len(scan_result.files)
 
 
-async def sync_to_server(repo_id: str, file_results: list, deleted_files: list, *, full_reindex: bool = False) -> dict:
-    """Upload AST data to saas/ in batches."""
-    from core import saas_client
-
-    last_result: dict = {}
-    for i in range(0, len(file_results), SYNC_BATCH_SIZE):
-        batch = file_results[i:i + SYNC_BATCH_SIZE]
-        payload = {
-            "files": batch,
-            "deleted_files": deleted_files if i == 0 else [],
-            "full_reindex": full_reindex if i == 0 else False,
-        }
-        last_result = await saas_client._post(f"/api/v1/repos/{repo_id}/sync-ast", payload)
-    return last_result
