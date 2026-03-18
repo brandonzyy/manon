@@ -261,6 +261,43 @@ tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90de
   color:var(--accent);font-weight:600;font-family:'SF Mono','Cascadia Code',monospace;
 }
 
+/* ── Charts ── */
+.chart-panel{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;padding:20px;margin-bottom:24px;
+  box-shadow:var(--shadow);
+}
+.chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.chart-title{font-size:14px;font-weight:700;color:var(--text)}
+.period-btns{display:flex;gap:8px}
+.period-btn{
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text2);padding:6px 14px;border-radius:6px;
+  cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;
+}
+.period-btn:hover{border-color:var(--accent);color:var(--accent)}
+.period-btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
+.chart-grid{display:grid;grid-template-columns:2fr 1fr;gap:24px}
+.chart-box{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px}
+.chart-box h5{font-size:11px;color:var(--text3);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em}
+.bar-chart{display:flex;align-items:flex-end;gap:4px;height:180px;padding:10px 0}
+.bar{flex:1;background:linear-gradient(180deg,var(--accent),var(--cyan-dim));border-radius:3px 3px 0 0;position:relative;cursor:pointer;transition:all 0.2s;min-height:2px}
+.bar:hover{opacity:0.8;transform:scaleY(1.05)}
+.bar-tooltip{
+  position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
+  background:var(--bg4);color:var(--text);padding:4px 8px;
+  border-radius:4px;font-size:10px;white-space:nowrap;
+  opacity:0;pointer-events:none;transition:opacity 0.2s;
+  box-shadow:var(--shadow);margin-bottom:4px;
+}
+.bar:hover .bar-tooltip{opacity:1}
+.pie-chart{width:200px;height:200px;border-radius:50%;margin:0 auto 16px;position:relative}
+.pie-legend{font-size:11px}
+.pie-legend-item{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.pie-legend-color{width:12px;height:12px;border-radius:2px}
+.pie-legend-label{flex:1;color:var(--text2)}
+.pie-legend-value{color:var(--accent);font-weight:600;font-family:'SF Mono',monospace}
+
 /* ── Toast ── */
 .toast{
   position:fixed;bottom:24px;right:24px;
@@ -287,6 +324,27 @@ tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90de
 </header>
 <div class="container" id="content">
   <div class="stat-grid" id="stats"></div>
+  <div class="chart-panel" id="globalCharts">
+    <div class="chart-header">
+      <div class="chart-title">全局调用统计</div>
+      <div class="period-btns">
+        <button class="period-btn active" onclick="loadGlobalStats(7)">7天</button>
+        <button class="period-btn" onclick="loadGlobalStats(30)">30天</button>
+        <button class="period-btn" onclick="loadGlobalStats(90)">90天</button>
+      </div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart-box">
+        <h5>调用量趋势</h5>
+        <div class="bar-chart" id="globalBarChart"></div>
+      </div>
+      <div class="chart-box">
+        <h5>工具分布</h5>
+        <div class="pie-chart" id="globalPieChart"></div>
+        <div class="pie-legend" id="globalPieLegend"></div>
+      </div>
+    </div>
+  </div>
   <div class="card">
     <div class="form-row">
       <input id="newName" placeholder="租户名称">
@@ -350,6 +408,7 @@ function login(){
   $('logoutBtn').style.display='';
   $('status').textContent='已连接';$('status').style.color='var(--green)';
   $('content').style.display='block';
+  loadGlobalStats(7);
   loadTenants();
 }
 
@@ -361,6 +420,52 @@ function logout(){
   $('logoutBtn').style.display='none';
   $('status').textContent='';
   $('content').style.display='none';
+}
+
+// ── Global Stats & Charts ──
+let currentGlobalPeriod=7;
+const CHART_COLORS=['#4fc3f7','#ab47bc','#4caf50','#ffa726','#ef5350','#00d4ff','#7b1fa2','#2e7d32'];
+async function loadGlobalStats(days){
+  currentGlobalPeriod=days;
+  document.querySelectorAll('.period-btn').forEach(b=>{
+    b.classList.toggle('active',b.textContent===days+'天');
+  });
+  try{
+    const data=await api('GET',`/admin/usage/overview?days=${days}`);
+    renderBarChart('globalBarChart',data.by_date);
+    renderPieChart('globalPieChart','globalPieLegend',data.by_endpoint);
+  }catch(e){console.error('加载全局统计失败:',e)}
+}
+function renderBarChart(elId,byDate){
+  const el=$(elId);if(!el)return;
+  if(!byDate||byDate.length===0){el.innerHTML='<div style="color:var(--text3);text-align:center;padding:60px 0">暂无数据</div>';return}
+  const max=Math.max(...byDate.map(d=>d.count));
+  el.innerHTML=byDate.map(d=>{
+    const h=max>0?(d.count/max*100):0;
+    const date=d.date?d.date.slice(5):'';
+    return `<div class="bar" style="height:${h}%"><div class="bar-tooltip">${date}<br>${d.count} 次</div></div>`;
+  }).join('');
+}
+function renderPieChart(pieId,legendId,byEndpoint){
+  const pie=$(pieId),legend=$(legendId);
+  if(!pie||!legend)return;
+  if(!byEndpoint||byEndpoint.length===0){
+    pie.innerHTML='<div style="color:var(--text3);text-align:center;padding:90px 0;font-size:11px">暂无数据</div>';
+    legend.innerHTML='';return;
+  }
+  const total=byEndpoint.reduce((s,e)=>s+e.count,0);
+  let angle=0,gradStops=[];
+  byEndpoint.forEach((e,i)=>{
+    const pct=e.count/total;
+    const endAngle=angle+pct*360;
+    gradStops.push(`${CHART_COLORS[i%CHART_COLORS.length]} ${angle}deg ${endAngle}deg`);
+    angle=endAngle;
+  });
+  pie.style.background=`conic-gradient(${gradStops.join(',')})`;
+  legend.innerHTML=byEndpoint.map((e,i)=>{
+    const pct=((e.count/total)*100).toFixed(1);
+    return `<div class="pie-legend-item"><div class="pie-legend-color" style="background:${CHART_COLORS[i%CHART_COLORS.length]}"></div><div class="pie-legend-label">${e.endpoint}</div><div class="pie-legend-value">${pct}%</div></div>`;
+  }).join('');
 }
 
 // ── Tenants ──
@@ -460,21 +565,35 @@ async function loadKeys(tenantId){
   try{
     const keys=await api('GET',`/admin/tenants/${tenantId}/keys`);
     const usage=await api('GET',`/admin/tenants/${tenantId}/usage?days=30`);
-    let html=`<div class="usage-section">
+    let html=`<div class="chart-panel" style="margin:0 0 16px 0">
+      <div class="chart-header">
+        <div class="chart-title">租户调用统计</div>
+        <div class="period-btns">
+          <button class="period-btn" onclick="loadTenantStats('${tenantId}',7)">7天</button>
+          <button class="period-btn active" onclick="loadTenantStats('${tenantId}',30)">30天</button>
+          <button class="period-btn" onclick="loadTenantStats('${tenantId}',90)">90天</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h5>调用量趋势</h5>
+          <div class="bar-chart" id="tenantBarChart_${tenantId}"></div>
+        </div>
+        <div class="chart-box">
+          <h5>工具分布</h5>
+          <div class="pie-chart" id="tenantPieChart_${tenantId}"></div>
+          <div class="pie-legend" id="tenantPieLegend_${tenantId}"></div>
+        </div>
+      </div>
+    </div>`;
+    html+=`<div class="usage-section">
       <h4>使用统计 · 最近 30 天</h4>
       <div class="usage-grid">
         <div class="usage-stat"><div class="num">${usage.total_calls}</div><div class="label">总调用</div></div>
         <div class="usage-stat"><div class="num">${usage.total_tokens}</div><div class="label">Token</div></div>
         <div class="usage-stat"><div class="num">${usage.by_endpoint.length}</div><div class="label">工具数</div></div>
-      </div>`;
-    if(usage.by_endpoint.length>0){
-      html+='<div class="endpoint-label">工具使用频率</div><div class="endpoint-list">';
-      usage.by_endpoint.forEach(e=>{
-        html+=`<div class="endpoint-item"><span class="ep-name">${e.endpoint}</span><span class="ep-count">${e.count}</span></div>`;
-      });
-      html+='</div>';
-    }
-    html+='</div>';
+      </div>
+    </div>`;
     html+=`<div class="form-row" style="margin-top:12px"><input id="newKeyLabel_${tenantId}" placeholder="Key 标签" style="max-width:200px"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();createKey('${tenantId}')">+ 新建 Key</button></div>`;
     html+='<table style="margin-top:8px"><thead><tr><th>Key</th><th>标签</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
     keys.forEach(k=>{
@@ -486,7 +605,20 @@ async function loadKeys(tenantId){
     });
     html+='</tbody></table>';
     el.innerHTML=html;
+    renderBarChart('tenantBarChart_'+tenantId,usage.by_date);
+    renderPieChart('tenantPieChart_'+tenantId,'tenantPieLegend_'+tenantId,usage.by_endpoint);
   }catch(e){el.innerHTML='<em style="color:var(--red)">加载失败</em>'}
+}
+
+async function loadTenantStats(tenantId,days){
+  document.querySelectorAll(`#keys_${tenantId} .period-btn`).forEach(b=>{
+    b.classList.toggle('active',b.textContent===days+'天');
+  });
+  try{
+    const usage=await api('GET',`/admin/tenants/${tenantId}/usage?days=${days}`);
+    renderBarChart('tenantBarChart_'+tenantId,usage.by_date);
+    renderPieChart('tenantPieChart_'+tenantId,'tenantPieLegend_'+tenantId,usage.by_endpoint);
+  }catch(e){console.error('加载租户统计失败:',e)}
 }
 
 async function createKey(tenantId){

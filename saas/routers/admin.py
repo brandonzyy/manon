@@ -144,6 +144,38 @@ async def revoke_key(tenant_id: str, key: str):
 
 
 # ── Usage Stats ───────────────────────────────────────
+@router.get("/usage/overview", dependencies=[Depends(require_admin)])
+async def get_usage_overview(days: int = Query(30, ge=1, le=365)):
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(tokens),0) as tok "
+        "FROM usage_log WHERE created_at >= datetime('now', ?)",
+        (f"-{days} days",),
+    )
+    row = await cur.fetchone()
+    cur2 = await db.execute(
+        "SELECT DATE(created_at) as date, COUNT(*) as cnt FROM usage_log "
+        "WHERE created_at >= datetime('now', ?) "
+        "GROUP BY DATE(created_at) ORDER BY date",
+        (f"-{days} days",),
+    )
+    by_date = [{"date": r["date"], "count": r["cnt"]} for r in await cur2.fetchall()]
+    cur3 = await db.execute(
+        "SELECT endpoint, COUNT(*) as cnt FROM usage_log "
+        "WHERE created_at >= datetime('now', ?) "
+        "GROUP BY endpoint ORDER BY cnt DESC",
+        (f"-{days} days",),
+    )
+    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
+    return {
+        "period_days": days,
+        "total_calls": row["cnt"],
+        "total_tokens": row["tok"],
+        "by_date": by_date,
+        "by_endpoint": by_endpoint,
+    }
+
+
 @router.get("/tenants/{tenant_id}/usage", dependencies=[Depends(require_admin)])
 async def get_tenant_usage(tenant_id: str, days: int = Query(30, ge=1, le=365)):
     db = await get_db()
@@ -154,16 +186,24 @@ async def get_tenant_usage(tenant_id: str, days: int = Query(30, ge=1, le=365)):
     )
     row = await cur.fetchone()
     cur2 = await db.execute(
+        "SELECT DATE(created_at) as date, COUNT(*) as cnt FROM usage_log "
+        "WHERE tenant_id = ? AND created_at >= datetime('now', ?) "
+        "GROUP BY DATE(created_at) ORDER BY date",
+        (tenant_id, f"-{days} days"),
+    )
+    by_date = [{"date": r["date"], "count": r["cnt"]} for r in await cur2.fetchall()]
+    cur3 = await db.execute(
         "SELECT endpoint, COUNT(*) as cnt FROM usage_log "
         "WHERE tenant_id = ? AND created_at >= datetime('now', ?) "
         "GROUP BY endpoint ORDER BY cnt DESC",
         (tenant_id, f"-{days} days"),
     )
-    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur2.fetchall()]
+    by_endpoint = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
     return {
         "tenant_id": tenant_id,
         "period_days": days,
         "total_calls": row["cnt"],
         "total_tokens": row["tok"],
+        "by_date": by_date,
         "by_endpoint": by_endpoint,
     }
