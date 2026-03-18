@@ -33,7 +33,7 @@ def check_version_update(manon_dir: str) -> str | None:
             remote_version = response.read().decode("utf-8").strip()
 
         if remote_version != local_version:
-            return f"\n💡 新版本可用: v{remote_version} (当前: v{local_version})\n   更新命令: cd {manon_dir} && git pull && bash install.sh"
+            return f"\n💡 新版本可用: v{remote_version} (当前: v{local_version})\n   更新: 重新运行安装脚本 (bash install.sh 或 install.bat)"
         return None
     except Exception:
         return None  # Silent fail, non-blocking
