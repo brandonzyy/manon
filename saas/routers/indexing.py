@@ -49,6 +49,13 @@ async def _get_repo_row(repo_id: str, tenant_id: str):
 async def index_status(repo_id: str, ctx: TenantContext = Depends(require_tenant)):
     row = await _get_repo_row(repo_id, ctx.tenant_id)
     stats = json.loads(row["index_stats"]) if row["index_stats"] else None
+    # 从 meta.json 读取实际入图的文件哈希
+    repo_name = row["name"]
+    kg_path = Path(settings.index_dir) / ctx.tenant_id / repo_name / "kg"
+    meta = _load_meta(kg_path)
+    file_hashes = meta.get("hashes", {})
+    if stats:
+        stats["file_hashes"] = file_hashes
     return IndexStatus(repo_id=repo_id, status=row["index_status"], stats=stats)
 
 

@@ -135,6 +135,7 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
             msg += "）"
             print(f"[manon] {msg}")
             summary_parts.append(msg)
+            # 从服务端同步实际入图的文件哈希
             partial_hashes = dict(old_hashes)
             for f in file_results:
                 rp = f["rel_path"]
@@ -142,7 +143,18 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
                     partial_hashes[rp] = new_hashes[rp]
             for d in deleted:
                 partial_hashes.pop(d, None)
-            info["file_hashes"] = partial_hashes
+            try:
+                with httpx.Client(base_url=api_url, headers=headers, timeout=10) as c:
+                    r2 = c.get(f"/api/v1/repos/{repo_id}/index-status")
+                    r2.raise_for_status()
+                    server_stats = r2.json().get("stats") or {}
+                    server_hashes = server_stats.get("file_hashes")
+                    if server_hashes is not None:
+                        info["file_hashes"] = server_hashes
+                    else:
+                        info["file_hashes"] = partial_hashes
+            except Exception:
+                info["file_hashes"] = partial_hashes  # fallback
             info["last_sync"] = datetime.datetime.now().isoformat()
             set_project(project_path, info)
             sync_ok = True

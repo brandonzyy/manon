@@ -28,7 +28,9 @@ def register_index_tools(mcp, deps: ToolDependencies):
         if found:
             local_path, info = found
             try:
-                coverage = analyze_index_coverage(local_path, info.get("file_hashes", {}))
+                # 优先用服务端返回的实际入图文件哈希
+                indexed_hashes = (stats or {}).get("file_hashes") or info.get("file_hashes", {})
+                coverage = analyze_index_coverage(local_path, indexed_hashes)
                 if coverage:
                     msg += f"\n\n{coverage}"
             except Exception:

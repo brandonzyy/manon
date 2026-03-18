@@ -184,8 +184,17 @@ def upload_next_batch(repo_id: str) -> dict:
             for d in deleted:
                 current_hashes.pop(d, None)
         if is_done:
-            # Final batch: replace all hashes with new_hashes
-            current_hashes = new_hashes
+            # 从服务端获取实际入图的文件哈希，替换本地
+            try:
+                status_resp = _client._get(f"/api/v1/repos/{repo_id}/index-status")
+                server_stats = status_resp.get("stats") or {}
+                server_hashes = server_stats.get("file_hashes")
+                if server_hashes is not None:
+                    current_hashes = server_hashes
+                else:
+                    current_hashes = new_hashes
+            except Exception:
+                current_hashes = new_hashes  # fallback: 保留已有逻辑
         info["file_hashes"] = current_hashes
         info["last_sync"] = datetime.datetime.now().isoformat()
         set_project(lp, info)
