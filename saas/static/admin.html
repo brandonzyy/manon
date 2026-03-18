@@ -463,13 +463,14 @@ function renderPieChart(pieId,legendId,byEndpoint){
     legend.innerHTML='';return;
   }
   const MANON_TOOLS=['manon_search','manon_deep_query','manon_graph','manon_impact'];
-  const filtered=byEndpoint.filter(e=>MANON_TOOLS.includes(e.endpoint));
-  const data=filtered.length>0?filtered:byEndpoint.slice(0,4);
+  const epMap=Object.fromEntries(byEndpoint.map(e=>[e.endpoint,e.count]));
+  const data=MANON_TOOLS.map(t=>({endpoint:t,count:epMap[t]||0}));
   const total=data.reduce((s,e)=>s+e.count,0);
   if(total===0){
     pie.innerHTML='<div style="color:var(--text3);text-align:center;padding:90px 0;font-size:11px">暂无数据</div>';
     pie.style.background='none';
-    legend.innerHTML='';return;
+    legend.innerHTML=data.map((e,i)=>`<div class="pie-legend-item"><div class="pie-legend-color" style="background:${CHART_COLORS[i]}"></div><div class="pie-legend-label">${e.endpoint}</div><div class="pie-legend-value">0</div></div>`).join('');
+    return;
   }
   let angle=0,gradStops=[];
   data.forEach((e,i)=>{
