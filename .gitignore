@@ -13,6 +13,10 @@ indexes/
 manon.log
 .manon_runtime/
 
+# test coverage artifacts
+.coverage
+coverage.xml
+
 # runtime artifacts
 node_modules/
 *.db
