@@ -203,28 +203,26 @@ def setup_systemd(c):
 
 
 def restart(c):
-    """Restart saas — kill old process first, prefer systemd, fallback to nohup."""
+    """Restart saas via systemd. Requires manon-saas.service to be installed."""
     print("\n=== 重启 saas ===")
     status = run(c, "systemctl is-enabled manon-saas 2>/dev/null || echo 'not-found'")
-    if "not-found" not in status:
-        # Stop first so systemd won't auto-restart the dying process (Restart=always)
-        # while we're about to start it ourselves — that race is what creates orphan PIDs.
-        run(c, "systemctl stop manon-saas 2>/dev/null || true", timeout=10)
-        # Belt-and-suspenders: kill anything still holding the port (e.g. nohup leftovers).
-        run(c, "fuser -k 3700/tcp 2>/dev/null || true; sleep 1")
-        run(c, "systemctl start manon-saas", timeout=10)
-        if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
-            print("  WARN: manon-saas did not report active within the wait window")
-        out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
-        print(out)
-    else:
-        script = (
-            f"cd {REMOTE_DIR} && nohup python3 -m saas > /tmp/saas.log 2>&1 & "
-            "sleep 3; "
-            "pgrep -f 'python3 -m saas' | head -1"
+    if "not-found" in status:
+        raise RuntimeError(
+            "manon-saas.service not found — run with --setup-systemd first"
         )
-        out = run(c, script)
-        print(f"  PID: {out}")
+
+    # 1. Stop cleanly so Restart=always doesn't race against us.
+    run(c, "systemctl stop manon-saas 2>/dev/null || true", timeout=10)
+    # 2. Kill anything still holding the port (nohup leftovers, etc.).
+    run(c, "fuser -k 3700/tcp 2>/dev/null || true; sleep 1")
+    # 3. Clear failure counter so StartLimitBurst doesn't block a fresh start.
+    run(c, "systemctl reset-failed manon-saas 2>/dev/null || true")
+    # 4. Start fresh.
+    run(c, "systemctl start manon-saas", timeout=10)
+    if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
+        print("  WARN: manon-saas did not report active within the wait window")
+    out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
+    print(out)
 
 
 def verify(c):
