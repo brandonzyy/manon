@@ -137,6 +137,8 @@ install.bat
 
 The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
 
+> **Included:** Installation automatically includes the `/dao` skill (大道至简 - code simplification) for Claude Code users. This skill uses Manon's knowledge graph to systematically simplify codebases through architecture → module → code analysis.
+
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
 
 <details>
