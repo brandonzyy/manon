@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from saas.models import (
-    RepoCreate, RepoOut, IndexTrigger, IndexStatus,
+    RepoCreate, RepoOut, IndexStatus,
     FileSyncData, SyncAstRequest, SearchResult, ImpactResult,
     UsageSummary, TenantCreate, TenantOut, RegisterRequest,
     DeepQueryRequest, MergeDynamicRequest,
@@ -36,16 +36,6 @@ class TestRepoOut:
         )
         assert r.id == "abc"
         assert r.index_stats is None
-
-
-class TestIndexTrigger:
-    def test_default_incremental(self):
-        t = IndexTrigger()
-        assert t.incremental is True
-
-    def test_full_reindex(self):
-        t = IndexTrigger(incremental=False)
-        assert t.incremental is False
 
 
 class TestIndexStatus:

@@ -33,9 +33,6 @@ class ManonClient:
         self._delete(f"/api/v1/repos/{repo_id}")
 
     # ── Indexing ───────────────────────────────────────
-    def trigger_index(self, repo_id: str, *, incremental: bool = True) -> dict:
-        return self._post(f"/api/v1/repos/{repo_id}/index", {"incremental": incremental})
-
     def index_status(self, repo_id: str) -> dict:
         return self._get(f"/api/v1/repos/{repo_id}/index-status")
 

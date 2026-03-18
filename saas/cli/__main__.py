@@ -4,7 +4,6 @@ Usage:
     python -m saas.cli repos list
     python -m saas.cli repos create --name myrepo --git-url https://...
     python -m saas.cli repos delete <id>
-    python -m saas.cli index <repo_id>
     python -m saas.cli index-status <repo_id>
     python -m saas.cli search <repo_id> "authentication"
     python -m saas.cli graph <repo_id> "ClassName"
@@ -21,7 +20,6 @@ import argparse
 import json
 import os
 import sys
-import time
 
 from .client import ManonClient
 
@@ -63,21 +61,6 @@ def cmd_repos(args):
     elif args.sub == "delete":
         c.delete_repo(args.id)
         print(f"Deleted {args.id}")
-
-
-def cmd_index(args):
-    c = _client()
-    result = c.trigger_index(args.repo_id, incremental=not args.full)
-    print(f"Indexing started: {result['status']}")
-    if args.wait:
-        while True:
-            time.sleep(2)
-            st = c.index_status(args.repo_id)
-            print(f"  status: {st['status']}")
-            if st["status"] in ("done", "error"):
-                if st.get("stats"):
-                    _pp(st["stats"])
-                break
 
 
 def cmd_index_status(args):
@@ -129,11 +112,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     rd = rs.add_parser("delete", help="Delete repo")
     rd.add_argument("id")
 
-    ip = sub.add_parser("index", help="Trigger indexing")
-    ip.add_argument("repo_id")
-    ip.add_argument("--full", action="store_true", help="Full re-index (not incremental)")
-    ip.add_argument("--wait", action="store_true", help="Poll until done")
-
     isp = sub.add_parser("index-status", help="Check index status")
     isp.add_argument("repo_id")
 
@@ -168,7 +146,6 @@ def main():
 
     handlers = {
         "repos": cmd_repos,
-        "index": cmd_index,
         "index-status": cmd_index_status,
         "search": cmd_search,
         "graph": cmd_graph,

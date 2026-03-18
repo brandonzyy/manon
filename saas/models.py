@@ -27,10 +27,6 @@ class RepoOut(BaseModel):
 
 
 # ── Indexing ───────────────────────────────────────────
-class IndexTrigger(BaseModel):
-    incremental: bool = True
-
-
 class IndexStatus(BaseModel):
     repo_id: str
     status: str

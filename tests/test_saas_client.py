@@ -112,13 +112,6 @@ class TestIndexingAPIs:
             result = await saas_client.index_status("r1")
             assert result["status"] == "done"
 
-    @pytest.mark.asyncio
-    async def test_trigger_index(self):
-        with patch("core.saas_client._post", new_callable=AsyncMock) as mock:
-            mock.return_value = {"status": "indexing"}
-            result = await saas_client.trigger_index("r1", incremental=False)
-            assert result["status"] == "indexing"
-
 
 # ── Error Handling Tests ─────────────────────────────────────
 

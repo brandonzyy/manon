@@ -100,13 +100,11 @@ class TestMergeDynamic:
 class TestSaasModels:
     def test_import_models(self):
         from saas.models import (
-            IndexTrigger, IndexStatus, SyncAstRequest, FileSyncData,
+            IndexStatus, SyncAstRequest, FileSyncData,
             RepoCreate, RepoOut, SearchResult, DeepQueryRequest,
             MergeDynamicRequest,
         )
         # Verify defaults
-        t = IndexTrigger()
-        assert t.incremental is True
         m = MergeDynamicRequest()
         assert m.edges == {}
         assert m.raw_edges == []
