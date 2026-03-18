@@ -34,30 +34,26 @@ def configure(saas_url: str, api_key: str = "") -> None:
 
 # ── Internal helpers ─────────────────────────────────
 
-def _base_url() -> str:
-    return _saas_url
-
-
 def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"}
 
 
 async def _get(path: str, *, timeout: int = _HTTP_TIMEOUT, **params) -> Any:
-    async with httpx.AsyncClient(base_url=_base_url(), headers=_headers(), timeout=timeout) as c:
+    async with httpx.AsyncClient(base_url=_saas_url, headers=_headers(), timeout=timeout) as c:
         r = await c.get(path, params=params)
         r.raise_for_status()
         return r.json()
 
 
 async def _post(path: str, body: dict, *, timeout: int = _HTTP_TIMEOUT) -> Any:
-    async with httpx.AsyncClient(base_url=_base_url(), headers=_headers(), timeout=timeout) as c:
+    async with httpx.AsyncClient(base_url=_saas_url, headers=_headers(), timeout=timeout) as c:
         r = await c.post(path, json=body)
         r.raise_for_status()
         return r.json()
 
 
 async def _delete(path: str) -> None:
-    async with httpx.AsyncClient(base_url=_base_url(), headers=_headers(), timeout=_HTTP_TIMEOUT) as c:
+    async with httpx.AsyncClient(base_url=_saas_url, headers=_headers(), timeout=_HTTP_TIMEOUT) as c:
         r = await c.delete(path)
         r.raise_for_status()
 
@@ -125,7 +121,7 @@ async def trigger_index(repo_id: str, *, incremental: bool = True) -> dict:
 # ── Health ───────────────────────────────────────────
 
 async def health() -> dict:
-    async with httpx.AsyncClient(base_url=_base_url(), timeout=10) as c:
+    async with httpx.AsyncClient(base_url=_saas_url, timeout=10) as c:
         r = await c.get("/health")
         r.raise_for_status()
         return r.json()
