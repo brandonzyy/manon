@@ -205,12 +205,16 @@ def setup_systemd(c):
 def restart(c):
     """Restart saas — kill old process first, prefer systemd, fallback to nohup."""
     print("\n=== 重启 saas ===")
-    # Always kill existing process first to free the port
-    run(c, "pgrep -f 'python3 -m saas' | xargs -r kill; sleep 2")
+    # Kill by port first (catches nohup/orphan processes regardless of how they were started),
+    # then kill by pattern as a belt-and-suspenders measure.
+    run(c, "fuser -k 3700/tcp 2>/dev/null || true; pgrep -f 'python3 -m saas' | xargs -r kill -9 2>/dev/null || true; sleep 2")
 
     status = run(c, "systemctl is-enabled manon-saas 2>/dev/null || echo 'not-found'")
     if "not-found" not in status:
-        run(c, "systemctl restart manon-saas --no-block", timeout=10)
+        # Use blocking restart so we wait until systemd confirms the old unit is fully
+        # stopped and the new process has started — avoids the --no-block race where
+        # systemd starts a new PID before the old one releases the port.
+        run(c, "systemctl restart manon-saas", timeout=5)
         if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
             print("  WARN: manon-saas did not report active within the wait window")
         out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
