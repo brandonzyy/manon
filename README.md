@@ -138,7 +138,12 @@ install.bat
 The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
 
 > **Included:** Installation automatically includes the `/dao` skill (大道至简 - code simplification) for Claude Code users. This skill uses Manon's knowledge graph to systematically simplify codebases through architecture → module → code analysis.
-
+>
+> **Dao Commands:**
+> - `/dao` — Manual mode: Execute one simplification iteration, then stop and wait
+> - `/dao auto` — Auto mode: Loop until simplified (max 10 iterations), skip medium/high-risk changes
+> - `/dao -autorisk` — Auto-risk mode: Loop with automatic medium/high-risk simplifications enabled
+>
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
 
 <details>
@@ -175,13 +180,15 @@ manon_code_health   → First code health check, get 8-dimension baseline score
 
 Three steps, then all tools work automatically.
 
-**Claude Code Hooks (installed by manon_init):**
+**Claude Code Hooks (installed by install.sh/install.bat):**
 - **Before Grep/Glob** — Reminds to check knowledge graph first, avoiding blind searches
-- **Before Edit/Write** — Reminds to check context and recent changes, avoiding regression of design decisions
+- **Before Agent (Explore/general-purpose)** — Reminds to query Manon before spawning exploration agents
+- **After Commit** — Automatically triggers manon_impact analysis after successful git commits
 
-**Git Pre-Push Hook (installed by manon_setup_hooks):**
+**Git Pre-Push Hook (installed by manon_init):**
 - Auto-incrementally updates knowledge graph after push
 - Auto-outputs code health score changes
+- Can also be manually installed via manon_setup_hooks
 
 ### Daily Workflow
 

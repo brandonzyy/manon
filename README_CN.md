@@ -144,6 +144,13 @@ install.bat
 ```
 安装器自动检测编辑器、安装依赖、注册免费账号并配置 MCP 服务。Windows 下优先使用 Git Bash，回退到 PowerShell — 缺少 Python 时通过 `winget` 自动安装。重启编辑器即可使用。
 
+> **自动包含：** 安装时自动包含 `/dao` skill（大道至简 - 代码精简工具），适用于 Claude Code 用户。该工具使用 Manon 知识图谱，通过架构 → 模块 → 代码三层分析系统化精简代码库。
+>
+> **Dao 命令：**
+> - `/dao` — 手动模式：执行一次精简迭代后停止等待
+> - `/dao auto` — 自动模式：循环执行直到精简完成（最多10次迭代），跳过中高风险变更
+> - `/dao -autorisk` — 自动风险模式：循环执行并自动处理中高风险精简
+>
 > **首次使用：** 在 Claude Code 中输入 `/manon` 激活。Manon 会索引项目并进入知识图谱模式。Cursor/Windsurf 中工具自动可用。
 
 <details>
@@ -180,13 +187,15 @@ manon_code_health   → 首次代码体检，获取 8 维度健康评分基线
 
 三步完成，之后所有工具自动可用。
 
-**Claude Code Hooks（manon_init 自动安装）：**
+**Claude Code Hooks（install.sh/install.bat 安装）：**
 - **Grep/Glob 前** — 提醒先查知识图谱，避免盲目搜索
-- **Edit/Write 前** — 提醒先查上下文和近期改动，避免回退已有设计决策
+- **Agent 前（Explore/general-purpose）** — 提醒在启动探索型 agent 前先查询 Manon
+- **Commit 后** — git commit 成功后自动触发 manon_impact 影响分析
 
-**Git Pre-Push Hook（manon_setup_hooks 安装）：**
+**Git Pre-Push Hook（manon_init 安装）：**
 - push 后自动增量更新知识图谱
 - 自动输出代码健康评分变化
+- 也可通过 manon_setup_hooks 手动安装
 
 ### 日常工作流
 
