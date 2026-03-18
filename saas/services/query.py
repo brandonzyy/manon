@@ -161,12 +161,12 @@ async def code_health_repo(
             repo_id, mg.kg_path, (mg.kg_path / "graph.json").exists(),
         )
 
-    # Load coverage map from local scan cache (written by manon-scan-tests.py)
+    # Load coverage map from kg directory (uploaded by manon_upload_coverage)
     coverage_map = None
-    coverage_cache = Path.home() / ".manon" / "scan_cache" / f"{repo_id}_coverage.json"
-    if coverage_cache.exists():
+    coverage_path = mg.kg_path / "coverage_map.json"
+    if coverage_path.exists():
         try:
-            coverage_map = json.loads(coverage_cache.read_text(encoding="utf-8"))
+            coverage_map = json.loads(coverage_path.read_text(encoding="utf-8"))
         except Exception:
             pass
 
@@ -180,6 +180,22 @@ async def code_health_repo(
     result = compute_score(graph_metrics, debt_metrics)
     await record_usage(ctx.tenant_id, "query.code_health", repo_id)
     return result
+
+
+async def upload_coverage_map_repo(
+    repo_id: str,
+    *,
+    ctx,
+    coverage_data: dict,
+):
+    row = await require_indexed_repo(repo_id, ctx.tenant_id)
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
+    coverage_path = mg.kg_path / "coverage_map.json"
+    coverage_path.write_text(json.dumps(coverage_data, ensure_ascii=False), encoding="utf-8")
+    summary = coverage_data.get("summary", {})
+    return {"status": "ok", "covered": summary.get("covered", 0),
+            "test_files": summary.get("test_files", 0),
+            "test_functions": summary.get("test_functions", 0)}
 
 
 async def impact_local_repo(

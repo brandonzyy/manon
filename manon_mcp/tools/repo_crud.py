@@ -84,6 +84,19 @@ def upload_batch(*, repo_id: str, sync_module) -> str:
         return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
 
+def upload_coverage(*, repo_id: str, client) -> str:
+    """Upload local coverage_map.json to server for TC metric calculation."""
+    coverage_path = Path.home() / ".manon" / "scan_cache" / f"{repo_id}_coverage.json"
+    if not coverage_path.exists():
+        return json.dumps({"status": "skip", "message": "coverage_map not found, run manon-scan-tests.py first"})
+    try:
+        coverage_data = json.loads(coverage_path.read_text(encoding="utf-8"))
+        result = client._post(f"/api/v1/repos/{repo_id}/coverage-map", coverage_data)
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
+
 def register_repo_crud_tools(mcp, deps: ToolDependencies):
     """Register repo list/create/get/delete/scan/upload tools."""
     client = deps.client
@@ -125,6 +138,11 @@ def register_repo_crud_tools(mcp, deps: ToolDependencies):
     def manon_upload_batch(repo_id: str) -> str:
         """从扫描缓存中取下一批文件上传到服务端。"""
         return upload_batch(repo_id=repo_id, sync_module=deps.sync)
+
+    @mcp.tool()
+    def manon_upload_coverage(repo_id: str) -> str:
+        """上传本地 coverage_map.json 到服务端，用于 TC 测试覆盖度计算。"""
+        return upload_coverage(repo_id=repo_id, client=deps.client)
 
     @mcp.tool()
     def manon_index_status(repo_id: str) -> str:
