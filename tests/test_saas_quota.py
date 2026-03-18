@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 
 from saas.quota import check_repo_quota, check_deep_query_quota
 from saas.auth import TenantContext
+from saas.config import SaasSettings
 
 
 class TestCheckRepoQuota:
@@ -21,7 +22,7 @@ class TestCheckRepoQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=5):
+            with patch.object(SaasSettings, "quota_repos", return_value=5):
                 # Should not raise
                 await check_repo_quota(ctx)
 
@@ -36,7 +37,7 @@ class TestCheckRepoQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=5):
+            with patch.object(SaasSettings, "quota_repos", return_value=5):
                 with pytest.raises(HTTPException) as exc_info:
                     await check_repo_quota(ctx)
 
@@ -54,7 +55,7 @@ class TestCheckRepoQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=5):
+            with patch.object(SaasSettings, "quota_repos", return_value=5):
                 with pytest.raises(HTTPException) as exc_info:
                     await check_repo_quota(ctx)
 
@@ -72,7 +73,7 @@ class TestCheckRepoQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos") as mock_quota:
+            with patch.object(SaasSettings, "quota_repos") as mock_quota:
                 mock_quota.return_value = 50  # pro tier limit
                 await check_repo_quota(ctx)
 
@@ -89,7 +90,7 @@ class TestCheckRepoQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=5):
+            with patch.object(SaasSettings, "quota_repos", return_value=5):
                 await check_repo_quota(ctx)  # Should not raise
 
 
@@ -107,7 +108,7 @@ class TestCheckDeepQueryQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_deep_query", return_value=10):
+            with patch.object(SaasSettings, "quota_deep_query", return_value=10):
                 await check_deep_query_quota(ctx)
 
     @pytest.mark.asyncio
@@ -121,7 +122,7 @@ class TestCheckDeepQueryQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_deep_query", return_value=10):
+            with patch.object(SaasSettings, "quota_deep_query", return_value=10):
                 with pytest.raises(HTTPException) as exc_info:
                     await check_deep_query_quota(ctx)
 
@@ -139,7 +140,7 @@ class TestCheckDeepQueryQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_deep_query", return_value=10):
+            with patch.object(SaasSettings, "quota_deep_query", return_value=10):
                 await check_deep_query_quota(ctx)
 
     @pytest.mark.asyncio
@@ -153,7 +154,7 @@ class TestCheckDeepQueryQuota:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_deep_query", return_value=100):
+            with patch.object(SaasSettings, "quota_deep_query", return_value=100):
                 await check_deep_query_quota(ctx)
 
         # Verify the query uses datetime filter
@@ -176,7 +177,7 @@ class TestQuotaTierIntegration:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=3) as mock_quota:
+            with patch.object(SaasSettings, "quota_repos", return_value=3) as mock_quota:
                 with pytest.raises(HTTPException):
                     await check_repo_quota(ctx)
 
@@ -193,7 +194,7 @@ class TestQuotaTierIntegration:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=50) as mock_quota:
+            with patch.object(SaasSettings, "quota_repos", return_value=50) as mock_quota:
                 await check_repo_quota(ctx)
 
         mock_quota.assert_called_once_with("pro")
@@ -209,7 +210,7 @@ class TestQuotaTierIntegration:
         mock_db.execute = AsyncMock(return_value=mock_cursor)
 
         with patch("saas.quota.get_db", return_value=mock_db):
-            with patch("saas.quota.settings.quota_repos", return_value=1000) as mock_quota:
+            with patch.object(SaasSettings, "quota_repos", return_value=1000) as mock_quota:
                 await check_repo_quota(ctx)
 
         mock_quota.assert_called_once_with("enterprise")

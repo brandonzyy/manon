@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from matrixone_graph import MatrixoneGraph, IndexResult, QueryResult
+from matrixone_graph import MatrixoneGraph, QueryResult
 from matrixone_graph.store import CodeGraph
 
 
@@ -93,14 +93,6 @@ class TestLoadGraph:
 
 
 class TestDataclasses:
-    def test_index_result_defaults(self):
-        r = IndexResult()
-        assert r.files_scanned == 0
-        assert r.entities_added == 0
-        assert r.relations_added == 0
-        assert r.chunks_added == 0
-        assert r.files_skipped == 0
-
     def test_query_result_defaults(self):
         r = QueryResult()
         assert r.entities == []

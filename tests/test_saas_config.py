@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from saas.config import SaasSettings, settings
-from saas.runtime import RUNTIME_ROOT
+from saas.config import RUNTIME_ROOT
 
 
 class TestSaasSettings:

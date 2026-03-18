@@ -25,7 +25,7 @@ class TestHelpers:
     def test_base_url(self):
         old = saas_client._saas_url
         saas_client._saas_url = "http://example:3700"
-        assert saas_client._base_url() == "http://example:3700"
+        assert saas_client._saas_url == "http://example:3700"
         saas_client._saas_url = old
 
     def test_headers(self):

@@ -110,10 +110,11 @@ class TestSlidingWindowLimiter:
             rl.check("tenant-b", limit=10)
 
         # Both should have remaining quota
-        assert rl.check("tenant-a", limit=10) is True
-        assert rl.check("tenant-b", limit=10) is True
-        assert rl.check("tenant-b", limit=10) is True
-        assert rl.check("tenant-b", limit=10) is False  # b exhausted
+        assert rl.check("tenant-a", limit=10) is True   # tenant-a: 4th
+        assert rl.check("tenant-b", limit=10) is True   # tenant-b: 8th
+        assert rl.check("tenant-b", limit=10) is True   # tenant-b: 9th
+        assert rl.check("tenant-b", limit=10) is True   # tenant-b: 10th (last allowed)
+        assert rl.check("tenant-b", limit=10) is False  # tenant-b: 11th, exhausted
 
     def test_multiple_windows(self):
         """Different limiter instances should be independent."""
