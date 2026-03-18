@@ -127,9 +127,10 @@ def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
 def _remove_deleted_files(body, graph, vec_index, all_chunks, meta):
     """Remove deleted files from graph, vectors, and chunks."""
     for rel_path in body.deleted_files:
+        old_entity_ids = {n for n, d in graph._g.nodes(data=True) if d.get("file_path") == rel_path}
         graph.remove_by_file(rel_path)
         old_cids = {cid for cid, c in all_chunks.items() if c.file_path == rel_path}
-        vec_index.remove_by_ids(old_cids)
+        vec_index.remove_by_ids(old_cids | old_entity_ids)
         for cid in old_cids:
             del all_chunks[cid]
         meta.get("hashes", {}).pop(rel_path, None)
@@ -142,9 +143,10 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
     new_chunks = []
     new_hashes = {}
     for f in body.files:
+        old_entity_ids = {n for n, d in graph._g.nodes(data=True) if d.get("file_path") == f.rel_path}
         graph.remove_by_file(f.rel_path)
         old_cids = {cid for cid, c in all_chunks.items() if c.file_path == f.rel_path}
-        vec_index.remove_by_ids(old_cids)
+        vec_index.remove_by_ids(old_cids | old_entity_ids)
         for cid in old_cids:
             del all_chunks[cid]
         pr = _reconstruct_parse_result(f.parse_result, f.rel_path)

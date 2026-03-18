@@ -38,9 +38,19 @@ After=network.target
 
 [Service]
 WorkingDirectory=/root/manon
+# Kill any process holding port 3700 before starting (handles orphans from SSH sessions)
+ExecStartPre=-/usr/bin/fuser -k 3700/tcp
+ExecStartPre=/bin/sleep 1
 ExecStart=/usr/bin/python3 -m saas
-Restart=always
+Restart=on-failure
 RestartSec=3
+# Stop restart loop after 5 failures in 60s — prevents endless cycle when port is stuck
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Kill the entire process group on stop, not just the main PID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=10
 Environment=PYTHONUNBUFFERED=1
 Environment=SAAS_EMBEDDING_URL=http://172.16.15.21:9624
 Environment=SAAS_LLM_API_URL=https://api.matrixone.online/v1/chat/completions
