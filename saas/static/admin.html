@@ -280,7 +280,11 @@ tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90de
 .chart-grid{display:grid;grid-template-columns:2fr 1fr;gap:24px}
 .chart-box{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px}
 .chart-box h5{font-size:11px;color:var(--text3);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em}
-.bar-chart{display:flex;align-items:flex-end;gap:4px;height:180px;padding:10px 0}
+.bar-chart{display:flex;align-items:flex-end;gap:4px;height:180px;padding:10px 0;position:relative}
+.bar-chart::before{
+  content:attr(data-max);position:absolute;top:0;left:-40px;
+  font-size:10px;color:var(--text3);
+}
 .bar{flex:1;background:linear-gradient(180deg,var(--accent),var(--cyan-dim));border-radius:3px 3px 0 0;position:relative;cursor:pointer;transition:all 0.2s;min-height:2px}
 .bar:hover{opacity:0.8;transform:scaleY(1.05)}
 .bar-tooltip{
@@ -291,6 +295,10 @@ tr.expandable.open td:first-child::before{transform:translateY(-50%) rotate(90de
   box-shadow:var(--shadow);margin-bottom:4px;
 }
 .bar:hover .bar-tooltip{opacity:1}
+.bar-label{
+  position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);
+  font-size:9px;color:var(--text3);white-space:nowrap;
+}
 .pie-chart{width:200px;height:200px;border-radius:50%;margin:0 auto 16px;position:relative}
 .pie-legend{font-size:11px}
 .pie-legend-item{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -440,10 +448,11 @@ function renderBarChart(elId,byDate){
   const el=$(elId);if(!el)return;
   if(!byDate||byDate.length===0){el.innerHTML='<div style="color:var(--text3);text-align:center;padding:60px 0">暂无数据</div>';return}
   const max=Math.max(...byDate.map(d=>d.count));
+  el.setAttribute('data-max',max);
   el.innerHTML=byDate.map(d=>{
     const h=max>0?(d.count/max*100):0;
     const date=d.date?d.date.slice(5):'';
-    return `<div class="bar" style="height:${h}%"><div class="bar-tooltip">${date}<br>${d.count} 次</div></div>`;
+    return `<div class="bar" style="height:${h}%"><div class="bar-tooltip">${date}<br>${d.count} 次</div><div class="bar-label">${date}</div></div>`;
   }).join('');
 }
 function renderPieChart(pieId,legendId,byEndpoint){
@@ -453,16 +462,22 @@ function renderPieChart(pieId,legendId,byEndpoint){
     pie.innerHTML='<div style="color:var(--text3);text-align:center;padding:90px 0;font-size:11px">暂无数据</div>';
     legend.innerHTML='';return;
   }
-  const total=byEndpoint.reduce((s,e)=>s+e.count,0);
+  const MANON_TOOLS=['manon_search','manon_deep_query','manon_graph','manon_impact'];
+  const filtered=byEndpoint.filter(e=>MANON_TOOLS.includes(e.endpoint));
+  if(filtered.length===0){
+    pie.innerHTML='<div style="color:var(--text3);text-align:center;padding:90px 0;font-size:11px">暂无数据</div>';
+    legend.innerHTML='';return;
+  }
+  const total=filtered.reduce((s,e)=>s+e.count,0);
   let angle=0,gradStops=[];
-  byEndpoint.forEach((e,i)=>{
+  filtered.forEach((e,i)=>{
     const pct=e.count/total;
     const endAngle=angle+pct*360;
     gradStops.push(`${CHART_COLORS[i%CHART_COLORS.length]} ${angle}deg ${endAngle}deg`);
     angle=endAngle;
   });
   pie.style.background=`conic-gradient(${gradStops.join(',')})`;
-  legend.innerHTML=byEndpoint.map((e,i)=>{
+  legend.innerHTML=filtered.map((e,i)=>{
     const pct=((e.count/total)*100).toFixed(1);
     return `<div class="pie-legend-item"><div class="pie-legend-color" style="background:${CHART_COLORS[i%CHART_COLORS.length]}"></div><div class="pie-legend-label">${e.endpoint}</div><div class="pie-legend-value">${pct}%</div></div>`;
   }).join('');
