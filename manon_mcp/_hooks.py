@@ -17,6 +17,34 @@ def init(config):
     _config = config
 
 
+_PRE_ENTER_PLAN_HOOK = '''\
+"""PreToolUse hook: auto-write dao marker when EnterPlanMode plan contains DAO: header."""
+import json
+import re
+import sys
+from pathlib import Path
+
+DAO_MARKER = Path.home() / ".dao_plan_active"
+
+data = json.load(sys.stdin)
+plan = str(data.get("tool_input", {}).get("plan", "") or "")
+
+# Expect first line: DAO: project=<path> issue=<id> skill=<dir> repo=<id>
+m = re.search(
+    r"DAO:\s+project=(.+?)\s+issue=(\S+)\s+skill=(.+?)\s+repo=(\S+)",
+    plan,
+)
+if m:
+    project_path, issue_id, skill_dir, repo_id = m.group(1), m.group(2), m.group(3), m.group(4)
+    DAO_MARKER.write_text(
+        f"{project_path}|||{issue_id}|||{skill_dir}|||{repo_id}",
+        encoding="utf-8",
+    )
+
+sys.exit(0)
+'''
+
+
 _PRE_SEARCH_HOOK = '''\
 """PreToolUse hook: enforce Manon-first before Grep/Glob."""
 import json
@@ -135,11 +163,13 @@ def _persist_api_config() -> None:
 
 
 def _build_claude_hook_entries(
-    search_path: str, agent_path: str, commit_path: str, stop_dao_path: str,
+    search_path: str, agent_path: str, commit_path: str,
+    enter_plan_path: str, stop_dao_path: str,
 ) -> tuple[list, list, list]:
     desired_pre = [
-        {"matcher": "Grep|Glob", "hooks": [{"type": "command", "command": f"python {search_path}"}]},
-        {"matcher": "Agent", "hooks": [{"type": "command", "command": f"python {agent_path}"}]},
+        {"matcher": "Grep|Glob",      "hooks": [{"type": "command", "command": f"python {search_path}"}]},
+        {"matcher": "Agent",          "hooks": [{"type": "command", "command": f"python {agent_path}"}]},
+        {"matcher": "EnterPlanMode",  "hooks": [{"type": "command", "command": f"python {enter_plan_path}"}]},
     ]
     desired_post = [
         {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {commit_path}"}]},
@@ -154,7 +184,8 @@ def _update_settings_hooks(
     settings_file: Path, desired_pre: list, desired_post: list, desired_stop: list,
 ) -> bool:
     _manon_hook_files = (
-        "pre_search.py", "pre_edit.py", "pre_agent_plan.py", "post_commit.py", "stop_dao.py",
+        "pre_search.py", "pre_edit.py", "pre_agent_plan.py",
+        "pre_enter_plan.py", "post_commit.py", "stop_dao.py",
     )
     settings: dict = {}
     if settings_file.exists():
@@ -198,15 +229,17 @@ def _install_claude_hooks() -> str | None:
     try:
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
-        search_hook   = hooks_dir / "pre_search.py"
-        agent_hook    = hooks_dir / "pre_agent_plan.py"
-        commit_hook   = hooks_dir / "post_commit.py"
-        stop_dao_hook = hooks_dir / "stop_dao.py"
+        search_hook      = hooks_dir / "pre_search.py"
+        agent_hook       = hooks_dir / "pre_agent_plan.py"
+        enter_plan_hook  = hooks_dir / "pre_enter_plan.py"
+        commit_hook      = hooks_dir / "post_commit.py"
+        stop_dao_hook    = hooks_dir / "stop_dao.py"
 
-        search_hook.write_text(_PRE_SEARCH_HOOK,    encoding="utf-8")
-        agent_hook.write_text(_PRE_AGENT_PLAN_HOOK, encoding="utf-8")
-        commit_hook.write_text(_POST_COMMIT_HOOK,   encoding="utf-8")
-        stop_dao_hook.write_text(_STOP_DAO_HOOK,    encoding="utf-8")
+        search_hook.write_text(_PRE_SEARCH_HOOK,      encoding="utf-8")
+        agent_hook.write_text(_PRE_AGENT_PLAN_HOOK,   encoding="utf-8")
+        enter_plan_hook.write_text(_PRE_ENTER_PLAN_HOOK, encoding="utf-8")
+        commit_hook.write_text(_POST_COMMIT_HOOK,     encoding="utf-8")
+        stop_dao_hook.write_text(_STOP_DAO_HOOK,      encoding="utf-8")
 
         # Remove retired hook files
         for retired in ("pre_edit.py", "post_exit_plan.py"):
@@ -216,10 +249,11 @@ def _install_claude_hooks() -> str | None:
 
         s = str(search_hook).replace("\\", "/")
         a = str(agent_hook).replace("\\", "/")
+        e = str(enter_plan_hook).replace("\\", "/")
         c = str(commit_hook).replace("\\", "/")
         d = str(stop_dao_hook).replace("\\", "/")
 
-        desired_pre, desired_post, desired_stop = _build_claude_hook_entries(s, a, c, d)
+        desired_pre, desired_post, desired_stop = _build_claude_hook_entries(s, a, c, e, d)
         if not _update_settings_hooks(settings_file, desired_pre, desired_post, desired_stop):
             log.info("Claude Code hooks already up-to-date, skipping write")
             return None

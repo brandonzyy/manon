@@ -61,13 +61,15 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - If user picks A/M → step 4; if user skips/enters → step 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
-   - Write dao marker (ExitPlanMode hook reads this to inject the commit command):
-     `Bash: python "<SKILL_DIR>/scripts/dao-report.py" arm "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
-   - `EnterPlanMode` → plan covers implementation only; do NOT include post-steps
+   - `EnterPlanMode` — plan MUST start with this header (PreToolUse hook auto-writes marker from it):
+     ```
+     DAO: project=<project_path> issue=<issue_id> skill=<SKILL_DIR> repo=<repo_id>
+     ```
+   - Plan covers implementation only after the header; no post-steps in the document
    - Wait for user approval → `ExitPlanMode`
-   - **Hook fires and injects exact command — execute it immediately:**
-     `MANON_DAO_MSG="<commit message>" python "<SKILL_DIR>/scripts/dao-commit.py" "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
-   - Then: `manon_impact(repo_id, commit='HEAD')` → sync graph
+   - Execute implementation → run tests
+   - `MANON_DAO_MSG="<commit message>" python "<SKILL_DIR>/scripts/dao-commit.py" "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
+   - `manon_impact(repo_id, commit='HEAD')` → sync graph
    - Return to step 3
 
 5. **C auto-loop** → process all C candidates without stopping:
