@@ -19,10 +19,22 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
+SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
+
+
+def _find_project_root() -> Path:
+    """Search upward for repo root (contains manon_mcp/). Works from any script location."""
+    candidate = SCRIPT_DIR
+    for _ in range(6):
+        if (candidate / "manon_mcp").exists():
+            return candidate
+        candidate = candidate.parent
+    return SCRIPT_DIR.parent  # fallback
+
+
+PROJECT_ROOT = _find_project_root()
 VENV_DIR = PROJECT_ROOT / ".venv"
 REQ_FILE = PROJECT_ROOT / "manon_mcp" / "requirements.txt"
-SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 
 
 def _venv_site_packages() -> Path:
@@ -33,14 +45,22 @@ def _venv_site_packages() -> Path:
 
 
 def _scan_runtime_ready() -> bool:
-    site_packages = _venv_site_packages()
-    if not site_packages.exists():
-        return False
-
-    site.addsitedir(str(site_packages))
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
 
+    # Try direct import first — succeeds when run via MANON_PYTHON (venv already has deps)
+    try:
+        import httpx  # noqa: F401
+        import yaml  # noqa: F401
+        return True
+    except ImportError:
+        pass
+
+    # Fallback: activate local .venv
+    site_packages = _venv_site_packages()
+    if not site_packages.exists():
+        return False
+    site.addsitedir(str(site_packages))
     try:
         import httpx  # noqa: F401
         import yaml  # noqa: F401
