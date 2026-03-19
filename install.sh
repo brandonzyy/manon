@@ -139,8 +139,9 @@ PYEOF
 
     # Install dao skill (大道至简 - code simplification)
     local dao_skill_dir="$HOME/.claude/skills/dao"
-    mkdir -p "$dao_skill_dir"
+    mkdir -p "$dao_skill_dir/scripts"
     cp "$SCRIPT_DIR/skills/dao/SKILL.md" "$dao_skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/dao/scripts/"*.py "$dao_skill_dir/scripts/"
     info "Claude Code /dao Skill installed (code simplification with Manon)"
 }
 
