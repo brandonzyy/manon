@@ -6,8 +6,7 @@ from pathlib import Path
 from ..store import CodeGraph
 
 from .models import ChangedSymbol, ChangedFile, Caller, ImpactResult
-from .git_parser import GitDiffParser
-from .symbol_extractor import ChangedSymbolExtractor
+from .parsing import GitDiffParser, ChangedSymbolExtractor
 from .risk_assessor import RiskAssessor
 
 

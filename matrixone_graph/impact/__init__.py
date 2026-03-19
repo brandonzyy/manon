@@ -11,8 +11,7 @@ from .models import (
     ImpactResult,
 )
 
-from .git_parser import GitDiffParser
-from .symbol_extractor import ChangedSymbolExtractor
+from .parsing import GitDiffParser, ChangedSymbolExtractor
 from .risk_assessor import RiskAssessor, CORE_MODULES
 from .analyzer import ImpactAnalyzer
 
