@@ -207,36 +207,24 @@ Write code → git push → hook auto-updates knowledge graph (zero effort)
 
 ## 🌿 大道至简 (Dao) — Graph-Driven Code Simplification
 
-Bundled with Manon, `/dao` is a Claude Code skill that uses the knowledge graph to systematically find and remove unnecessary complexity from a codebase — without guessing.
+Bundled with Manon, `/dao` is a Claude Code skill that uses the knowledge graph to systematically find and remove unnecessary complexity — without guessing.
 
-### How It Works
+Type `/dao` in Claude Code. It queries the graph for health scores, identifies where complexity is concentrated, and classifies findings into three layers:
 
-Each session, `/dao` queries the knowledge graph for health scores across 8 dimensions, then runs a deep query to identify where complexity is actually concentrated. Findings are classified into three layers and recorded as issues:
+| Layer | Scope | Examples |
+|-------|-------|---------|
+| **Architecture (A)** | System structure | Unnecessary layers, over-modularization, premature generalization |
+| **Module (M)** | Module boundaries | Feature bloat, unclear boundaries, duplication, excessive dependencies |
+| **Code (C)** | File & function level | Dead code, over-fragmentation, circular deps, low cohesion |
 
-| Layer | Principles | Examples |
-|-------|-----------|---------|
-| **Architecture (A)** | A1–A7 | Unnecessary layers, over-modularization, premature generalization |
-| **Module (M)** | M1–M4 | Feature bloat, unclear boundaries, duplication, excessive dependencies |
-| **Code (C)** | C1–C8 | Dead code, over-fragmentation, circular deps, low cohesion, barrel files |
+**Architecture and Module issues** are shown in an interactive panel. You pick one, Claude designs and executes a plan with your approval, then commits and re-syncs the graph.
 
-### Three-Layer Execution Model
+**Code-layer issues** run automatically — no confirmation needed. Each fix is validated against the graph (e.g. dead code deletion only proceeds after zero-caller confirmation), committed, and the graph is updated before moving to the next.
 
-**Architecture and Module issues** require human judgment. `/dao` presents an interactive panel listing open A/M issues, the user picks one, and Claude enters Plan mode to design the approach. After human approval, the plan is executed, tested, committed, and the graph is re-synced. One issue per session.
-
-**Code-layer issues** run automatically in a loop — no confirmation needed. Each candidate passes a validation gate before execution (e.g. C2 merges require git history check + op-type parity + naming accuracy; C4 deletes require zero-caller confirmation from the graph). The loop commits and syncs the graph after each fix, then continues to the next candidate.
-
-### Safety Gates
-
-- **C2 (merge)** — Only merges files that have never been modified independently, share the same operation type, and produce a result describable in one sentence.
-- **C4 (delete)** — Only deletes entities confirmed as zero-callers by `manon_graph`. Graph coverage blind spots (e.g. files called only from external scripts) are skipped.
-- **Any layer** — If tests fail, the session stops. Coupling that appears intentional is left alone.
-
-### Issue Tracking
-
-Issues are stored in `.dao/issues.json` in the project root and updated after each action. The graph is re-synced after every commit via `manon_impact`, so health scores reflect the current state.
+Issues are tracked in `.dao/issues.json`. Health scores update after every commit.
 
 ```
-/dao          — One iteration: query graph → show panel → fix one issue → stop
+/dao    — query graph → show A/M panel → auto-fix all C issues → stop
 ```
 
 ---
