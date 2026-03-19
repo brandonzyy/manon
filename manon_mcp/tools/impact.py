@@ -1,4 +1,11 @@
-"""Local impact analysis helpers for manon_impact tool."""
+"""Local impact analysis helpers for manon_impact tool.
+
+NOTE: git diff parsing and symbol extraction here intentionally duplicate
+matrixone_graph/impact/{git_parser,symbol_extractor}.py. This module runs
+in the local MCP process and must handle monorepo subpath stripping that
+the server-side classes do not support. Merging would add an undesired
+cross-module dependency and break the client/server boundary.
+"""
 from __future__ import annotations
 
 import logging
