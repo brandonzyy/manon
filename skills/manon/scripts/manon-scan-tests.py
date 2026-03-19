@@ -23,12 +23,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-VENV_DIR = PROJECT_ROOT / ".venv"
-REQ_FILE = PROJECT_ROOT / "manon_mcp" / "requirements.txt"
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 
 _TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
+
+
+def _find_project_root() -> Path:
+    """Locate repo root. Priority: MANON_DIR env var → upward search → fallback."""
+    env_dir = os.environ.get("MANON_DIR")
+    if env_dir and (Path(env_dir) / "manon_mcp").exists():
+        return Path(env_dir)
+    candidate = SCRIPT_DIR
+    for _ in range(6):
+        if (candidate / "manon_mcp").exists():
+            return candidate
+        candidate = candidate.parent
+    return SCRIPT_DIR.parent  # fallback
+
+
+PROJECT_ROOT = _find_project_root()
+VENV_DIR = PROJECT_ROOT / ".venv"
+REQ_FILE = PROJECT_ROOT / "manon_mcp" / "requirements.txt"
 
 
 # ── Runtime bootstrap (mirrors manon-scan.py) ─────────────────────────────────
@@ -41,12 +56,18 @@ def _venv_site_packages() -> Path:
 
 
 def _scan_runtime_ready() -> bool:
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    try:
+        import httpx  # noqa: F401
+        import yaml   # noqa: F401
+        return True
+    except ImportError:
+        pass
     site_packages = _venv_site_packages()
     if not site_packages.exists():
         return False
     site.addsitedir(str(site_packages))
-    if str(PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(PROJECT_ROOT))
     try:
         import httpx  # noqa: F401
         import yaml   # noqa: F401

@@ -23,7 +23,10 @@ SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 
 
 def _find_project_root() -> Path:
-    """Search upward for repo root (contains manon_mcp/). Works from any script location."""
+    """Locate repo root. Priority: MANON_DIR env var → upward search → fallback."""
+    env_dir = os.environ.get("MANON_DIR")
+    if env_dir and (Path(env_dir) / "manon_mcp").exists():
+        return Path(env_dir)
     candidate = SCRIPT_DIR
     for _ in range(6):
         if (candidate / "manon_mcp").exists():
