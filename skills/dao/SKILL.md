@@ -54,10 +54,11 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - **First run** (`report_exists=false`): `mcp__manon__manon_deep_query(repo_id, "这个项目的复杂度、耦合和重复主要集中在哪里？有哪些可以简化的机会？")` → cover all 19 principles in the inquiry, prioritize high-signal ones → `python SCRIPT init <project_path>` → `python SCRIPT add` each finding
    - **Subsequent runs** (`report_exists=true`): load open issues; use `changed_files` from scanner + re-run inquiry over changed areas; cover all 19 principles but focus high-priority ones → `python SCRIPT add` new findings
 
-3. **Show panel + ask** — use `AskUserQuestion` to present issues and wait for selection:
-   - List open issues grouped by layer (A / M / C) with index numbers
-   - Ask: "选择要处理的 issue（输入编号），或输入 C 自动执行所有代码层问题"
-   - Map answer → issue id → proceed to step 4 or 5
+3. **Show panel + ask** — use `AskUserQuestion`:
+   - Show only **A and M** open issues (grouped, with index numbers) — do NOT list C issues individually
+   - If there are open C issues, show only the count: "代码层 (C): N 个待处理，将自动批量执行"
+   - Ask: "选择要处理的架构/模块 issue（输入编号），或直接回车跳过进入代码层自动优化"
+   - If user picks A/M → step 4; if user skips/enters → step 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
    - **Before** `EnterPlanMode`, run `Bash: echo "" > ~/.dao_plan_active` to set the dao marker, then create two tasks with exact commands filled in:
