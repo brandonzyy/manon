@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from .test_detection import detect_test_patterns  # noqa: F401 (re-exported via __init__)
+from .framework_detection import detect_test_patterns  # noqa: F401 (re-exported via __init__)
 
 # Directories to skip during recursive traversal (basename matching).
 # Kept in sync with config._ALWAYS_EXCLUDE but as simple basenames for os.walk.

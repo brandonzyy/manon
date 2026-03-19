@@ -6,7 +6,7 @@ from .analysis import (
     preview_project_structure,
     smart_analysis_signature,
 )
-from .test_detection import detect_test_patterns
+from .framework_detection import detect_test_patterns
 from .config import (
     _load_scan_config,
     get_always_exclude,

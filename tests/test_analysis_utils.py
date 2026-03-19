@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.ast.analysis import _walk_safe, preview_project_structure
-from core.ast.test_detection import (
+from core.ast.framework_detection import (
     _file_exists_in_root,
     _file_contains_text,
     detect_test_patterns,

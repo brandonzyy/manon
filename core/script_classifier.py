@@ -60,7 +60,8 @@ class ScriptSignals:
 
     def _from_parse_result(self, pr: dict):
         """Use already-parsed scan result (avoids double parsing)."""
-        self.imports = [i.get("name", "") for i in pr.get("imports", [])]
+        # scan_and_parse uses "module" key; older formats may use "name"
+        self.imports = [i.get("module", "") or i.get("name", "") for i in pr.get("imports", [])]
         self.exports = [s.get("name", "") for s in pr.get("symbols", [])]
         self.line_count = pr.get("line_count", 0)
         self.docstring = pr.get("docstring", "") or ""
@@ -205,6 +206,7 @@ def build_imported_paths(file_results: list[dict], project_root: Path) -> set[st
     """
     Build set of rel_paths that are imported by other files.
     Uses parse_result imports to match against known file paths.
+    Handles both absolute imports and relative imports (from . import foo).
     """
     # Map module path → rel_path
     module_to_path: dict[str, str] = {}
@@ -213,19 +215,62 @@ def build_imported_paths(file_results: list[dict], project_root: Path) -> set[st
         if rel.endswith(".py"):
             mod = rel[:-3].replace("/", ".").replace("\\", ".")
             module_to_path[mod] = rel
-            # Also map last component for relative imports
+            # Also map last component for stem-only imports
             module_to_path[Path(rel).stem] = rel
+
+    def _resolve_relative(imp_module: str, imp_names: list[str], importer_rel: str) -> list[str]:
+        """Resolve relative imports to absolute module paths."""
+        # importer_rel e.g. "manon_mcp/server.py"
+        parts = importer_rel.replace("\\", "/").split("/")
+        pkg_parts = parts[:-1]  # directory parts = package
+
+        dots = len(imp_module) - len(imp_module.lstrip("."))
+        # Go up (dots-1) package levels (1 dot = current package)
+        if dots > 1:
+            pkg_parts = pkg_parts[:max(0, len(pkg_parts) - (dots - 1))]
+
+        suffix = imp_module.lstrip(".")  # e.g. "" for ".", "tools" for ".tools"
+        base_parts = pkg_parts + (suffix.split(".") if suffix else [])
+
+        resolved = []
+        # Base package itself
+        base = ".".join(base_parts)
+        if base:
+            resolved.append(base)
+        # Each imported name as sub-module (e.g. from . import _hooks → manon_mcp._hooks)
+        for name in imp_names:
+            if isinstance(name, str):
+                resolved.append(f"{base}.{name}" if base else name)
+            elif isinstance(name, dict):
+                n = name.get("name", "")
+                if n:
+                    resolved.append(f"{base}.{n}" if base else n)
+        return resolved
 
     imported: set[str] = set()
     for f in file_results:
         pr = f.get("parse_result") or {}
         for imp in pr.get("imports", []):
-            name = imp.get("name", "")
-            if name in module_to_path:
-                imported.add(module_to_path[name])
-            # Check prefix match (e.g. "scripts.foo" → "scripts/foo.py")
-            for mod, path in module_to_path.items():
-                if name == mod or name.startswith(mod + "."):
-                    imported.add(path)
+            name = imp.get("module", "") or imp.get("name", "")
+            names = imp.get("names", [])
+
+            if name.startswith("."):
+                # Relative import — resolve against importer's package
+                candidates = _resolve_relative(name, names, f["rel_path"])
+            else:
+                candidates = [name]
+                # Also resolve each explicitly imported name as sub-module
+                for n in names:
+                    n_str = n.get("name", "") if isinstance(n, dict) else str(n)
+                    if n_str:
+                        candidates.append(f"{name}.{n_str}")
+
+            for cand in candidates:
+                if cand in module_to_path:
+                    imported.add(module_to_path[cand])
+                # Prefix match: e.g. "core.ast" matches "core/ast/scanner.py"
+                for mod, path in module_to_path.items():
+                    if cand == mod or cand.startswith(mod + ".") or mod.startswith(cand + "."):
+                        imported.add(path)
 
     return imported

@@ -102,7 +102,7 @@ class TestScriptSignalsFromSource:
 class TestScriptSignalsFromParseResult:
     def test_basic_parse_result(self):
         pr = {
-            "imports": [{"name": "os"}, {"name": "core.ast"}],
+            "imports": [{"module": "os"}, {"module": "core.ast"}],  # scan_and_parse format
             "symbols": [{"name": "MyClass"}, {"name": "_private"}],
             "line_count": 50,
             "docstring": "Module doc",
@@ -123,6 +123,13 @@ class TestScriptSignalsFromParseResult:
         assert s.exports == []
         assert s.has_main_guard is False
         assert s.line_count == 0
+
+    def test_legacy_name_key_compat(self):
+        """Older formats used 'name' instead of 'module' — both should work."""
+        pr = {"imports": [{"name": "os"}, {"name": "core.ast"}], "symbols": []}
+        s = ScriptSignals("x.py", parse_result=pr)
+        assert "os" in s.imports
+        assert "core.ast" in s.imports
 
     def test_main_guard_fallback_from_str(self):
         pr = {"symbols": [{"name": "__main__"}], "has_main_guard": False}
@@ -232,7 +239,7 @@ class TestClassifyBatch:
         return {
             "rel_path": rel_path,
             "parse_result": {
-                "imports": [{"name": n} for n in (imports or [])],
+                "imports": [{"module": n} for n in (imports or [])],
                 "symbols": [{"name": n} for n in (exports or [])],
                 "has_main_guard": has_main,
                 "line_count": 20,
@@ -305,7 +312,7 @@ class TestBuildImportedPaths:
             {
                 "rel_path": path,
                 "parse_result": {
-                    "imports": [{"name": n} for n in imports],
+                    "imports": [{"module": n} for n in imports],
                 },
             }
             for path, imports in entries
