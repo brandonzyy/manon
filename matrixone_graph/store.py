@@ -109,6 +109,13 @@ class CodeGraph:
             if d.get("file_path") == file_path
         ]
         self._g.remove_nodes_from(to_remove)
+        # Clean up orphaned phantom nodes left isolated after removal
+        orphans = [
+            n for n, d in self._g.nodes(data=True)
+            if not d.get("kind") and self._g.degree(n) == 0
+        ]
+        if orphans:
+            self._g.remove_nodes_from(orphans)
 
     def neighbors(self, entity_id: str, depth: int = 1, direction: str = "both") -> list[tuple[Entity, list[Relation]]]:
         if entity_id not in self._g:
@@ -151,7 +158,13 @@ class CodeGraph:
 
     @property
     def entity_count(self) -> int:
-        return self._g.number_of_nodes()
+        """Count of real entities only (excludes phantom nodes)."""
+        return sum(1 for _, d in self._g.nodes(data=True) if d.get("kind"))
+
+    @property
+    def phantom_count(self) -> int:
+        """Count of phantom nodes (unresolved external references)."""
+        return sum(1 for _, d in self._g.nodes(data=True) if not d.get("kind"))
 
     @property
     def relation_count(self) -> int:

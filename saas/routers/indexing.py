@@ -222,7 +222,11 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             graph.add_entity(e)
         relations_added = 0
         for r in all_relations:
-            if graph.has_entity(r.src_id) or graph.has_entity(r.tgt_id):
+            # Require at least one *real* entity (has kind) to avoid
+            # chaining phantom nodes for fully-unresolved references.
+            src_real = graph.get_entity(r.src_id) is not None
+            tgt_real = graph.get_entity(r.tgt_id) is not None
+            if src_real or tgt_real:
                 graph.add_relation(r)
                 relations_added += 1
 
@@ -234,7 +238,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             "entities_added": entities_added, "relations_added": relations_added,
             "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
             "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
-            "total_files": len(new_hashes),
+            "total_files": len(new_hashes), "phantom_nodes": graph.phantom_count,
         }
         await db.execute("UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps(stats), repo_id))
         await db.commit()
