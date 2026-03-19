@@ -132,6 +132,15 @@ def cmd_add(project_path, layer, principle, desc, approach=""):
 DAO_MARKER = Path.home() / ".dao_plan_active"
 
 
+def cmd_arm(project_path, issue_id, skill_dir, repo_id):
+    """Write dao marker before EnterPlanMode so ExitPlanMode hook can inject commit command."""
+    DAO_MARKER.write_text(
+        f"{project_path}|||{issue_id}|||{skill_dir}|||{repo_id}",
+        encoding="utf-8",
+    )
+    print(f"dao marker set: {issue_id}")
+
+
 def cmd_done(project_path, issue_id, commit):
     issues = load_issues(project_path)
     for i in issues:
@@ -186,11 +195,12 @@ def cmd_render(project_path):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 COMMANDS = {
-    "read": lambda a: cmd_read(a[0]),
-    "init": lambda a: cmd_init(a[0]),
-    "add":  lambda a: cmd_add(a[0], a[1], a[2], a[3], a[4] if len(a) > 4 else ""),
-    "done": lambda a: cmd_done(a[0], a[1], a[2]),
-    "wip":  lambda a: cmd_wip(a[0], a[1], a[2]),
+    "read":    lambda a: cmd_read(a[0]),
+    "init":    lambda a: cmd_init(a[0]),
+    "add":     lambda a: cmd_add(a[0], a[1], a[2], a[3], a[4] if len(a) > 4 else ""),
+    "arm":     lambda a: cmd_arm(a[0], a[1], a[2], a[3]),
+    "done":    lambda a: cmd_done(a[0], a[1], a[2]),
+    "wip":     lambda a: cmd_wip(a[0], a[1], a[2]),
     "changed": lambda a: cmd_changed(a[0]),
     "render":  lambda a: cmd_render(a[0]),
 }
