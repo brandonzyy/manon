@@ -412,44 +412,40 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ### v1.2.0 — 2026-03-19
 
-#### New Features
+#### `/dao` — Smarter Code Simplification
 
-**Script Classifier** — Manon now intelligently filters tool scripts out of the knowledge graph index. Before indexing, each Python file is run through a 4-signal priority chain:
+The `/dao` skill (大道至简) gets a reliability upgrade in this release. Previously, after entering Plan mode to tackle an architecture or module issue, the post-plan commit step (`dao-commit.py`) was easy to skip — Claude would complete the implementation and move on without updating the issue tracker or syncing the knowledge graph.
 
-1. **Imported by project** → keep as source code (definitive)
-2. **Imports project modules** → keep as source code (definitive)
-3. **Tool name + standalone entry point** (`deploy_*/setup_*/run_*` + `__main__` guard, ≤2 public APIs) → drop as tool script (definitive)
-4. **Uncertain** → sent to LLM tiebreaker
+This release closes that gap with a two-part hook system:
 
-This prevents deploy scripts, seed scripts, and admin utilities from polluting the graph with false call relationships.
+- **`PreToolUse EnterPlanMode`** — When Claude enters Plan mode with a dao header, the hook automatically writes a marker file. This marker persists across the plan approval and execution phases.
+- **Stop hook** — When Claude finishes a response, the Stop hook checks for the marker. If present, it blocks the session and injects a mandatory `dao-commit` instruction into the next turn — Claude cannot proceed until the commit runs, the issue is marked done, and the graph is synced.
 
-**LLM Classify Endpoint** — New `POST /api/v1/classify-scripts` endpoint handles uncertain files that don't match the rule-based signals. The MCP scanner sends file summaries (path, imports, exports, docstring, line count) and receives `tool_script` / `source_code` verdicts.
+The result: every dao issue now has a guaranteed close path. The marker is written on plan entry and deleted only by `dao-commit.py` on success.
 
-**Dao Hooks** — Strengthened the `/dao` skill's enforcement mechanism. The `PreToolUse EnterPlanMode` hook now automatically writes a marker file from the plan header, ensuring `dao-commit.py` always runs after plan execution. The Stop hook blocks Claude Code until the commit step completes.
+#### New
 
-#### Bug Fixes
+- **Script classifier** — Filters tool scripts (`deploy_*`, `setup_*`, `run_*`, etc.) out of the index using a 4-signal rule chain; ambiguous files go to a LLM tiebreaker.
+- **`POST /api/v1/classify-scripts`** — New endpoint for LLM-based script classification used by the scanner.
 
-Three bugs were discovered and fixed during gray-scale testing on the actual Manon codebase (86 files):
+#### Fixed
 
-- **Import key mismatch** — `ScriptSignals._from_parse_result` was reading imports using the `"name"` key, but `scan_and_parse` stores them under `"module"`. This caused 100% of files to fall through to the "uncertain" LLM tiebreaker.
-- **Relative import resolution** — `build_imported_paths` didn't handle relative imports (`from . import _hooks` stored as `module='.'`, `names=['_hooks']`). Without resolution, files imported only via relative paths were falsely classified as tool scripts and dropped.
-- **Import lookup key** — `build_imported_paths` also read the wrong dict key when iterating imports, compounding the above issue.
+- Script classifier read the wrong dict key for imports (`"name"` instead of `"module"`), causing every file to be sent to LLM as "uncertain".
+- Relative imports (`from . import foo`) were not resolved, causing legitimately imported files to be dropped as tool scripts.
+- `build_imported_paths` also used the wrong key when building the imported-file set.
 
-After all three fixes: 83 source files kept, 3 entry-point scripts correctly dropped (`__main__.py` × 2, `parser_installer.py`), 0 false positives on core source modules.
+#### Refactored
 
-#### Refactors
-
-- **`core/ast/framework_detection.py`** (new) — Test framework detection logic extracted from `analysis.py`. The original file was named `test_detection.py`, which caused it to be excluded by the test scanner's `**/test_*.py` pattern.
-- **`matrixone_graph/impact/parsing.py`** — Merged `git_parser.py` + `symbol_extractor.py` into a single file. Both were small (74L + 64L), part of the same parsing pipeline, and had never been modified independently.
+- Extracted test framework detection into `core/ast/framework_detection.py` (was incorrectly named `test_detection.py`, which the test scanner excluded).
+- Merged `git_parser.py` + `symbol_extractor.py` into `matrixone_graph/impact/parsing.py`.
 
 #### Tests
 
-- +88 unit tests for `core/script_classifier` — covers all 4 signal paths, `ScriptSignals` construction from source/parse-result/empty, `classify_batch` routing, `build_imported_paths` resolution, and `is_scripts_like_path`
-- +27 unit tests for `saas/routers/classify` — covers `_build_classify_prompt` formatting, `FileSummary` defaults, and the endpoint's empty/no-key/success/invalid-values/LLM-error/usage-tracking paths
+- +115 unit tests: script classifier (88) and classify endpoint (27).
 
 #### Code Health
 
-`94/100` — up from `88/100` at v1.1.2. All 8 dimensions tracked (MC, CD, FI, DC, TC, FS, TD, ID).
+`94/100` — up from `88/100` at v1.1.2.
 
 ---
 

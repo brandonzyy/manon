@@ -419,44 +419,40 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 
 ### v1.2.0 — 2026-03-19
 
-#### 新增功能
+#### `/dao` — 更可靠的代码精简流程
 
-**脚本分类器（Script Classifier）** — Manon 现在能自动将工具脚本从知识图谱索引中过滤掉。索引前，每个 Python 文件经过四级信号链判断：
+`/dao` skill（大道至简）在本版本获得可靠性升级。此前，进入 Plan mode 处理架构或模块问题后，执行完计划很容易跳过提交步骤——Claude 完成实现后直接继续，既不更新 issue 状态，也不同步知识图谱。
 
-1. **被项目其他文件导入** → 保留为源代码（确定）
-2. **导入了项目内部模块** → 保留为源代码（确定）
-3. **工具命名 + 独立入口点**（`deploy_*/setup_*/run_*` + `__main__` 守卫，公开 API ≤ 2 个）→ 丢弃为工具脚本（确定）
-4. **不确定** → 送 LLM 兜底判断
+本版本通过两段式 Hook 机制彻底解决这一问题：
 
-这样可防止部署脚本、数据填充脚本、管理工具等污染图谱，引入虚假调用关系。
+- **`PreToolUse EnterPlanMode`** — Claude 进入带有 dao 标头的 Plan mode 时，Hook 自动写入一个标记文件，该标记在计划审批和执行阶段全程保留。
+- **Stop Hook** — Claude 每次结束响应时，Stop Hook 检查标记文件是否存在。若存在，则阻断当前会话，并向下一轮注入强制执行的 `dao-commit` 指令——Claude 必须完成提交、将 issue 标记为已完成并同步图谱，才能继续其他任务。
 
-**LLM 分类端点** — 新增 `POST /api/v1/classify-scripts` 端点，处理规则链无法判断的不确定文件。MCP 扫描器发送文件摘要（路径、导入、导出、文档字符串、行数），接收 `tool_script` / `source_code` 分类结果。
+效果：每个 dao issue 现在都有有保障的关闭路径。标记在进入计划时写入，仅在 `dao-commit.py` 成功执行后删除。
 
-**Dao Hooks 强化** — 加强了 `/dao` skill 的执行保障机制。`PreToolUse EnterPlanMode` 钩子现在会从计划头部自动写入标记文件，确保计划执行完成后 `dao-commit.py` 必然运行。Stop 钩子会阻断 Claude Code，直到提交步骤完成。
+#### 新增
 
-#### Bug 修复
+- **脚本分类器** — 使用四级规则链将工具脚本（`deploy_*`、`setup_*`、`run_*` 等）从索引中过滤掉，不确定的文件送 LLM 兜底判断。
+- **`POST /api/v1/classify-scripts`** — 供扫描器调用的 LLM 脚本分类新端点。
 
-在对 Manon 项目本身（86 个文件）进行灰度测试时，发现并修复了三个 Bug：
+#### 修复
 
-- **导入字段键名错误** — `ScriptSignals._from_parse_result` 使用 `"name"` 键读取导入，但 `scan_and_parse` 存储时用的是 `"module"` 键。导致 100% 的文件都落入"不确定"，全部送 LLM 判断。
-- **相对导入解析缺失** — `build_imported_paths` 未处理相对导入（`from . import _hooks` 存储为 `module='.'`、`names=['_hooks']`）。未解析时，仅通过相对路径被导入的文件会被误判为工具脚本并丢弃。
-- **导入迭代字段键名错误** — `build_imported_paths` 在遍历导入时也读取了错误的字典键，加剧了上述问题。
-
-三个 Bug 全部修复后：83 个源文件正确保留，3 个入口脚本正确丢弃（`__main__.py` × 2、`parser_installer.py`），核心源码模块零误判。
+- 脚本分类器读取导入时使用了错误的字典键（`"name"` 而非 `"module"`），导致所有文件都被判为"不确定"并送往 LLM。
+- 相对导入（`from . import foo`）未被解析，导致只通过相对路径被引用的文件被误判为工具脚本并丢弃。
+- `build_imported_paths` 在构建已导入文件集合时也使用了错误的键。
 
 #### 重构
 
-- **`core/ast/framework_detection.py`**（新增）— 测试框架检测逻辑从 `analysis.py` 中提取出来。原文件名为 `test_detection.py`，因匹配测试扫描器的 `**/test_*.py` 规则导致被自身排除在索引之外。
-- **`matrixone_graph/impact/parsing.py`**（C2 合并）— 将 `git_parser.py`（74 行）+ `symbol_extractor.py`（64 行）合并为单文件。两者体量小、同属一条解析流水线，且从未被单独修改过。
+- 将测试框架检测逻辑提取至 `core/ast/framework_detection.py`（原文件名 `test_detection.py` 会被测试扫描器自身排除）。
+- 将 `git_parser.py` + `symbol_extractor.py` 合并为 `matrixone_graph/impact/parsing.py`。
 
 #### 测试
 
-- `core/script_classifier` 新增 88 个单元测试 — 覆盖全部四级信号路径、三种 `ScriptSignals` 构造方式、`classify_batch` 路由、`build_imported_paths` 相对/绝对导入解析、`is_scripts_like_path` 辅助函数
-- `saas/routers/classify` 新增 27 个单元测试 — 覆盖 `_build_classify_prompt` 格式化与截断、`FileSummary` 默认值、端点的空请求/无密钥/成功/非法值/LLM 错误/用量记录等全路径
+- 新增 115 个单元测试：脚本分类器（88 个）+ 分类端点（27 个）。
 
 #### 代码健康
 
-`94/100` — 较 v1.1.2 的 `88/100` 提升 6 分。8 个维度持续追踪（MC 模块耦合、CD 循环依赖、FI 扇入集中度、DC 死代码、TC 测试覆盖、FS 函数规模、TD 技术债务、ID 继承深度）。
+`94/100` — 较 v1.1.2 的 `88/100` 提升 6 分。
 
 ---
 
