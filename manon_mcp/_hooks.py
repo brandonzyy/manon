@@ -33,9 +33,12 @@ sys.exit(2)
 
 
 _POST_COMMIT_HOOK = '''\
-"""PostToolUse hook: suggest manon_impact after successful git commit."""
+"""PostToolUse hook: inject post-commit actions after successful git commit."""
 import json
 import sys
+from pathlib import Path
+
+DAO_MARKER = Path.home() / ".dao_plan_active"
 
 data = json.load(sys.stdin)
 tool_name = data.get("tool_name", "")
@@ -49,26 +52,108 @@ exit_code = response.get("exitCode", -1)
 if exit_code != 0:
     sys.exit(0)
 
-# Detect git commit (not amend-only, not merge commit artifacts)
-is_commit = False
-for token in ("git commit", "git commit -m", "git commit -am"):
-    if token in command:
-        is_commit = True
-        break
-
+is_commit = any(token in command for token in ("git commit", "git commit -m", "git commit -am"))
 if not is_commit:
     sys.exit(0)
+
+# Always: manon_impact after every commit
+context = (
+    "CRITICAL: Git commit succeeded. You MUST immediately run "
+    "manon_impact(<repo_id>) to analyze this commit\'s impact on "
+    "dependencies and downstream callers. Do NOT proceed with other "
+    "tasks until impact analysis is complete."
+)
+
+# Dao session only: append close-issue + sync instructions
+if DAO_MARKER.exists():
+    try:
+        parts = DAO_MARKER.read_text(encoding="utf-8").strip().split("|||")
+        if len(parts) >= 4:
+            project_path, issue_id, skill_dir, repo_id = parts[0], parts[1], parts[2], parts[3]
+            context += (
+                f"\\n\\nDAO SESSION — additionally run in this exact order:"
+                f"\\n1. python \\"{skill_dir}/scripts/dao-report.py\\" done \\"{project_path}\\" {issue_id} <commit_hash>"
+                f"\\n2. Sync graph: manon_scan_files + manon_upload_batch until done"
+                f"\\nDo NOT skip these. dao-report.py done will clear the dao marker when complete."
+            )
+    except Exception:
+        pass
 
 print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PostToolUse",
-        "additionalContext": (
-            "CRITICAL: Git commit succeeded. You MUST immediately run "
-            "manon_impact(<repo_id>) to analyze this commit's impact on "
-            "dependencies and downstream callers. Do NOT proceed with other "
-            "tasks until impact analysis is complete."
-        ),
+        "additionalContext": context,
     }
+}))
+'''
+
+
+_POST_EXIT_PLAN_HOOK = '''\
+"""PostToolUse hook: fires after ExitPlanMode — blocks Claude if dao session pending."""
+import json
+import sys
+from pathlib import Path
+
+DAO_MARKER = Path.home() / ".dao_plan_active"
+
+if not DAO_MARKER.exists():
+    sys.exit(0)
+
+try:
+    parts = DAO_MARKER.read_text(encoding="utf-8").strip().split("|||")
+    project_path, issue_id, skill_dir, repo_id = parts[0], parts[1], parts[2], parts[3]
+except Exception:
+    DAO_MARKER.unlink(missing_ok=True)
+    sys.exit(0)
+
+print(json.dumps({
+    "decision": "block",
+    "reason": (
+        f"DAO PLAN APPROVED — execute immediately before anything else:\\n"
+        f"1. Implement the plan changes\\n"
+        f"2. Run: MANON_DAO_MSG=\\"<commit message>\\" "
+        f"python \\"{skill_dir}/scripts/dao-commit.py\\" "
+        f"\\"{project_path}\\" \\"{issue_id}\\" \\"{skill_dir}\\" \\"{repo_id}\\"\\n"
+        f"3. manon_impact(repo_id=\'{repo_id}\', commit=\'HEAD\') then sync graph\\n"
+        f"dao-commit.py closes the issue and clears the dao marker automatically."
+    ),
+}))
+'''
+
+
+_STOP_DAO_HOOK = '''\
+"""Stop hook: block Claude from stopping if dao session has pending commit."""
+import json
+import sys
+from pathlib import Path
+
+DAO_MARKER = Path.home() / ".dao_plan_active"
+
+data = json.load(sys.stdin)
+
+# Prevent infinite loop: if Stop hook already fired once this turn, let Claude stop
+if data.get("stop_hook_active"):
+    sys.exit(0)
+
+if not DAO_MARKER.exists():
+    sys.exit(0)
+
+try:
+    parts = DAO_MARKER.read_text(encoding="utf-8").strip().split("|||")
+    project_path, issue_id, skill_dir, repo_id = parts[0], parts[1], parts[2], parts[3]
+except Exception:
+    DAO_MARKER.unlink(missing_ok=True)
+    sys.exit(0)
+
+print(json.dumps({
+    "decision": "block",
+    "reason": (
+        f"DAO SESSION INCOMPLETE. Run this command now before stopping:\\n"
+        f"MANON_DAO_MSG=\\"<commit message>\\" "
+        f"python \\"{skill_dir}/scripts/dao-commit.py\\" "
+        f"\\"{project_path}\\" \\"{issue_id}\\" \\"{skill_dir}\\" \\"{repo_id}\\"\\n"
+        f"Then: manon_impact(repo_id=\'{repo_id}\', commit=\'HEAD\') and sync graph."
+    ),
 }))
 '''
 
@@ -108,21 +193,33 @@ def _persist_api_config() -> None:
         log.warning("Failed to persist API config: %s", exc)
 
 
-def _build_claude_hook_entries(search_path: str, agent_path: str, commit_path: str) -> tuple[list, list]:
-    """Build desired PreToolUse and PostToolUse hook entries."""
+def _build_claude_hook_entries(
+    search_path: str, agent_path: str, commit_path: str,
+    exit_plan_path: str, stop_dao_path: str,
+) -> tuple[list, list, list]:
+    """Build desired PreToolUse, PostToolUse, and Stop hook entries."""
     desired_pre = [
         {"matcher": "Grep|Glob", "hooks": [{"type": "command", "command": f"python {search_path}"}]},
         {"matcher": "Agent", "hooks": [{"type": "command", "command": f"python {agent_path}"}]},
     ]
     desired_post = [
         {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {commit_path}"}]},
+        {"matcher": "ExitPlanMode", "hooks": [{"type": "command", "command": f"python {exit_plan_path}"}]},
     ]
-    return desired_pre, desired_post
+    desired_stop = [
+        {"hooks": [{"type": "command", "command": f"python {stop_dao_path}"}]},
+    ]
+    return desired_pre, desired_post, desired_stop
 
 
-def _update_settings_hooks(settings_file: Path, desired_pre: list, desired_post: list) -> bool:
+def _update_settings_hooks(
+    settings_file: Path, desired_pre: list, desired_post: list, desired_stop: list,
+) -> bool:
     """Read, update, and write Claude settings.json hooks. Returns True if changed."""
-    _manon_hook_files = ("pre_search.py", "pre_edit.py", "pre_agent_plan.py", "post_commit.py")
+    _manon_hook_files = (
+        "pre_search.py", "pre_edit.py", "pre_agent_plan.py",
+        "post_commit.py", "post_exit_plan.py", "stop_dao.py",
+    )
     settings: dict = {}
     if settings_file.exists():
         try:
@@ -133,45 +230,59 @@ def _update_settings_hooks(settings_file: Path, desired_pre: list, desired_post:
     hooks_cfg = settings.setdefault("hooks", {})
     pre_tool = hooks_cfg.setdefault("PreToolUse", [])
     post_tool = hooks_cfg.setdefault("PostToolUse", [])
+    stop_hooks = hooks_cfg.setdefault("Stop", [])
 
     existing_pre = [e for e in pre_tool if any(f in str(e) for f in _manon_hook_files)]
     existing_post = [e for e in post_tool if any(f in str(e) for f in _manon_hook_files)]
-    if existing_pre == desired_pre and existing_post == desired_post:
+    existing_stop = [e for e in stop_hooks if any(f in str(e) for f in _manon_hook_files)]
+    if existing_pre == desired_pre and existing_post == desired_post and existing_stop == desired_stop:
         return False
 
     pre_tool[:] = [e for e in pre_tool if not any(f in str(e) for f in _manon_hook_files)]
     pre_tool.extend(desired_pre)
     post_tool[:] = [e for e in post_tool if not any(f in str(e) for f in _manon_hook_files)]
     post_tool.extend(desired_post)
+    stop_hooks[:] = [e for e in stop_hooks if not any(f in str(e) for f in _manon_hook_files)]
+    stop_hooks.extend(desired_stop)
     settings_file.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return True
 
 
 def _install_claude_hooks() -> str | None:
-    """Install Claude Code PreToolUse hooks into ~/.claude/."""
+    """Install Claude Code hooks into ~/.claude/."""
     claude_dir = Path.home() / ".claude"
     hooks_dir = claude_dir / "hooks"
     settings_file = claude_dir / "settings.json"
 
     try:
         hooks_dir.mkdir(parents=True, exist_ok=True)
-        search_hook = hooks_dir / "pre_search.py"
-        agent_hook = hooks_dir / "pre_agent_plan.py"
-        commit_hook = hooks_dir / "post_commit.py"
-        search_path = str(search_hook).replace("\\", "/")
-        agent_path = str(agent_hook).replace("\\", "/")
-        commit_path = str(commit_hook).replace("\\", "/")
+
+        search_hook    = hooks_dir / "pre_search.py"
+        agent_hook     = hooks_dir / "pre_agent_plan.py"
+        commit_hook    = hooks_dir / "post_commit.py"
+        exit_plan_hook = hooks_dir / "post_exit_plan.py"
+        stop_dao_hook  = hooks_dir / "stop_dao.py"
+
+        search_path    = str(search_hook).replace("\\", "/")
+        agent_path     = str(agent_hook).replace("\\", "/")
+        commit_path    = str(commit_hook).replace("\\", "/")
+        exit_plan_path = str(exit_plan_hook).replace("\\", "/")
+        stop_dao_path  = str(stop_dao_hook).replace("\\", "/")
 
         search_hook.write_text(_PRE_SEARCH_HOOK, encoding="utf-8")
         agent_hook.write_text(_PRE_AGENT_PLAN_HOOK, encoding="utf-8")
         commit_hook.write_text(_POST_COMMIT_HOOK, encoding="utf-8")
+        exit_plan_hook.write_text(_POST_EXIT_PLAN_HOOK, encoding="utf-8")
+        stop_dao_hook.write_text(_STOP_DAO_HOOK, encoding="utf-8")
 
         old_edit_hook = hooks_dir / "pre_edit.py"
         if old_edit_hook.exists():
             old_edit_hook.unlink()
 
-        desired_pre, desired_post = _build_claude_hook_entries(search_path, agent_path, commit_path)
-        if not _update_settings_hooks(settings_file, desired_pre, desired_post):
+        desired_pre, desired_post, desired_stop = _build_claude_hook_entries(
+            search_path, agent_path, commit_path, exit_plan_path, stop_dao_path,
+        )
+        if not _update_settings_hooks(settings_file, desired_pre, desired_post, desired_stop):
             log.info("Claude Code hooks already up-to-date, skipping write")
             return None
 
