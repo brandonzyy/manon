@@ -25,10 +25,11 @@ user_invocable: true
   4. 向用户展示分析结果
 
 ## Step 3: Scan & Upload
-1. 从 Step 1 输出提取 `MANON_DIR` 和 `MANON_PYTHON`
-2. Bash: `"<MANON_PYTHON>" "<MANON_DIR>/scripts/manon-scan.py" <repo_id>`
-   - 如报错（ModuleNotFoundError/ImportError/文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
-3. Bash: `"<MANON_PYTHON>" "<MANON_DIR>/scripts/manon-scan-tests.py" <repo_id>`
+1. 从 Step 1 输出提取 `MANON_PYTHON`
+2. Bash: `"<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
+   - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
+   - 如报错（ModuleNotFoundError/ImportError/文件不存在）→ 从 Step 1 输出提取 `MANON_DIR`，运行 `bash "<MANON_DIR>/install.sh"` 后重试
+3. Bash: `"<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan-tests.py" <repo_id>`
    - 输出 `{ covered, test_files, test_functions }`，报错不阻断流程（跳过即可）
 4. `manon_scan_files(repo_id)`
 5. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"

@@ -124,8 +124,9 @@ configure_claude_code() {
     info "Claude Code MCP registered"
 
     # /manon Skill (Claude Code exclusive)
-    mkdir -p "$skill_dir"
+    mkdir -p "$skill_dir/scripts"
     cp "$SCRIPT_DIR/skills/manon/SKILL.md" "$skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/manon/scripts/"*.py "$skill_dir/scripts/"
     info "Claude Code /manon Skill installed"
 
     # Install Claude Code hooks (PreToolUse + PostToolUse)

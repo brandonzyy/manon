@@ -1,6 +1,6 @@
 """Manon MCP — scan cache loader and batch uploader.
 
-Heavy scanning is done by scripts/manon-scan.py (external process).
+Heavy scanning is done by skills/manon/scripts/manon-scan.py (external process).
 This module only loads cached results and uploads them in batches.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from core.ast import (
     SYNC_BATCH_SIZE,
 )
 
-# ── Scan cache on disk (written by scripts/manon-scan.py) ─
+# ── Scan cache on disk (written by skills/manon/scripts/manon-scan.py) ─
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 _SYNC_PROGRESS_FILE = Path.home() / ".manon" / "sync_progress.json"
 
@@ -84,7 +84,7 @@ def _is_syncing(repo_id: str) -> bool:
 
 
 def scan_files(repo_id: str) -> dict:
-    """Load scan results from disk cache (written by scripts/manon-scan.py).
+    """Load scan results from disk cache (written by skills/manon/scripts/manon-scan.py).
 
     Reads ~/.manon/scan_cache/<repo_id>.json into memory _scan_cache,
     then removes the disk file.
@@ -96,7 +96,7 @@ def scan_files(repo_id: str) -> dict:
     if not cache_file.exists():
         raise FileNotFoundError(
             f"No scan cache at {cache_file}. "
-            "Run `<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py {repo_id}` first (use the Python path from manon_init output)."
+            "Run `<MANON_PYTHON> <MANON_DIR>/skills/manon/scripts/manon-scan.py {repo_id}` first (use the Python path from manon_init output)."
         )
 
     cache_data = json.loads(cache_file.read_text(encoding="utf-8"))

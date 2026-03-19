@@ -119,9 +119,7 @@ exit /b %errorlevel%
 ::PS     switch ($platform) {
 ::PS         "claude-code" {
 ::PS             Write-McpJson "$HOME_DIR\.claude.json"; info "Claude Code MCP registered"
-::PS             $sd = "$HOME_DIR\.claude\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS             Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
-::PS             info "Claude Code /manon Skill installed"
+::PS             $sd = "$HOME_DIR\.claude\skills\manon"; New-Item -ItemType Directory -Path "$sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\manon\scripts\*.py" "$sd\scripts\"; info "Claude Code /manon Skill installed"
 ::PS             & $VENV_PYTHON -c "import sys; sys.path.insert(0, r'$SCRIPT_DIR'); from manon_mcp._hooks import _install_claude_hooks; _install_claude_hooks()"
 ::PS             info "Claude Code hooks installed (search/edit/agent/commit->impact)"
 ::PS             $dao_sd = "$HOME_DIR\.claude\skills\dao"; New-Item -ItemType Directory -Path "$dao_sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\dao\SKILL.md" "$dao_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\dao\scripts\*.py" "$dao_sd\scripts\"; info "Claude Code /dao Skill installed (code simplification with Manon)"
