@@ -60,7 +60,7 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - Map answer → issue id → proceed to step 4 or 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
-   - **Before** `EnterPlanMode`, create two tasks with exact commands filled in:
+   - **Before** `EnterPlanMode`, run `Bash: echo "" > ~/.dao_plan_active` to set the dao marker, then create two tasks with exact commands filled in:
      ```
      TaskCreate(title="[DAO-POST 1/2] Sync graph",
                 description="Run: \"<MANON_PYTHON>\" \"<SKILL_DIR>/scripts/manon-scan.py\" <repo_id>
