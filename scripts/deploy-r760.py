@@ -316,7 +316,7 @@ def verify(c):
     if llm_model != expected_llm:
         print(f"  FAIL: llm_model='{llm_model}' (expected '{expected_llm}') — possible orphan process")
         return False
-    print(f"  llm_model: {llm_model} ✓")
+    print(f"  llm_model: {llm_model} OK")
 
     # 4. Version
     version = wait_for_http(c, "http://localhost:3700/version", attempts=10, delay=1)
