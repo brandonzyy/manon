@@ -419,40 +419,14 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 
 ### v1.2.0 — 2026-03-19
 
-#### `/dao` — 更可靠的代码精简流程
+**`/dao` Hook 强制机制** — 此前完成计划后，Claude 可能跳过提交步骤直接继续。两段式 Hook 解决了这个问题：`EnterPlanMode` Hook 在计划开始时写入标记文件；`Stop` Hook 阻断会话，直到 `dao-commit` 执行、issue 关闭、图谱同步后才能继续。
 
-`/dao` skill（大道至简）在本版本获得可靠性升级。此前，进入 Plan mode 处理架构或模块问题后，执行完计划很容易跳过提交步骤——Claude 完成实现后直接继续，既不更新 issue 状态，也不同步知识图谱。
-
-本版本通过两段式 Hook 机制彻底解决这一问题：
-
-- **`PreToolUse EnterPlanMode`** — Claude 进入带有 dao 标头的 Plan mode 时，Hook 自动写入一个标记文件，该标记在计划审批和执行阶段全程保留。
-- **Stop Hook** — Claude 每次结束响应时，Stop Hook 检查标记文件是否存在。若存在，则阻断当前会话，并向下一轮注入强制执行的 `dao-commit` 指令——Claude 必须完成提交、将 issue 标记为已完成并同步图谱，才能继续其他任务。
-
-效果：每个 dao issue 现在都有有保障的关闭路径。标记在进入计划时写入，仅在 `dao-commit.py` 成功执行后删除。
-
-#### 新增
-
-- **脚本分类器** — 使用四级规则链将工具脚本（`deploy_*`、`setup_*`、`run_*` 等）从索引中过滤掉，不确定的文件送 LLM 兜底判断。
+- **脚本分类器** — 通过四级规则链将工具脚本（`deploy_*`、`setup_*` 等）过滤出索引，不确定的文件送 LLM 兜底。
 - **`POST /api/v1/classify-scripts`** — 供扫描器调用的 LLM 脚本分类新端点。
-
-#### 修复
-
-- 脚本分类器读取导入时使用了错误的字典键（`"name"` 而非 `"module"`），导致所有文件都被判为"不确定"并送往 LLM。
-- 相对导入（`from . import foo`）未被解析，导致只通过相对路径被引用的文件被误判为工具脚本并丢弃。
-- `build_imported_paths` 在构建已导入文件集合时也使用了错误的键。
-
-#### 重构
-
-- 将测试框架检测逻辑提取至 `core/ast/framework_detection.py`（原文件名 `test_detection.py` 会被测试扫描器自身排除）。
-- 将 `git_parser.py` + `symbol_extractor.py` 合并为 `matrixone_graph/impact/parsing.py`。
-
-#### 测试
-
-- 新增 115 个单元测试：脚本分类器（88 个）+ 分类端点（27 个）。
-
-#### 代码健康
-
-`94/100` — 较 v1.1.2 的 `88/100` 提升 6 分。
+- **修复** — 灰度测试中发现的 3 个分类器 Bug：导入字典键名错误、相对导入未解析、`build_imported_paths` 键名错误。
+- **重构** — `git_parser.py` + `symbol_extractor.py` 合并为 `parsing.py`；测试框架检测提取至 `framework_detection.py`。
+- **测试** — 新增 115 个单元测试（脚本分类器 + 分类端点）。
+- **代码健康** — `94/100`，较上版提升 6 分。
 
 ---
 

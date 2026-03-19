@@ -412,40 +412,14 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ### v1.2.0 — 2026-03-19
 
-#### `/dao` — Smarter Code Simplification
+**`/dao` hook enforcement** — After completing a plan, Claude previously could skip the commit step and move on. A two-part hook now prevents this: an `EnterPlanMode` hook writes a marker file when the plan starts; a `Stop` hook blocks the session until `dao-commit` runs, the issue is closed, and the graph is synced.
 
-The `/dao` skill (大道至简) gets a reliability upgrade in this release. Previously, after entering Plan mode to tackle an architecture or module issue, the post-plan commit step (`dao-commit.py`) was easy to skip — Claude would complete the implementation and move on without updating the issue tracker or syncing the knowledge graph.
-
-This release closes that gap with a two-part hook system:
-
-- **`PreToolUse EnterPlanMode`** — When Claude enters Plan mode with a dao header, the hook automatically writes a marker file. This marker persists across the plan approval and execution phases.
-- **Stop hook** — When Claude finishes a response, the Stop hook checks for the marker. If present, it blocks the session and injects a mandatory `dao-commit` instruction into the next turn — Claude cannot proceed until the commit runs, the issue is marked done, and the graph is synced.
-
-The result: every dao issue now has a guaranteed close path. The marker is written on plan entry and deleted only by `dao-commit.py` on success.
-
-#### New
-
-- **Script classifier** — Filters tool scripts (`deploy_*`, `setup_*`, `run_*`, etc.) out of the index using a 4-signal rule chain; ambiguous files go to a LLM tiebreaker.
-- **`POST /api/v1/classify-scripts`** — New endpoint for LLM-based script classification used by the scanner.
-
-#### Fixed
-
-- Script classifier read the wrong dict key for imports (`"name"` instead of `"module"`), causing every file to be sent to LLM as "uncertain".
-- Relative imports (`from . import foo`) were not resolved, causing legitimately imported files to be dropped as tool scripts.
-- `build_imported_paths` also used the wrong key when building the imported-file set.
-
-#### Refactored
-
-- Extracted test framework detection into `core/ast/framework_detection.py` (was incorrectly named `test_detection.py`, which the test scanner excluded).
-- Merged `git_parser.py` + `symbol_extractor.py` into `matrixone_graph/impact/parsing.py`.
-
-#### Tests
-
-- +115 unit tests: script classifier (88) and classify endpoint (27).
-
-#### Code Health
-
-`94/100` — up from `88/100` at v1.1.2.
+- **Script classifier** — Filters tool scripts (`deploy_*`, `setup_*`, etc.) from the index via a 4-signal rule chain; ambiguous files go to an LLM tiebreaker.
+- **`POST /api/v1/classify-scripts`** — New endpoint for LLM-based script classification.
+- **Fixed** — 3 bugs in the classifier found during gray-scale testing: wrong import dict key, missing relative import resolution, wrong key in `build_imported_paths`.
+- **Refactored** — `git_parser.py` + `symbol_extractor.py` merged into `parsing.py`; test framework detection extracted to `framework_detection.py`.
+- **Tests** — +115 unit tests (script classifier + classify endpoint).
+- **Code health** — `94/100`, up from `88/100`.
 
 ---
 
