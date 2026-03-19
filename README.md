@@ -427,6 +427,22 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ---
 
+## 📋 Version History
+
+| Version | Date | Summary |
+|---------|------|---------|
+| **v1.2.0** | 2026-03-19 | Script classifier filters tool scripts from index; LLM classify endpoint; +115 tests; code health 94/100 |
+| **v1.1.2** | 2026-03-19 | Major code cleanup via `/dao`: dead code removed, functions decomposed, test coverage 32%→61%; TC dimension now reads real coverage data |
+| **v1.1.1** | 2026-03-18 | Fixed index coverage stats inaccuracy |
+| **v1.1.0** | 2026-03-18 | `/dao` skill bundled; C2/C4/C8 code simplification; MCP tools consolidated |
+| **v1.0.0** | 2026-03-16 | Architecture simplification; renamed `mcp/`→`manon_mcp/`, removed `shared/`; full test suite |
+| **v0.2.5** | 2026-03-13 | Scan/upload split to avoid MCP timeout; heavy ops moved out of MCP process; Claude Code hooks |
+| **v0.2.2** | 2026-03-07 | Embedded codeindex into repo; eliminated external dependency; fast language detection |
+| **v0.2.1** | 2026-03-07 | Migrated to brandonzyy/codeindex fork; auto tree-sitter parser installation |
+| **v0.2.0** | 2026-02-23 | Initial open-source release with MCP integration and knowledge graph |
+
+---
+
 ## 📦 Changelog
 
 ### v1.2.0 — 2026-03-19
