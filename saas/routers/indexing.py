@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +18,8 @@ from ..config import settings
 _project_root = str(Path(__file__).resolve().parents[2])
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+from codeindex.parser import Symbol, Call, CallType, Import, Inheritance, ParseResult
 
 from matrixone_graph.pipeline import (
     _map_parse_result, _module_from_rel_path,
@@ -63,65 +64,24 @@ async def index_status(repo_id: str, ctx: TenantContext = Depends(require_tenant
 # sync-ast — receive pre-parsed AST from MCP client
 # ---------------------------------------------------------------------------
 
-@dataclass
-class _Symbol:
-    kind: str = ""
-    name: str = ""
-    signature: str = ""
-    docstring: str = ""
-    line_start: int = 0
-    line_end: int = 0
-    annotations: list = field(default_factory=list)
-
-@dataclass
-class _Call:
-    caller: str = ""
-    callee: str = ""
-
-@dataclass
-class _Inheritance:
-    child: str = ""
-    parent: str = ""
-
-@dataclass
-class _Import:
-    module: str = ""
-    names: list = None
-    def __post_init__(self):
-        if self.names is None:
-            self.names = []
-
-@dataclass
-class _FakeParseResult:
-    """Lightweight stand-in for codeindex.parser.ParseResult."""
-    path: str = ""
-    symbols: list = None
-    calls: list = None
-    inheritances: list = None
-    imports: list = None
-    error: str = ""
-    def __post_init__(self):
-        self.symbols = self.symbols or []
-        self.calls = self.calls or []
-        self.inheritances = self.inheritances or []
-        self.imports = self.imports or []
-
-
-def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
-    """Rebuild a ParseResult-like object from the dict sent by MCP client."""
-    symbols = [_Symbol(**{k: s.get(k, f.default) for k, f in _Symbol.__dataclass_fields__.items()})
+def _reconstruct_parse_result(d: dict, file_path: str) -> ParseResult:
+    """Rebuild a ParseResult from the dict sent by MCP client."""
+    symbols = [Symbol(name=s.get("name", ""), kind=s.get("kind", ""),
+                      signature=s.get("signature", ""), docstring=s.get("docstring", ""),
+                      line_start=s.get("line_start", 0), line_end=s.get("line_end", 0),
+                      annotations=s.get("annotations", []))
                for s in d.get("symbols", [])]
-    calls = [_Call(**{k: c.get(k, "") for k in ("caller", "callee")})
+    calls = [Call(caller=c.get("caller", ""), callee=c.get("callee"),
+                  line_number=c.get("line_number", 0),
+                  call_type=CallType(c.get("call_type", "function")))
              for c in d.get("calls", [])]
-    inheritances = [_Inheritance(**{k: i.get(k, "") for k in ("child", "parent")})
+    inheritances = [Inheritance(child=i.get("child", ""), parent=i.get("parent", ""))
                     for i in d.get("inheritances", [])]
-    imports = [_Import(module=im.get("module", ""), names=im.get("names", []))
+    imports = [Import(module=im.get("module", ""), names=im.get("names", []))
                for im in d.get("imports", [])]
-    return _FakeParseResult(
-        path=file_path, symbols=symbols, calls=calls,
-        inheritances=inheritances, imports=imports,
-        error=d.get("error", ""),
-    )
+    return ParseResult(path=Path(file_path), symbols=symbols, calls=calls,
+                       inheritances=inheritances, imports=imports,
+                       error=d.get("error") or None)
 
 
 def _remove_deleted_files(body, graph, vec_index, all_chunks, meta):
