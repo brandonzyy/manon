@@ -217,6 +217,27 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         all_entities, all_relations, new_chunks, file_hashes = _process_ast_files(body, graph, all_chunks, vec_index)
         new_hashes = {**meta.get("hashes", {}), **file_hashes}
 
+        # Final-batch reconcile: remove any entities whose file is no longer tracked.
+        # Catches stale entities from interrupted previous syncs where deleted_files
+        # was never sent.
+        if body.is_final_batch and not body.full_reindex:
+            tracked = set(new_hashes.keys())
+            stale_files = {
+                d["file_path"]
+                for _, d in graph._g.nodes(data=True)
+                if d.get("file_path") and d["file_path"] not in tracked
+            }
+            for fp in stale_files:
+                old_cids = {cid for cid, c in all_chunks.items() if c.file_path == fp}
+                vec_index.remove_by_ids(old_cids)
+                for cid in old_cids:
+                    del all_chunks[cid]
+                graph.remove_by_file(fp)
+                meta.get("hashes", {}).pop(fp, None)
+            if stale_files:
+                logger.info("reconcile: removed stale entities from %d files: %s",
+                            len(stale_files), list(stale_files)[:10])
+
         entities_added = len(all_entities)
         for e in all_entities:
             graph.add_entity(e)

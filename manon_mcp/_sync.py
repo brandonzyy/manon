@@ -182,12 +182,14 @@ def upload_next_batch(repo_id: str) -> dict:
 
     # Send deleted only in the first batch
     batch_deleted = deleted if cursor == 0 else []
+    is_final = end >= total_files
 
     # Upload to server
     payload = {
         "files": batch_files,
         "deleted_files": batch_deleted,
         "full_reindex": False,
+        "is_final_batch": is_final,
     }
     _client._post(f"/api/v1/repos/{repo_id}/sync-ast", payload)
 

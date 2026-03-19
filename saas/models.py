@@ -44,6 +44,7 @@ class SyncAstRequest(BaseModel):
     files: list[FileSyncData] = []
     deleted_files: list[str] = []
     full_reindex: bool = False
+    is_final_batch: bool = False  # when True, reconcile graph against new_hashes
 
 
 # ── Query ──────────────────────────────────────────────
