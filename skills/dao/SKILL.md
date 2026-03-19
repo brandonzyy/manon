@@ -61,38 +61,27 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - If user picks A/M → step 4; if user skips/enters → step 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
-   - **Before** `EnterPlanMode`, run `Bash: echo "" > ~/.dao_plan_active` to set the dao marker, then create two tasks with exact commands filled in:
-     ```
-     TaskCreate(title="[DAO-POST 1/2] Sync graph",
-                description="Run: \"<MANON_PYTHON>\" \"<SKILL_DIR>/scripts/manon-scan.py\" <repo_id>
-     then: manon_scan_files(<repo_id>) → manon_upload_batch until done → manon_upload_coverage")
-     TaskCreate(title="[DAO-POST 2/2] Close issue",
-                description="Run: python \"<SKILL_DIR>/scripts/dao-report.py\" done <project_path> <issue_id> <commit_hash>")
-     ```
-   - `EnterPlanMode` → plan must include this closing section verbatim:
-     ```
-     ## 执行后（TaskList 中已登记，ExitPlanMode 后立即执行）
-     - [ ] [DAO-POST 1/2] Sync Manon graph
-     - [ ] [DAO-POST 2/2] python dao-report.py done <project_path> <id> <commit>
-     ```
-   - Wait for user approval → execute → one commit
-   - `ExitPlanMode`
-   - **← hook fires here: you will see a POST-PLAN PROTOCOL reminder**
-   - Immediately call `TaskList` → complete tasks in order:
-     1. Sync graph: run scan script → `manon_scan_files` → loop `manon_upload_batch` until done → `manon_upload_coverage` → `TaskUpdate([DAO-POST 1/2], completed)`
-     2. Close issue: `python SCRIPT done <project_path> <id> <commit_hash>` → `TaskUpdate([DAO-POST 2/2], completed)`
+   - Run `Bash: echo "" > ~/.dao_plan_active` to arm the post-plan hook
+   - `EnterPlanMode` → plan covers implementation only (no post-steps in the document)
+   - Wait for user approval → `ExitPlanMode`
+   - **← hook fires: POST-PLAN PROTOCOL reminder appears**
+   - Execute in one uninterrupted sequence — do NOT stop between steps:
+     1. Implement changes
+     2. Run tests (if applicable)
+     3. `git commit`
+     4. **`manon_impact HEAD`** — impact analysis, same response
+     5. **`python SCRIPT done <project_path> <id> <commit_hash>`** — close issue, same response
+     6. Sync graph: `"<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>` → `manon_scan_files` → loop `manon_upload_batch` until done → `manon_upload_coverage`
    - Return to step 3
 
-5. **User picks C** → auto-loop until no C candidates:
-   - Validate before any merge/delete:
-     - C2 merges: 3-question gate (git history check · op-type parity · name accuracy after merge)
+5. **C auto-loop** → process all C candidates without stopping:
+   - For each candidate, validate first:
+     - C2 merges: 3-question gate (git history · op-type parity · name accuracy)
      - Any delete: `manon_graph` zero-callers confirmed
      - Fail → skip, next candidate
-   - Read → Simplify → Commit
-   - Sync graph (same as step 4)
-   - Post-check: fn ≥6 params or >60 lines → `python SCRIPT add <project_path> C <code> "<desc>"`
-   - `python SCRIPT done <project_path> <id> <commit_hash>`
-   - Continue loop
+   - Implement → `git commit` → **`manon_impact HEAD`** → **`python SCRIPT done <project_path> <id> <commit_hash>`** → sync graph — all in one response per issue
+   - Post-check after commit: fn ≥6 params or >60 lines → `python SCRIPT add <project_path> C <code> "<desc>"`
+   - Continue to next candidate
 
 ---
 
