@@ -21,13 +21,30 @@ pip install manon
 
 ---
 
-## Execution Flow
+## ⚠️ PATH RULES (read before any script call)
+
+The skill's Python scripts are **globally installed** — they are NOT inside the project directory.
 
 ```
-SCRIPT  = "<SKILL_DIR>/scripts/dao-report.py"
-SCANNER = "<SKILL_DIR>/scripts/dao-scan.py"
-PICKER  = "<SKILL_DIR>/scripts/dao-pick.py"
+SKILL_DIR  = the "Base directory for this skill" shown in the system header above
+             (e.g., C:\Users\zack_\.claude\skills\dao  or  ~/.claude/skills/dao)
+
+SCRIPT  = <SKILL_DIR>/scripts/dao-report.py   ← global, manages issues.json
+SCANNER = <SKILL_DIR>/scripts/dao-scan.py     ← global, reads graph health
+PICKER  = <SKILL_DIR>/scripts/dao-pick.py     ← global, interactive selector
 ```
+
+**`.dao/` in the project** = data directory (issues.json, quality-report.md) — NOT the scripts.
+
+Always call scripts as:
+```
+python <SKILL_DIR>/scripts/dao-report.py <args>
+```
+NEVER as `python .dao/...` or `python dao-report.py` without the full path.
+
+---
+
+## Execution Flow
 
 1. `mcp__manon__manon_init(project_path)` → extract `repo_id`, `MANON_DIR`, `MANON_PYTHON`
 
@@ -43,18 +60,26 @@ PICKER  = "<SKILL_DIR>/scripts/dao-pick.py"
    - Map answer → issue id → proceed to step 4 or 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
-   - **Before** `EnterPlanMode`, create two tasks:
-     - `TaskCreate("sync-graph: <MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py <repo_id>")`
-     - `TaskCreate("dao-report done: python SCRIPT done <project_path> <id> <commit_hash>")`
-   - `EnterPlanMode` → present plan with mandatory closing section:
+   - **Before** `EnterPlanMode`, create two tasks with exact commands filled in:
      ```
-     ## 执行后（必须，已在 Task 列表登记）
-     - [ ] Sync Manon graph
-     - [ ] python dao-report.py done <project_path> <id> <commit_hash>
+     TaskCreate(title="[DAO-POST 1/2] Sync graph",
+                description="Run: \"<MANON_PYTHON>\" \"<SKILL_DIR>/scripts/manon-scan.py\" <repo_id>
+     then: manon_scan_files(<repo_id>) → manon_upload_batch until done → manon_upload_coverage")
+     TaskCreate(title="[DAO-POST 2/2] Close issue",
+                description="Run: python \"<SKILL_DIR>/scripts/dao-report.py\" done <project_path> <issue_id> <commit_hash>")
      ```
-   - Wait for approval → execute → one commit
-   - Sync graph: `"<MANON_PYTHON>" "<MANON_DIR>/scripts/manon-scan.py" <repo_id>` → `manon_scan_files` → `manon_upload_batch` until done → `TaskUpdate(sync-graph, completed)`
-   - `python SCRIPT done <project_path> <id> <commit_hash>` → `TaskUpdate(dao-report-done, completed)`
+   - `EnterPlanMode` → plan must include this closing section verbatim:
+     ```
+     ## 执行后（TaskList 中已登记，ExitPlanMode 后立即执行）
+     - [ ] [DAO-POST 1/2] Sync Manon graph
+     - [ ] [DAO-POST 2/2] python dao-report.py done <project_path> <id> <commit>
+     ```
+   - Wait for user approval → execute → one commit
+   - `ExitPlanMode`
+   - **← hook fires here: you will see a POST-PLAN PROTOCOL reminder**
+   - Immediately call `TaskList` → complete tasks in order:
+     1. Sync graph: run scan script → `manon_scan_files` → loop `manon_upload_batch` until done → `manon_upload_coverage` → `TaskUpdate([DAO-POST 1/2], completed)`
+     2. Close issue: `python SCRIPT done <project_path> <id> <commit_hash>` → `TaskUpdate([DAO-POST 2/2], completed)`
    - Return to step 3
 
 5. **User picks C** → auto-loop until no C candidates:
@@ -102,7 +127,6 @@ Classification vocabulary for findings. Assign a code when recording issues.
 - C5 Split by tech layer · C6 Unnecessary abstraction · C7 Circular deps · C8 Low cohesion
 
 ---
-
 
 ## Constraints
 
