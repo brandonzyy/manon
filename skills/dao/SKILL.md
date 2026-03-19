@@ -61,17 +61,12 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - If user picks A/M → step 4; if user skips/enters → step 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
-   - Run `Bash: echo "" > ~/.dao_plan_active` to arm the post-plan hook
-   - `EnterPlanMode` → plan covers implementation only (no post-steps in the document)
+   - Write dao marker with exact params (commit hook reads this to inject precise commands):
+     `Bash: printf '%s' "<project_path>|||<issue_id>|||<SKILL_DIR>|||<repo_id>" > ~/.dao_plan_active`
+   - `EnterPlanMode` → plan covers implementation only
    - Wait for user approval → `ExitPlanMode`
-   - **← hook fires: POST-PLAN PROTOCOL reminder appears**
-   - Execute in one uninterrupted sequence — do NOT stop between steps:
-     1. Implement changes
-     2. Run tests (if applicable)
-     3. `git commit`
-     4. **`manon_impact HEAD`** — impact analysis, same response
-     5. **`python SCRIPT done <project_path> <id> <commit_hash>`** — close issue, same response
-     6. Sync graph: `"<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>` → `manon_scan_files` → loop `manon_upload_batch` until done → `manon_upload_coverage`
+   - Execute implementation → run tests → `git commit`
+   - **The commit hook will now inject exact post-steps into context — follow them immediately**
    - Return to step 3
 
 5. **C auto-loop** → process all C candidates without stopping:

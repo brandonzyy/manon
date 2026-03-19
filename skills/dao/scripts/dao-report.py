@@ -129,6 +129,9 @@ def cmd_add(project_path, layer, principle, desc, approach=""):
     print(issue_id)
 
 
+DAO_MARKER = Path.home() / ".dao_plan_active"
+
+
 def cmd_done(project_path, issue_id, commit):
     issues = load_issues(project_path)
     for i in issues:
@@ -137,6 +140,8 @@ def cmd_done(project_path, issue_id, commit):
             i["commit"] = commit
             break
     save_issues(project_path, issues)
+    # Remove dao session marker so post_commit hook stops injecting reminders
+    DAO_MARKER.unlink(missing_ok=True)
     print(f"{issue_id} → done")
 
 
