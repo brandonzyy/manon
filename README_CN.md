@@ -415,6 +415,51 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 
 ---
 
+## 📦 更新日志
+
+### v1.2.0 — 2026-03-19
+
+#### 新增功能
+
+**脚本分类器（Script Classifier）** — Manon 现在能自动将工具脚本从知识图谱索引中过滤掉。索引前，每个 Python 文件经过四级信号链判断：
+
+1. **被项目其他文件导入** → 保留为源代码（确定）
+2. **导入了项目内部模块** → 保留为源代码（确定）
+3. **工具命名 + 独立入口点**（`deploy_*/setup_*/run_*` + `__main__` 守卫，公开 API ≤ 2 个）→ 丢弃为工具脚本（确定）
+4. **不确定** → 送 LLM 兜底判断
+
+这样可防止部署脚本、数据填充脚本、管理工具等污染图谱，引入虚假调用关系。
+
+**LLM 分类端点** — 新增 `POST /api/v1/classify-scripts` 端点，处理规则链无法判断的不确定文件。MCP 扫描器发送文件摘要（路径、导入、导出、文档字符串、行数），接收 `tool_script` / `source_code` 分类结果。
+
+**Dao Hooks 强化** — 加强了 `/dao` skill 的执行保障机制。`PreToolUse EnterPlanMode` 钩子现在会从计划头部自动写入标记文件，确保计划执行完成后 `dao-commit.py` 必然运行。Stop 钩子会阻断 Claude Code，直到提交步骤完成。
+
+#### Bug 修复
+
+在对 Manon 项目本身（86 个文件）进行灰度测试时，发现并修复了三个 Bug：
+
+- **导入字段键名错误** — `ScriptSignals._from_parse_result` 使用 `"name"` 键读取导入，但 `scan_and_parse` 存储时用的是 `"module"` 键。导致 100% 的文件都落入"不确定"，全部送 LLM 判断。
+- **相对导入解析缺失** — `build_imported_paths` 未处理相对导入（`from . import _hooks` 存储为 `module='.'`、`names=['_hooks']`）。未解析时，仅通过相对路径被导入的文件会被误判为工具脚本并丢弃。
+- **导入迭代字段键名错误** — `build_imported_paths` 在遍历导入时也读取了错误的字典键，加剧了上述问题。
+
+三个 Bug 全部修复后：83 个源文件正确保留，3 个入口脚本正确丢弃（`__main__.py` × 2、`parser_installer.py`），核心源码模块零误判。
+
+#### 重构
+
+- **`core/ast/framework_detection.py`**（新增）— 测试框架检测逻辑从 `analysis.py` 中提取出来。原文件名为 `test_detection.py`，因匹配测试扫描器的 `**/test_*.py` 规则导致被自身排除在索引之外。
+- **`matrixone_graph/impact/parsing.py`**（C2 合并）— 将 `git_parser.py`（74 行）+ `symbol_extractor.py`（64 行）合并为单文件。两者体量小、同属一条解析流水线，且从未被单独修改过。
+
+#### 测试
+
+- `core/script_classifier` 新增 88 个单元测试 — 覆盖全部四级信号路径、三种 `ScriptSignals` 构造方式、`classify_batch` 路由、`build_imported_paths` 相对/绝对导入解析、`is_scripts_like_path` 辅助函数
+- `saas/routers/classify` 新增 27 个单元测试 — 覆盖 `_build_classify_prompt` 格式化与截断、`FileSummary` 默认值、端点的空请求/无密钥/成功/非法值/LLM 错误/用量记录等全路径
+
+#### 代码健康
+
+`94/100` — 较 v1.1.2 的 `88/100` 提升 6 分。8 个维度持续追踪（MC 模块耦合、CD 循环依赖、FI 扇入集中度、DC 死代码、TC 测试覆盖、FS 函数规模、TD 技术债务、ID 继承深度）。
+
+---
+
 ## 🗺️ 路线图
 
 ### 结构化流水线（规划中）

@@ -408,6 +408,51 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ---
 
+## 📦 Changelog
+
+### v1.2.0 — 2026-03-19
+
+#### New Features
+
+**Script Classifier** — Manon now intelligently filters tool scripts out of the knowledge graph index. Before indexing, each Python file is run through a 4-signal priority chain:
+
+1. **Imported by project** → keep as source code (definitive)
+2. **Imports project modules** → keep as source code (definitive)
+3. **Tool name + standalone entry point** (`deploy_*/setup_*/run_*` + `__main__` guard, ≤2 public APIs) → drop as tool script (definitive)
+4. **Uncertain** → sent to LLM tiebreaker
+
+This prevents deploy scripts, seed scripts, and admin utilities from polluting the graph with false call relationships.
+
+**LLM Classify Endpoint** — New `POST /api/v1/classify-scripts` endpoint handles uncertain files that don't match the rule-based signals. The MCP scanner sends file summaries (path, imports, exports, docstring, line count) and receives `tool_script` / `source_code` verdicts.
+
+**Dao Hooks** — Strengthened the `/dao` skill's enforcement mechanism. The `PreToolUse EnterPlanMode` hook now automatically writes a marker file from the plan header, ensuring `dao-commit.py` always runs after plan execution. The Stop hook blocks Claude Code until the commit step completes.
+
+#### Bug Fixes
+
+Three bugs were discovered and fixed during gray-scale testing on the actual Manon codebase (86 files):
+
+- **Import key mismatch** — `ScriptSignals._from_parse_result` was reading imports using the `"name"` key, but `scan_and_parse` stores them under `"module"`. This caused 100% of files to fall through to the "uncertain" LLM tiebreaker.
+- **Relative import resolution** — `build_imported_paths` didn't handle relative imports (`from . import _hooks` stored as `module='.'`, `names=['_hooks']`). Without resolution, files imported only via relative paths were falsely classified as tool scripts and dropped.
+- **Import lookup key** — `build_imported_paths` also read the wrong dict key when iterating imports, compounding the above issue.
+
+After all three fixes: 83 source files kept, 3 entry-point scripts correctly dropped (`__main__.py` × 2, `parser_installer.py`), 0 false positives on core source modules.
+
+#### Refactors
+
+- **`core/ast/framework_detection.py`** (new) — Test framework detection logic extracted from `analysis.py`. The original file was named `test_detection.py`, which caused it to be excluded by the test scanner's `**/test_*.py` pattern.
+- **`matrixone_graph/impact/parsing.py`** — Merged `git_parser.py` + `symbol_extractor.py` into a single file. Both were small (74L + 64L), part of the same parsing pipeline, and had never been modified independently.
+
+#### Tests
+
+- +88 unit tests for `core/script_classifier` — covers all 4 signal paths, `ScriptSignals` construction from source/parse-result/empty, `classify_batch` routing, `build_imported_paths` resolution, and `is_scripts_like_path`
+- +27 unit tests for `saas/routers/classify` — covers `_build_classify_prompt` formatting, `FileSummary` defaults, and the endpoint's empty/no-key/success/invalid-values/LLM-error/usage-tracking paths
+
+#### Code Health
+
+`94/100` — up from `88/100` at v1.1.2. All 8 dimensions tracked (MC, CD, FI, DC, TC, FS, TD, ID).
+
+---
+
 ## 🗺️ Roadmap
 
 ### Structured Pipeline (Planned)
