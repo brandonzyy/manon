@@ -87,71 +87,59 @@ def _resolve_callee(
     return call_callee
 
 
+def _build_imported_names(pr, fp: str) -> dict[str, str]:
+    """Build short_name → fully_qualified_id mapping from imports."""
+    imported_names: dict[str, str] = {}
+    for imp in pr.imports:
+        resolved = _resolve_import_by_filepath(fp, imp.module)
+        for name in imp.names:
+            imported_names[name] = f"{resolved}.{name}"
+        if not imp.names:
+            imported_names[resolved.rsplit(".", 1)[-1]] = resolved
+    return imported_names
+
+
+def _map_import_relations(pr, module: str, fp: str) -> list[Relation]:
+    """Build import relations from a parse result."""
+    relations: list[Relation] = []
+    for imp in pr.imports:
+        resolved = _resolve_import_by_filepath(fp, imp.module)
+        if imp.names:
+            for name in imp.names:
+                relations.append(Relation(src_id=module, tgt_id=f"{resolved}.{name}",
+                                          kind="imports", description=f"imports {resolved}.{name}", file_path=fp, weight=0.5))
+        else:
+            relations.append(Relation(src_id=module, tgt_id=resolved,
+                                      kind="imports", description=f"imports {resolved}", file_path=fp, weight=0.5))
+    return relations
+
+
 def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[Relation]]:
     entities: list[Entity] = []
     relations: list[Relation] = []
     fp = str(pr.path)
-    # Add a module-level entity so import relations have a valid source
-    entities.append(Entity(
-        id=module, kind="module", name=module,
-        description=f"module: {module}",
-        file_path=fp, line_start=0, line_end=0,
-    ))
+    entities.append(Entity(id=module, kind="module", name=module, description=f"module: {module}",
+                            file_path=fp, line_start=0, line_end=0))
     local_names: set[str] = set()
     for sym in pr.symbols:
-        eid = _make_entity_id(module, sym.name)
         local_names.add(sym.name)
-        decorators = [
-            a["name"] if isinstance(a, dict) else (a if isinstance(a, str) else a.name)
-            for a in sym.annotations
-        ] if sym.annotations else []
-        entities.append(Entity(
-            id=eid, kind=sym.kind, name=sym.name,
-            description=_build_description(sym),
-            file_path=fp, line_start=sym.line_start, line_end=sym.line_end,
-            decorators=decorators,
-        ))
-    # Build imported_names: short name → fully qualified entity ID
-    imported_names: dict[str, str] = {}
-    for imp in pr.imports:
-        resolved_module = _resolve_import_by_filepath(fp, imp.module)
-        for name in imp.names:
-            imported_names[name] = f"{resolved_module}.{name}"
-        if not imp.names:
-            short = resolved_module.rsplit(".", 1)[-1]
-            imported_names[short] = resolved_module
-    # Resolve calls
+        decorators = [a["name"] if isinstance(a, dict) else (a if isinstance(a, str) else a.name)
+                      for a in sym.annotations] if sym.annotations else []
+        entities.append(Entity(id=_make_entity_id(module, sym.name), kind=sym.kind, name=sym.name,
+                                description=_build_description(sym), file_path=fp,
+                                line_start=sym.line_start, line_end=sym.line_end, decorators=decorators))
+
+    imported_names = _build_imported_names(pr, fp)
     for call in pr.calls:
         if call.callee is None:
             continue
         caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
-        callee_id = _resolve_callee(call.callee, local_names, imported_names, module, fp)
-        relations.append(Relation(
-            src_id=caller_id, tgt_id=callee_id,
-            kind="calls", description=f"{call.caller} -> {call.callee}",
-            file_path=fp, weight=1.0,
-        ))
+        relations.append(Relation(src_id=caller_id, tgt_id=_resolve_callee(call.callee, local_names, imported_names, module, fp),
+                                  kind="calls", description=f"{call.caller} -> {call.callee}", file_path=fp, weight=1.0))
     for inh in pr.inheritances:
-        child_id = _make_entity_id(module, inh.child)
-        relations.append(Relation(
-            src_id=child_id, tgt_id=inh.parent,
-            kind="inherits", description=f"{inh.child} extends {inh.parent}",
-            file_path=fp, weight=1.0,
-        ))
-    for imp in pr.imports:
-        resolved_module = _resolve_import_by_filepath(fp, imp.module)
-        for name in imp.names:
-            relations.append(Relation(
-                src_id=module, tgt_id=f"{resolved_module}.{name}",
-                kind="imports", description=f"imports {resolved_module}.{name}",
-                file_path=fp, weight=0.5,
-            ))
-        if not imp.names:
-            relations.append(Relation(
-                src_id=module, tgt_id=resolved_module,
-                kind="imports", description=f"imports {resolved_module}",
-                file_path=fp, weight=0.5,
-            ))
+        relations.append(Relation(src_id=_make_entity_id(module, inh.child), tgt_id=inh.parent,
+                                  kind="inherits", description=f"{inh.child} extends {inh.parent}", file_path=fp, weight=1.0))
+    relations.extend(_map_import_relations(pr, module, fp))
     return entities, relations
 
 

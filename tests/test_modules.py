@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from matrixone_graph import MatrixoneGraph, IndexResult, QueryResult
+from matrixone_graph import MatrixoneGraph, QueryResult
 from matrixone_graph.embed import EmbeddingClient
 from matrixone_graph.merge_dynamic import (
     DYNAMIC_FILE_PATH, merge_dynamic_edges, load_dynamic_deps,
@@ -100,20 +100,18 @@ class TestMergeDynamic:
 class TestSaasModels:
     def test_import_models(self):
         from saas.models import (
-            IndexTrigger, IndexStatus, SyncAstRequest, FileSyncData,
+            IndexStatus, SyncAstRequest, FileSyncData,
             RepoCreate, RepoOut, SearchResult, DeepQueryRequest,
             MergeDynamicRequest,
         )
         # Verify defaults
-        t = IndexTrigger()
-        assert t.incremental is True
         m = MergeDynamicRequest()
         assert m.edges == {}
         assert m.raw_edges == []
 
     def test_file_sync_data(self):
         from saas.models import FileSyncData
-        f = FileSyncData(rel_path="a.py", hash="abc", source="x", parse_result={})
+        f = FileSyncData(rel_path="a.py", hash="abc", parse_result={})
         assert f.rel_path == "a.py"
 
     def test_repo_create(self):

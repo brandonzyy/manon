@@ -1,10 +1,12 @@
-"""Analysis functions - test detection, coverage analysis, smart signals."""
+"""Analysis functions - index coverage, smart analysis signals, directory signals."""
 from __future__ import annotations
 
 import fnmatch
 import json
 import os
 from pathlib import Path
+
+from .framework_detection import detect_test_patterns  # noqa: F401 (re-exported via __init__)
 
 # Directories to skip during recursive traversal (basename matching).
 # Kept in sync with config._ALWAYS_EXCLUDE but as simple basenames for os.walk.
@@ -40,129 +42,6 @@ def _walk_safe(root: Path, *, max_files: int = 0):
             count += 1
             if max_files and count >= max_files:
                 return
-
-
-def detect_test_patterns(root: Path) -> tuple[list[str], list[str]]:
-    """Auto-detect test frameworks and return exclusion patterns.
-
-    Phase A: config file detection (root + one-level subdirs)
-    Phase B: directory name convention detection
-
-    Returns (deduplicated_patterns, report_lines like ["pytest: test_*.py, tests/"]).
-    """
-    root = root.resolve()
-    patterns: set[str] = set()
-    frameworks: dict[str, set[str]] = {}  # framework_name -> display hints
-
-    # ── Phase A: config file detection ──
-
-    # Helper: check if a file exists in root or one-level subdirs
-    def _exists(name: str) -> bool:
-        if (root / name).exists():
-            return True
-        try:
-            for d in root.iterdir():
-                if d.is_dir() and (d / name).exists():
-                    return True
-        except OSError:
-            pass
-        return False
-
-    def _file_contains(name: str, needle: str) -> bool:
-        """Check if a file in root contains a string (shallow check)."""
-        p = root / name
-        if not p.exists():
-            return False
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")[:8192]
-            return needle in text
-        except Exception:
-            return False
-
-    # pytest
-    if (_exists("conftest.py") or _exists("pytest.ini")
-            or _file_contains("pyproject.toml", "[tool.pytest")
-            or _file_contains("setup.cfg", "[tool:pytest")):
-        _pytest_pats = ["**/test_*.py", "**/*_test.py", "**/conftest.py", "**/tests/**"]
-        patterns.update(_pytest_pats)
-        frameworks["pytest"] = {"test_*.py", "*_test.py", "tests/"}
-
-    # Jest
-    _has_jest_config = any(_exists(f"jest.config.{ext}") for ext in ("js", "ts", "mjs", "cjs", "json"))
-    if _has_jest_config or _file_contains("package.json", '"jest"'):
-        _jest_pats = [
-            "**/__tests__/**",
-            "**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.jsx",
-            "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js", "**/*.spec.jsx",
-        ]
-        patterns.update(_jest_pats)
-        frameworks["jest"] = {"__tests__/", "*.test.{ts,js}"}
-
-    # Vitest
-    _has_vitest_config = any(_exists(f"vitest.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
-    if _has_vitest_config or _file_contains("package.json", '"vitest"'):
-        _vitest_pats = [
-            "**/__tests__/**",
-            "**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.jsx",
-            "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js", "**/*.spec.jsx",
-        ]
-        patterns.update(_vitest_pats)
-        frameworks["vitest"] = {"__tests__/", "*.test.{ts,js}"}
-
-    # Cypress
-    _has_cypress_config = any(_exists(f"cypress.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
-    if _has_cypress_config or (root / "cypress").is_dir():
-        _cypress_pats = ["**/cypress/**", "**/*.cy.ts", "**/*.cy.js"]
-        patterns.update(_cypress_pats)
-        frameworks["cypress"] = {"cypress/", "*.cy.{ts,js}"}
-
-    # Playwright
-    _has_pw_config = any(_exists(f"playwright.config.{ext}") for ext in ("js", "ts", "mjs", "cjs"))
-    if _has_pw_config:
-        _pw_pats = ["**/*.spec.ts", "**/*.spec.js", "**/e2e/**"]
-        patterns.update(_pw_pats)
-        frameworks["playwright"] = {"*.spec.{ts,js}", "e2e/"}
-
-    # Go test — only scan if go.mod exists
-    if _exists("go.mod"):
-        try:
-            if any(f for f in _walk_safe(root) if f.name.endswith("_test.go")):
-                patterns.add("**/*_test.go")
-                frameworks["go test"] = {"*_test.go"}
-        except OSError:
-            pass
-
-    # Java (Maven/Gradle convention)
-    if (root / "src" / "test").is_dir():
-        patterns.add("**/src/test/**")
-        frameworks["java/maven"] = {"src/test/"}
-
-    # Rust
-    if _exists("Cargo.toml") and (root / "tests").is_dir():
-        patterns.add("**/tests/**")
-        frameworks["rust"] = {"tests/"}
-
-    # ── Phase B: directory name conventions (supplement) ──
-    _test_dirs = {
-        "tests": "**/tests/**",
-        "test": "**/test/**",
-        "__tests__": "**/__tests__/**",
-        "spec": "**/spec/**",
-        "e2e": "**/e2e/**",
-        "cypress": "**/cypress/**",
-    }
-    for dirname, pat in _test_dirs.items():
-        if (root / dirname).is_dir() and pat not in patterns:
-            patterns.add(pat)
-            if dirname not in frameworks:
-                frameworks.setdefault("目录约定", set()).add(f"{dirname}/")
-
-    # Build report lines
-    report: list[str] = []
-    for fw, hints in sorted(frameworks.items()):
-        report.append(f"{fw}: {', '.join(sorted(hints))}")
-
-    return sorted(patterns), report
 
 
 def preview_project_structure(local_path: str) -> str:
@@ -225,12 +104,37 @@ def needs_smart_analysis_refresh(local_path: str, project: dict | None) -> bool:
     return project.get("smart_analysis_signature") != smart_analysis_signature(local_path)
 
 
-def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> str:
-    """Analyze index coverage: scannable vs indexed files per top-level directory.
+def _count_by_top_dir(paths: list[str]) -> dict[str, int]:
+    """Count paths by their top-level directory component."""
+    by_dir: dict[str, int] = {}
+    for p in paths:
+        top = p.split("/")[0] if "/" in p else "."
+        by_dir[top] = by_dir.get(top, 0) + 1
+    return by_dir
 
-    Returns a formatted table with per-directory status, exclusion reasons,
-    and a summary line.
-    """
+
+def _classify_coverage_row(
+    d: str, root: Path, scannable: int, indexed: int,
+    config_excludes, custom_excludes, test_excludes, auto_excludes, should_exclude_fn,
+) -> tuple[str, str, str, str, str]:
+    """Classify a directory as excluded/skipped/indexed. Returns (bucket, icon, name, cov, reason)."""
+    from codeindex.scanner import should_exclude
+    if should_exclude(root / d, config_excludes, root):
+        pat, source = _find_exclude_reason(d, config_excludes, custom_excludes, test_excludes, auto_excludes)
+        return "excluded", "✗", d, "—", f"{source}: {pat}"
+    if scannable == 0:
+        return "skipped", "○", d, "—", "无可扫描文件"
+    pct = int(100 * indexed / scannable)
+    cov = f"{indexed}/{scannable} ({pct}%)"
+    if indexed == 0:
+        return "indexed", "⚠", d, cov, "未索引"
+    if indexed < scannable:
+        return "indexed", "△", d, cov, "部分索引"
+    return "indexed", "✓", d, cov, "已索引"
+
+
+def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> str:
+    """Analyze index coverage: scannable vs indexed files per top-level directory."""
     from codeindex.scanner import scan_directory, should_exclude
     from .config import _load_scan_config, get_auto_exclude_patterns
     from .project import get_project
@@ -238,59 +142,27 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     root = Path(local_path).resolve()
     config, _, test_excludes = _load_scan_config(local_path)
 
-    # Get all scannable files
     scan_result = scan_directory(root, config, root)
-    scannable_by_dir: dict[str, int] = {}
-    for f in scan_result.files:
-        rel = str(f.relative_to(root)).replace("\\", "/")
-        top_dir = rel.split("/")[0] if "/" in rel else "."
-        scannable_by_dir[top_dir] = scannable_by_dir.get(top_dir, 0) + 1
+    scannable_by_dir = _count_by_top_dir([str(f.relative_to(root)).replace("\\", "/") for f in scan_result.files])
+    indexed_by_dir = _count_by_top_dir(list(indexed_hashes.keys()))
 
-    # Count indexed files per directory
-    indexed_by_dir: dict[str, int] = {}
-    for rel_path in indexed_hashes:
-        top_dir = rel_path.split("/")[0] if "/" in rel_path else "."
-        indexed_by_dir[top_dir] = indexed_by_dir.get(top_dir, 0) + 1
-
-    # Gather all top-level directories
     try:
         all_dirs = sorted(d.name for d in root.iterdir() if d.is_dir())
     except OSError:
         return "  无法读取目录"
 
-    # Collect exclude patterns for display
     proj = get_project(local_path)
     custom_excludes = proj.get("custom_excludes", []) if proj else []
     auto_excludes = get_auto_exclude_patterns(local_path)
 
-    # Build rows: (icon, name, coverage, reason)
-    indexed_rows: list[tuple[str, str, str, str]] = []
-    excluded_rows: list[tuple[str, str, str, str]] = []
-    skipped_rows: list[tuple[str, str, str, str]] = []
-
+    indexed_rows, excluded_rows, skipped_rows = [], [], []
     for d in all_dirs:
-        scannable = scannable_by_dir.get(d, 0)
-        indexed = indexed_by_dir.get(d, 0)
-        dir_path = root / d
+        bucket, icon, name, cov, reason = _classify_coverage_row(
+            d, root, scannable_by_dir.get(d, 0), indexed_by_dir.get(d, 0),
+            config.exclude, custom_excludes, test_excludes, auto_excludes, should_exclude,
+        )
+        (indexed_rows if bucket == "indexed" else excluded_rows if bucket == "excluded" else skipped_rows).append((icon, name, cov, reason))
 
-        if should_exclude(dir_path, config.exclude, root):
-            pat, source = _find_exclude_reason(
-                d, config.exclude, custom_excludes, test_excludes, auto_excludes,
-            )
-            excluded_rows.append(("✗", d, "—", f"{source}: {pat}"))
-        elif scannable == 0:
-            skipped_rows.append(("○", d, "—", "无可扫描文件"))
-        else:
-            pct = int(100 * indexed / scannable) if scannable > 0 else 0
-            cov = f"{indexed}/{scannable} ({pct}%)"
-            if indexed == 0:
-                indexed_rows.append(("⚠", d, cov, "未索引"))
-            elif indexed < scannable:
-                indexed_rows.append(("△", d, cov, "部分索引"))
-            else:
-                indexed_rows.append(("✓", d, cov, "已索引"))
-
-    # Format output
     lines = ["  📂 索引覆盖分析"]
     for icon, name, cov, reason in indexed_rows + skipped_rows + excluded_rows:
         lines.append(f"    {icon} {name:<20s} {cov:<15s} {reason}")
@@ -298,10 +170,21 @@ def analyze_index_coverage(local_path: str, indexed_hashes: dict[str, str]) -> s
     total_scannable = sum(scannable_by_dir.values())
     total_indexed = len(indexed_hashes)
     if total_scannable > 0:
-        pct = int(100 * total_indexed / total_scannable)
-        lines.append(f"\n  总计: {total_indexed}/{total_scannable} 文件已索引 ({pct}%)")
+        lines.append(f"\n  总计: {total_indexed}/{total_scannable} 文件已索引 ({int(100 * total_indexed / total_scannable)}%)")
 
     return "\n".join(lines)
+
+
+def _matches_dir_pattern(dir_name: str, pat: str) -> bool:
+    """Check if an exclude pattern matches a directory name, handling ** globs."""
+    test_paths = [f"**/{dir_name}/**", f"**/{dir_name}", f"{dir_name}/**", dir_name]
+    for tp in test_paths:
+        if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
+            return True
+    simple = pat.lstrip("*").lstrip("/")
+    if simple and (dir_name == simple or dir_name == simple.rstrip("/**")):
+        return True
+    return False
 
 
 def _find_exclude_reason(
@@ -314,70 +197,60 @@ def _find_exclude_reason(
     Returns (pattern, source) where source is one of: "自定义", "测试框架", "内置", "gitignore".
     """
     from .config import get_always_exclude
-
     _ALWAYS_EXCLUDE = get_always_exclude()
     _AUTO_EXCLUDE = set(auto_excludes or [])
-
-    # Build test paths for matching
-    test_paths = [
-        f"**/{dir_name}/**",
-        f"**/{dir_name}",
-        f"{dir_name}/**",
-        dir_name,
-    ]
-
     _always_set = set(_ALWAYS_EXCLUDE)
     _test_set = set(test_excludes or [])
 
-    def _matches(pat: str) -> bool:
-        """Check if pattern matches the directory name, handling ** glob."""
-        for tp in test_paths:
-            if fnmatch.fnmatch(tp, pat) or fnmatch.fnmatch(dir_name, pat):
-                return True
-        # fnmatch doesn't understand **; strip **/ prefix for simple matching
-        simple = pat.lstrip("*").lstrip("/")
-        if simple and (dir_name == simple or dir_name == simple.rstrip("/**")):
-            return True
-        return False
+    _m = lambda p: _matches_dir_pattern(dir_name, p)
 
-    # Check custom excludes first (most specific)
     for pat in custom_excludes:
-        if _matches(pat):
-            return pat, "自定义"
-
-    # Check test framework excludes
+        if _m(pat): return pat, "自定义"
     for pat in (test_excludes or []):
-        if _matches(pat):
-            return pat, "测试框架"
-
-    # Check _ALWAYS_EXCLUDE
+        if _m(pat): return pat, "测试框架"
     for pat in _ALWAYS_EXCLUDE:
-        if _matches(pat):
-            return pat, "内置"
-
+        if _m(pat): return pat, "内置"
     for pat in _AUTO_EXCLUDE:
-        if _matches(pat):
-            return pat, "内置"
-
-    # Check .gitignore patterns (everything else)
+        if _m(pat): return pat, "内置"
     for pat in all_excludes:
         if pat in _always_set or pat in _test_set:
             continue
-        if _matches(pat):
-            return pat, "gitignore"
-
+        if _m(pat): return pat, "gitignore"
     return dir_name, ""
 
 
+_BUILD_CONFIG_FILES = frozenset([
+    "package.json", "tsconfig.json", "Cargo.toml",
+    "pyproject.toml", "go.mod", "build.gradle", "pom.xml",
+    "CMakeLists.txt", "Makefile", "setup.py", "setup.cfg",
+])
+
+
+def _collect_dir_file_signals(item: Path) -> dict | None:
+    """Collect file extension distribution, samples, and build config presence for one directory."""
+    exts: dict[str, int] = {}
+    samples: list[str] = []
+    file_count = 0
+    has_build_config = False
+    try:
+        for f in _walk_safe(item, max_files=1000):
+            file_count += 1
+            ext = f.suffix.lower()
+            if ext:
+                exts[ext] = exts.get(ext, 0) + 1
+            if len(samples) < 5:
+                samples.append(f.name)
+            if f.name in _BUILD_CONFIG_FILES:
+                has_build_config = True
+    except OSError:
+        return None
+    if file_count == 0:
+        return None
+    return {"file_count": file_count, "extensions": exts, "samples": samples, "has_build_config": has_build_config}
+
+
 def collect_directory_signals(local_path: str) -> dict:
-    """Collect per-directory metadata signals for LLM-based index relevance analysis.
-
-    Gathers extension distribution, file counts, sample filenames, and build
-    config presence for each top-level directory that isn't already excluded by
-    built-in rules (.git, node_modules, etc.).
-
-    Returns dict with supported_languages and per-directory signal data.
-    """
+    """Collect per-directory metadata signals for LLM-based index relevance analysis."""
     from codeindex.scanner import should_exclude
     from codeindex.detector import quick_detect_languages
     from .config import _load_scan_config
@@ -391,66 +264,19 @@ def collect_directory_signals(local_path: str) -> dict:
 
     root = Path(local_path).resolve()
     config, _, _ = _load_scan_config(local_path)
-
-    # Project-level supported languages (detect all, including generic)
     supported_langs = sorted(quick_detect_languages(root, all_exts))
 
-    _BUILD_CONFIG_FILES = [
-        "package.json", "tsconfig.json", "Cargo.toml",
-        "pyproject.toml", "go.mod", "build.gradle", "pom.xml",
-        "CMakeLists.txt", "Makefile", "setup.py", "setup.cfg",
-    ]
-
-    dirs: dict[str, dict] = {}
     try:
         items = sorted(root.iterdir())
     except OSError:
         return {"supported_languages": supported_langs, "directories": {}}
 
+    dirs: dict[str, dict] = {}
     for item in items:
-        if not item.is_dir():
+        if not item.is_dir() or should_exclude(item, config.exclude, root):
             continue
-        name = item.name
+        signals = _collect_dir_file_signals(item)
+        if signals:
+            dirs[item.name] = signals
 
-        # Skip if already excluded by built-in rules
-        if should_exclude(item, config.exclude, root):
-            continue
-
-        # Collect signals
-        exts: dict[str, int] = {}
-        samples: list[str] = []
-        file_count = 0
-        has_build_config = False
-
-        try:
-            for f in _walk_safe(item, max_files=1000):
-                file_count += 1
-
-                # Extension distribution
-                ext = f.suffix.lower()
-                if ext:
-                    exts[ext] = exts.get(ext, 0) + 1
-
-                # Sample filenames (first 5)
-                if len(samples) < 5:
-                    samples.append(f.name)
-
-                # Build config detection
-                if f.name in _BUILD_CONFIG_FILES:
-                    has_build_config = True
-
-        except OSError:
-            continue
-
-        if file_count > 0:
-            dirs[name] = {
-                "file_count": file_count,
-                "extensions": exts,
-                "samples": samples,
-                "has_build_config": has_build_config,
-            }
-
-    return {
-        "supported_languages": supported_langs,
-        "directories": dirs,
-    }
+    return {"supported_languages": supported_langs, "directories": dirs}

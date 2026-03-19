@@ -4,7 +4,6 @@ Usage:
     python -m saas.cli repos list
     python -m saas.cli repos create --name myrepo --git-url https://...
     python -m saas.cli repos delete <id>
-    python -m saas.cli index <repo_id>
     python -m saas.cli index-status <repo_id>
     python -m saas.cli search <repo_id> "authentication"
     python -m saas.cli graph <repo_id> "ClassName"
@@ -21,7 +20,6 @@ import argparse
 import json
 import os
 import sys
-import time
 
 from .client import ManonClient
 
@@ -65,21 +63,6 @@ def cmd_repos(args):
         print(f"Deleted {args.id}")
 
 
-def cmd_index(args):
-    c = _client()
-    result = c.trigger_index(args.repo_id, incremental=not args.full)
-    print(f"Indexing started: {result['status']}")
-    if args.wait:
-        while True:
-            time.sleep(2)
-            st = c.index_status(args.repo_id)
-            print(f"  status: {st['status']}")
-            if st["status"] in ("done", "error"):
-                if st.get("stats"):
-                    _pp(st["stats"])
-                break
-
-
 def cmd_index_status(args):
     c = _client()
     _pp(c.index_status(args.repo_id))
@@ -111,11 +94,11 @@ def cmd_usage(args):
 
 # ── Argument parser ───────────────────────────────────
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
     p = argparse.ArgumentParser(prog="manon-cli", description="Manon SaaS CLI")
     sub = p.add_subparsers(dest="command")
 
-    # repos
     rp = sub.add_parser("repos", help="Manage repos")
     rs = rp.add_subparsers(dest="sub")
     rs.add_parser("list", help="List repos")
@@ -129,39 +112,33 @@ def main():
     rd = rs.add_parser("delete", help="Delete repo")
     rd.add_argument("id")
 
-    # index
-    ip = sub.add_parser("index", help="Trigger indexing")
-    ip.add_argument("repo_id")
-    ip.add_argument("--full", action="store_true", help="Full re-index (not incremental)")
-    ip.add_argument("--wait", action="store_true", help="Poll until done")
-
-    # index-status
     isp = sub.add_parser("index-status", help="Check index status")
     isp.add_argument("repo_id")
 
-    # search
     sp = sub.add_parser("search", help="Semantic search")
     sp.add_argument("repo_id")
     sp.add_argument("query")
     sp.add_argument("--top-k", type=int, default=10)
     sp.add_argument("--depth", type=int, default=1)
 
-    # graph
     gp = sub.add_parser("graph", help="Graph traversal")
     gp.add_argument("repo_id")
     gp.add_argument("symbol")
     gp.add_argument("--depth", type=int, default=1)
 
-    # impact
     imp = sub.add_parser("impact", help="Impact analysis")
     imp.add_argument("repo_id")
     imp.add_argument("--commit", default="HEAD")
     imp.add_argument("--max-depth", type=int, default=2)
 
-    # usage
     up = sub.add_parser("usage", help="View usage stats")
     up.add_argument("--days", type=int, default=30)
 
+    return p
+
+
+def main():
+    p = _build_arg_parser()
     args = p.parse_args()
     if not args.command:
         p.print_help()
@@ -169,7 +146,6 @@ def main():
 
     handlers = {
         "repos": cmd_repos,
-        "index": cmd_index,
         "index-status": cmd_index_status,
         "search": cmd_search,
         "graph": cmd_graph,

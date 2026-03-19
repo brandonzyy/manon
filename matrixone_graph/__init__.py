@@ -118,16 +118,6 @@ class MatrixoneGraph:
         analyzer = ImpactAnalyzer(self._load_graph(), self.repo_path, max_depth)
         return analyzer.analyze_commit(commit).to_dict()
 
-    def impact_staged(self, *, max_depth: int = 2) -> dict:
-        from .impact import ImpactAnalyzer
-        analyzer = ImpactAnalyzer(self._load_graph(), self.repo_path, max_depth)
-        return analyzer.analyze_staged().to_dict()
-
-    def impact_branch(self, base: str, head: str = "HEAD", *, max_depth: int = 2) -> dict:
-        from .impact import ImpactAnalyzer
-        analyzer = ImpactAnalyzer(self._load_graph(), self.repo_path, max_depth)
-        return analyzer.analyze_branch(base, head).to_dict()
-
     # -- Health scoring --
 
     async def health(self) -> dict:

@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from saas.models import (
-    RepoCreate, RepoOut, IndexTrigger, IndexStatus,
+    RepoCreate, RepoOut, IndexStatus,
     FileSyncData, SyncAstRequest, SearchResult, ImpactResult,
     UsageSummary, TenantCreate, TenantOut, RegisterRequest,
     DeepQueryRequest, MergeDynamicRequest,
@@ -38,16 +38,6 @@ class TestRepoOut:
         assert r.index_stats is None
 
 
-class TestIndexTrigger:
-    def test_default_incremental(self):
-        t = IndexTrigger()
-        assert t.incremental is True
-
-    def test_full_reindex(self):
-        t = IndexTrigger(incremental=False)
-        assert t.incremental is False
-
-
 class TestIndexStatus:
     def test_create(self):
         s = IndexStatus(repo_id="r1", status="done", stats={"files": 10})
@@ -56,7 +46,7 @@ class TestIndexStatus:
 
 class TestFileSyncData:
     def test_create(self):
-        f = FileSyncData(rel_path="a.py", hash="abc", source="x=1", parse_result={"symbols": []})
+        f = FileSyncData(rel_path="a.py", hash="abc", parse_result={"symbols": []})
         assert f.rel_path == "a.py"
         assert f.hash == "abc"
 
@@ -69,7 +59,7 @@ class TestSyncAstRequest:
         assert r.full_reindex is False
 
     def test_with_files(self):
-        f = FileSyncData(rel_path="a.py", hash="h", source="s", parse_result={})
+        f = FileSyncData(rel_path="a.py", hash="h", parse_result={})
         r = SyncAstRequest(files=[f], deleted_files=["b.py"])
         assert len(r.files) == 1
         assert r.deleted_files == ["b.py"]

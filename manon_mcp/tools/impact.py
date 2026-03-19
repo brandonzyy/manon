@@ -1,4 +1,11 @@
-"""Local impact analysis helpers for manon_impact tool."""
+"""Local impact analysis helpers for manon_impact tool.
+
+NOTE: git diff parsing and symbol extraction here intentionally duplicate
+matrixone_graph/impact/{git_parser,symbol_extractor}.py. This module runs
+in the local MCP process and must handle monorepo subpath stripping that
+the server-side classes do not support. Merging would add an undesired
+cross-module dependency and break the client/server boundary.
+"""
 from __future__ import annotations
 
 import logging
@@ -77,24 +84,35 @@ def _get_changed_files(
     return changed_files, raw_files, base_commit, commit_info
 
 
+_SUPPORTED_EXTS = frozenset((".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".php"))
+
+
+def _parse_diff_ranges(diff_text: str) -> list[tuple[int, int]]:
+    """Parse @@ hunk headers to extract changed line ranges."""
+    ranges: list[tuple[int, int]] = []
+    for line in diff_text.split("\n"):
+        if line.startswith("@@"):
+            m = re.search(r'\+(\d+)(?:,(\d+))?', line)
+            if m:
+                start = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) else 1
+                ranges.append((start, start + count - 1))
+    return ranges
+
+
 def _find_changed_symbols(
     changed_files: list[str], root: Path, git_root: Path,
     prefix_with_slash: str, base_commit: str, commit: str,
 ) -> list[dict]:
-    """Identify symbols affected by changed lines in each file.
-
-    Returns list of dicts: {name, file, added, deleted} with per-symbol diff stats.
-    """
+    """Identify symbols affected by changed lines in each file."""
     changed_symbols: list[dict] = []
     for cf in changed_files[:15]:
-        ext = Path(cf).suffix.lower()
-        if ext not in (".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".php"):
+        if Path(cf).suffix.lower() not in _SUPPORTED_EXTS:
             continue
         full_path = root / cf
         if not full_path.exists():
             continue
 
-        # Get changed line ranges
         git_path = (prefix_with_slash + cf) if prefix_with_slash else cf
         try:
             diff_result = subprocess.run(
@@ -107,20 +125,10 @@ def _find_changed_symbols(
         except Exception:
             continue
 
-        # Parse @@ -a,b +c,d @@ to get changed line ranges
-        changed_ranges: list[tuple[int, int]] = []
-        for line in diff_text.split("\n"):
-            if line.startswith("@@"):
-                match = re.search(r'\+(\d+)(?:,(\d+))?', line)
-                if match:
-                    start = int(match.group(1))
-                    count = int(match.group(2)) if match.group(2) else 1
-                    changed_ranges.append((start, start + count - 1))
-
+        changed_ranges = _parse_diff_ranges(diff_text)
         if not changed_ranges:
             continue
 
-        # Parse file to find symbols
         try:
             from codeindex.parser import parse_file
             pr = parse_file(full_path)
@@ -129,22 +137,15 @@ def _find_changed_symbols(
         except Exception:
             continue
 
-        # Compute diff stats per symbol
         added_lines = sum(1 for line in diff_text.split("\n") if line.startswith("+") and not line.startswith("+++"))
         deleted_lines = sum(1 for line in diff_text.split("\n") if line.startswith("-") and not line.startswith("---"))
 
-        # Match symbols to changed ranges
         for sym in pr.symbols:
             sym_start = getattr(sym, "line_start", getattr(sym, "line", 0))
             sym_end = getattr(sym, "line_end", getattr(sym, "end_line", 0)) or sym_start
             for r_start, r_end in changed_ranges:
                 if not (r_end < sym_start or r_start > sym_end):
-                    changed_symbols.append({
-                        "name": sym.name,
-                        "file": cf,
-                        "added": added_lines,
-                        "deleted": deleted_lines,
-                    })
+                    changed_symbols.append({"name": sym.name, "file": cf, "added": added_lines, "deleted": deleted_lines})
                     break
 
     return changed_symbols
@@ -152,11 +153,56 @@ def _find_changed_symbols(
 
 # ── Local impact orchestrator ─────────────────────────
 
+def _format_changed_symbols_section(changed_symbols: list[dict]) -> list[str]:
+    """Format the changed symbols section. Returns lines."""
+    if not changed_symbols:
+        return ["\n未能精确定位变更符号，按文件级别分析。"]
+    parts = []
+    if len(changed_symbols) > 30:
+        parts.append("\n[摘要模式 — 符号过多，按文件聚合]")
+        file_agg: dict[str, dict] = {}
+        for s in changed_symbols:
+            f = s.get("file", "?")
+            if f not in file_agg:
+                file_agg[f] = {"count": 0, "added": 0, "deleted": 0}
+            file_agg[f]["count"] += 1
+            file_agg[f]["added"] += s.get("added", 0)
+            file_agg[f]["deleted"] += s.get("deleted", 0)
+        parts.append(f"\n变更符号 ({len(changed_symbols)}, 按文件聚合):")
+        for f, agg in sorted(file_agg.items()):
+            parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['added']}/-{agg['deleted']})")
+    else:
+        parts.append(f"\n变更符号 ({len(changed_symbols)}):")
+        for s in changed_symbols:
+            added, deleted = s.get("added", 0), s.get("deleted", 0)
+            diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
+            loc = f" ({s['file']})" if s.get("file") else ""
+            parts.append(f"  {s['name']} {diff_stat}{loc}")
+    return parts
+
+
+def _format_local_impact_output(
+    commit_info: str, changed_files: list[str], changed_symbols: list[dict], server_result: dict, client,
+) -> str:
+    """Format the local impact analysis output."""
+    parts: list[str] = [f"影响分析: {commit_info}", f"变更文件 ({len(changed_files)}):"]
+    parts.extend(f"  {f}" for f in changed_files)
+    parts.extend(_format_changed_symbols_section(changed_symbols))
+
+    for label, key, limit in [("直接调用者", "direct_callers", 20),
+                                ("受影响模块", "affected_modules", 20),
+                                ("传播链路", "propagation_chains", 15)]:
+        items = server_result.get(key, [])
+        if items:
+            parts.append(f"\n{label} ({len(items)}):")
+            parts.extend(f"  {c}" for c in items[:limit])
+
+    return client._truncate("\n".join(parts))
+
+
 def local_impact(repo_id: str, local_path: str, commit: str, max_depth: int, *, client) -> str:
     """Client-side impact analysis: local git diff + single compound API for caller resolution."""
     root = Path(local_path).resolve()
-    parts: list[str] = []
-
     git_root, prefix_with_slash = _detect_git_root(root)
 
     result = _get_changed_files(git_root, root, prefix_with_slash, commit)
@@ -199,55 +245,4 @@ def local_impact(repo_id: str, local_path: str, commit: str, max_depth: int, *, 
         log.warning("impact-local API failed: %s", exc)
         server_result = {}
 
-    # Format output
-    parts.append(f"影响分析: {commit_info}")
-    parts.append(f"变更文件 ({len(changed_files)}):")
-    for f in changed_files:
-        parts.append(f"  {f}")
-
-    if not changed_symbols:
-        parts.append("\n未能精确定位变更符号，按文件级别分析。")
-    else:
-        summary_mode = len(changed_symbols) > 30
-        if summary_mode:
-            parts.append(f"\n[摘要模式 — 符号过多，按文件聚合]")
-            file_agg: dict[str, dict] = {}
-            for s in changed_symbols:
-                f = s.get("file", "?")
-                if f not in file_agg:
-                    file_agg[f] = {"count": 0, "added": 0, "deleted": 0}
-                file_agg[f]["count"] += 1
-                file_agg[f]["added"] += s.get("added", 0)
-                file_agg[f]["deleted"] += s.get("deleted", 0)
-            parts.append(f"\n变更符号 ({len(changed_symbols)}, 按文件聚合):")
-            for f, agg in sorted(file_agg.items()):
-                parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['added']}/-{agg['deleted']})")
-        else:
-            parts.append(f"\n变更符号 ({len(changed_symbols)}):")
-            for s in changed_symbols:
-                added, deleted = s.get("added", 0), s.get("deleted", 0)
-                diff_stat = f"+{added}/-{deleted}" if (added or deleted) else ""
-                loc = f" ({s['file']})" if s.get("file") else ""
-                parts.append(f"  {s['name']} {diff_stat}{loc}")
-
-    # Append server-resolved callers
-    all_callers = server_result.get("direct_callers", [])
-    affected_modules = server_result.get("affected_modules", [])
-    chains = server_result.get("propagation_chains", [])
-
-    if all_callers:
-        parts.append(f"\n直接调用者 ({len(all_callers)}):")
-        for c in all_callers[:20]:
-            parts.append(f"  {c}")
-
-    if affected_modules:
-        parts.append(f"\n受影响模块 ({len(affected_modules)}):")
-        for m in affected_modules[:20]:
-            parts.append(f"  {m}")
-
-    if chains:
-        parts.append(f"\n传播链路 ({len(chains)}):")
-        for c in chains[:15]:
-            parts.append(f"  {c}")
-
-    return client._truncate("\n".join(parts))
+    return _format_local_impact_output(commit_info, changed_files, changed_symbols, server_result, client)

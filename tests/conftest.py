@@ -156,26 +156,6 @@ def mock_httpx_response():
 
 
 @pytest.fixture
-def mock_aiohttpx_client():
-    """Mock async httpx client for saas_client tests."""
-    client = MagicMock()
-    client.get = AsyncMock()
-    client.post = AsyncMock()
-    client.delete = AsyncMock()
-    client.aclose = AsyncMock()
-    return client
-
-
-@pytest.fixture
-def clean_sessions():
-    """Clear _sessions dict before and after each test."""
-    from web.coach import pipeline
-    pipeline._sessions.clear()
-    yield
-    pipeline._sessions.clear()
-
-
-@pytest.fixture
 def event_loop():
     """Create an event loop for async tests."""
     loop = asyncio.new_event_loop()

@@ -3,12 +3,18 @@ import pytest
 from pathlib import Path
 
 from matrixone_graph.pipeline import (
-    _module_prefix, _make_entity_id, _resolve_import_by_filepath,
+    _resolve_import_by_filepath,
     _build_description, _resolve_callee, _format_query_context,
-    IndexResult, QueryResult,
+    QueryResult,
     _load_meta, _save_meta, _load_chunks, _save_chunks,
     GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE, KG_DIR,
 )
+from core.ast.chunking import _module_from_rel_path, _make_entity_id
+
+def _module_prefix(file_path, base_path):
+    """Adapter: compute module prefix from absolute path + base dir."""
+    rel = str(file_path.relative_to(base_path)).replace("\\", "/")
+    return _module_from_rel_path(rel)
 from matrixone_graph.store import Chunk
 
 
@@ -118,11 +124,6 @@ class TestMetaAndChunks:
 
 
 class TestDataclasses:
-    def test_index_result(self):
-        r = IndexResult()
-        assert r.files_scanned == 0
-        assert r.entities_added == 0
-
     def test_query_result(self):
         r = QueryResult()
         assert r.entities == []

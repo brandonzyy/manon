@@ -10,6 +10,7 @@ from ..services.query import (
     impact_local_repo,
     impact_repo,
     search_repo,
+    upload_coverage_map_repo,
 )
 from ..auth import TenantContext, require_tenant
 from ..models import DeepQueryRequest, ImpactLocalRequest
@@ -73,6 +74,15 @@ async def impact_local(
         max_depth=body.max_depth,
         ctx=ctx,
     )
+
+
+@router.post("/coverage-map")
+async def upload_coverage_map(
+    repo_id: str,
+    body: dict = Body(...),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    return await upload_coverage_map_repo(repo_id, ctx=ctx, coverage_data=body)
 
 
 @router.post("/deep-query")

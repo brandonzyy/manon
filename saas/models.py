@@ -27,10 +27,6 @@ class RepoOut(BaseModel):
 
 
 # ── Indexing ───────────────────────────────────────────
-class IndexTrigger(BaseModel):
-    incremental: bool = True
-
-
 class IndexStatus(BaseModel):
     repo_id: str
     status: str
@@ -42,7 +38,6 @@ class FileSyncData(BaseModel):
     hash: str               # sha256 of file content
     parse_result: dict      # ParseResult.to_dict()
     chunks: list[dict] = [] # pre-chunked by client (chunk_file_from_dict)
-    source: str = ""        # deprecated: kept for transition, use chunks
 
 
 class SyncAstRequest(BaseModel):

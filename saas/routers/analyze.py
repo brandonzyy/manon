@@ -34,6 +34,32 @@ _ANALYZE_SYSTEM = """你是代码索引优化专家。你的任务是判断项�
 {"directories": [{"name": "目录名", "action": "index" 或 "skip", "reason": "一句话中文理由"}]}"""
 
 
+def _build_analyze_user_prompt(dirs: dict, supported: list) -> str:
+    """Build the LLM user prompt from directory signals."""
+    dir_summaries = []
+    for name, info in dirs.items():
+        exts = info.get("extensions", {})
+        ext_str = ", ".join(f"{k}: {v}" for k, v in list(exts.items())[:8])
+        sample_str = ", ".join(info.get("sample_files", [])[:5])
+        config_flag = " (有构建配置)" if info.get("has_build_config") else ""
+        dir_summaries.append(
+            f"- {name}/  文件数={info.get('total_files', 0)}{config_flag}\n"
+            f"  扩展名: {ext_str}\n"
+            f"  示例文件: {sample_str}"
+        )
+    return f"项目支持的解析语言: {', '.join(supported)}\n\n目录信号:\n" + "\n".join(dir_summaries)
+
+
+def _validate_structure_directories(raw: list) -> list:
+    """Validate and normalize directory analysis results."""
+    validated = []
+    for d in raw:
+        if isinstance(d, dict) and "name" in d and "action" in d:
+            d["action"] = d["action"] if d["action"] in ("index", "skip") else "index"
+            validated.append({"name": d["name"], "action": d["action"], "reason": d.get("reason", "")})
+    return validated
+
+
 @router.post("/analyze-structure")
 async def analyze_structure(
     repo_id: str,
@@ -48,38 +74,17 @@ async def analyze_structure(
     cur = await db.execute(
         "SELECT * FROM repos WHERE id = ? AND tenant_id = ?", (repo_id, ctx.tenant_id),
     )
-    row = await cur.fetchone()
-    if not row:
+    if not await cur.fetchone():
         raise HTTPException(404, "repo not found")
 
     signals = body.signals
     supported = signals.get("supported_languages", [])
     dirs = signals.get("directories", {})
-
     if not dirs:
         return {"directories": []}
 
-    # Build concise user prompt
-    dir_summaries = []
-    for name, info in dirs.items():
-        exts = info.get("extensions", {})
-        ext_str = ", ".join(f"{k}: {v}" for k, v in list(exts.items())[:8])
-        samples = info.get("sample_files", [])
-        sample_str = ", ".join(samples[:5])
-        config_flag = " (有构建配置)" if info.get("has_build_config") else ""
-        dir_summaries.append(
-            f"- {name}/  文件数={info.get('total_files', 0)}{config_flag}\n"
-            f"  扩展名: {ext_str}\n"
-            f"  示例文件: {sample_str}"
-        )
-
-    user_prompt = (
-        f"项目支持的解析语言: {', '.join(supported)}\n\n"
-        f"目录信号:\n" + "\n".join(dir_summaries)
-    )
-
-    log.info("analyze-structure for repo %s: %d dirs, prompt %d chars",
-             repo_id, len(dirs), len(user_prompt))
+    user_prompt = _build_analyze_user_prompt(dirs, supported)
+    log.info("analyze-structure for repo %s: %d dirs, prompt %d chars", repo_id, len(dirs), len(user_prompt))
 
     try:
         analysis = await llm_chat([
@@ -92,17 +97,4 @@ async def analyze_structure(
         raise HTTPException(502, f"LLM analysis failed: {e}")
 
     await record_usage(ctx.tenant_id, "analyze.structure", repo_id)
-
-    # Validate and normalize
-    directories = result.get("directories", [])
-    validated = []
-    for d in directories:
-        if isinstance(d, dict) and "name" in d and "action" in d:
-            d["action"] = d["action"] if d["action"] in ("index", "skip") else "index"
-            validated.append({
-                "name": d["name"],
-                "action": d["action"],
-                "reason": d.get("reason", ""),
-            })
-
-    return {"directories": validated}
+    return {"directories": _validate_structure_directories(result.get("directories", []))}

@@ -13,6 +13,21 @@ from ..models import TenantCreate, TenantOut
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def _merge_impact_endpoints(by_endpoint_raw: list) -> list:
+    """Merge query.impact and query.impact_local into a single entry."""
+    by_endpoint = []
+    impact_count = 0
+    for item in by_endpoint_raw:
+        if item["endpoint"] in ("query.impact", "query.impact_local"):
+            impact_count += item["count"]
+        else:
+            by_endpoint.append(item)
+    if impact_count > 0:
+        by_endpoint.append({"endpoint": "query.impact", "count": impact_count})
+    by_endpoint.sort(key=lambda x: x["count"], reverse=True)
+    return by_endpoint
+
+
 # ── Auth dependency ───────────────────────────────────
 async def require_admin(x_admin_secret: str = Header(...)):
     if not settings.admin_secret:
@@ -168,18 +183,7 @@ async def get_usage_overview(days: int = Query(30, ge=1, le=365)):
         (f"-{days} days",),
     )
     by_endpoint_raw = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
-
-    # Merge query.impact and query.impact_local
-    by_endpoint = []
-    impact_count = 0
-    for item in by_endpoint_raw:
-        if item["endpoint"] in ("query.impact", "query.impact_local"):
-            impact_count += item["count"]
-        else:
-            by_endpoint.append(item)
-    if impact_count > 0:
-        by_endpoint.append({"endpoint": "query.impact", "count": impact_count})
-    by_endpoint.sort(key=lambda x: x["count"], reverse=True)
+    by_endpoint = _merge_impact_endpoints(by_endpoint_raw)
 
     return {
         "period_days": days,
@@ -214,17 +218,7 @@ async def get_tenant_usage(tenant_id: str, days: int = Query(30, ge=1, le=365)):
     )
     by_endpoint_raw = [{"endpoint": r["endpoint"], "count": r["cnt"]} for r in await cur3.fetchall()]
 
-    # Merge query.impact and query.impact_local
-    by_endpoint = []
-    impact_count = 0
-    for item in by_endpoint_raw:
-        if item["endpoint"] in ("query.impact", "query.impact_local"):
-            impact_count += item["count"]
-        else:
-            by_endpoint.append(item)
-    if impact_count > 0:
-        by_endpoint.append({"endpoint": "query.impact", "count": impact_count})
-    by_endpoint.sort(key=lambda x: x["count"], reverse=True)
+    by_endpoint = _merge_impact_endpoints(by_endpoint_raw)
 
     return {
         "tenant_id": tenant_id,

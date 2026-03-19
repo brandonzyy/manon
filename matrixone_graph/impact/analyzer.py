@@ -6,8 +6,7 @@ from pathlib import Path
 from ..store import CodeGraph
 
 from .models import ChangedSymbol, ChangedFile, Caller, ImpactResult
-from .git_parser import GitDiffParser
-from .symbol_extractor import ChangedSymbolExtractor
+from .parsing import GitDiffParser, ChangedSymbolExtractor
 from .risk_assessor import RiskAssessor
 
 
@@ -67,15 +66,48 @@ class ImpactAnalyzer:
         result.risk = self._risk.assess(result)
         return result
 
+    def _collect_direct_callers(self, eid: str, seen: set[str]) -> list[Caller]:
+        """Collect direct (depth=1) callers of an entity from the graph."""
+        result = []
+        for neighbor_ent, rels in self.graph.neighbors(eid, depth=1):
+            if not any(r.type == "calls" for r in rels):
+                continue
+            key = f"{neighbor_ent.file_path}:{neighbor_ent.name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(Caller(name=neighbor_ent.name, file=neighbor_ent.file_path,
+                                 line=neighbor_ent.line_start, depth=1))
+        return result
+
+    def _collect_indirect_callers(
+        self, eid: str, sym_name: str, seen: set[str],
+    ) -> tuple[list[Caller], list[str], int]:
+        """Collect indirect (depth>1) callers of an entity. Returns (callers, chains, boundary_count)."""
+        indirect, chains = [], []
+        boundary_count = 0
+        for neighbor_ent, rels in self.graph.neighbors(eid, depth=self.max_depth):
+            if not any(r.type == "calls" for r in rels):
+                continue
+            key = f"{neighbor_ent.file_path}:{neighbor_ent.name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            depth = len(rels)
+            if depth == 1:
+                continue
+            indirect.append(Caller(name=neighbor_ent.name, file=neighbor_ent.file_path,
+                                   line=neighbor_ent.line_start, depth=depth))
+            if depth == self.max_depth:
+                boundary_count += 1
+            chain_parts = [sym_name] + [r.source_name for r in rels if r.source_name]
+            chains.append(" → ".join(chain_parts))
+        return indirect, chains, boundary_count
+
     def _find_callers(
         self, symbols: list[ChangedSymbol],
     ) -> tuple[list[Caller], list[Caller], list[str], int]:
-        """Find callers by traversing CodeGraph predecessors (CALLS edges).
-
-        Returns (direct_callers, indirect_callers, propagation_chains, boundary_callers_count).
-        Chains are formatted as "A → B → C" showing the call propagation path.
-        boundary_callers_count is the number of callers found at max_depth that may have more upstream callers.
-        """
+        """Find callers by traversing CodeGraph predecessors (CALLS edges)."""
         direct: list[Caller] = []
         indirect: list[Caller] = []
         chains: list[str] = []
@@ -83,50 +115,13 @@ class ImpactAnalyzer:
         boundary_count = 0
 
         for sym in symbols:
-            # Find entity IDs matching this symbol name
             for eid in self._find_entity_ids(sym.name):
-                # Direct callers: predecessors with "calls" edge
-                for neighbor_ent, rels in self.graph.neighbors(eid, depth=1):
-                    if not any(r.type == "calls" for r in rels):
-                        continue
-                    key = f"{neighbor_ent.file_path}:{neighbor_ent.name}"
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    direct.append(Caller(
-                        name=neighbor_ent.name,
-                        file=neighbor_ent.file_path,
-                        line=neighbor_ent.line_start,
-                        depth=1,
-                    ))
-
-                # Indirect callers: depth 2+ traversal
+                direct.extend(self._collect_direct_callers(eid, seen))
                 if self.max_depth > 1:
-                    for neighbor_ent, rels in self.graph.neighbors(eid, depth=self.max_depth):
-                        if not any(r.type == "calls" for r in rels):
-                            continue
-                        key = f"{neighbor_ent.file_path}:{neighbor_ent.name}"
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        # Determine actual depth from path length
-                        depth = len(rels)
-                        if depth == 1:
-                            continue  # already in direct
-                        indirect.append(Caller(
-                            name=neighbor_ent.name,
-                            file=neighbor_ent.file_path,
-                            line=neighbor_ent.line_start,
-                            depth=depth,
-                        ))
-                        # Build propagation chain
-                        if depth == self.max_depth:
-                            boundary_count += 1
-                        chain_parts = [sym.name]
-                        for r in rels:
-                            if r.source_name:
-                                chain_parts.append(r.source_name)
-                        chains.append(" → ".join(chain_parts))
+                    ind, ch, bc = self._collect_indirect_callers(eid, sym.name, seen)
+                    indirect.extend(ind)
+                    chains.extend(ch)
+                    boundary_count += bc
 
         return direct, indirect, chains[:10], boundary_count
 

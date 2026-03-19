@@ -1,10 +1,10 @@
 """CLI commands for MatrixoneGraph.
 
 Usage:
-    codeindex kg index [PATH] --embedding-url URL --full
     codeindex kg query TEXT --top-k N --depth N -j
     codeindex kg status
     codeindex kg clear
+    codeindex kg merge-dynamic [DEPS_PATH]
 """
 
 from __future__ import annotations
@@ -72,7 +72,6 @@ def status():
     st = MatrixoneGraph(repo).status()
     if not st.get("indexed"):
         console.print("[yellow]No knowledge graph index found.[/yellow]")
-        console.print("Run: codeindex kg index .")
         return
     console.print("[bold]Knowledge Graph Status[/bold]")
     console.print(f"  Entities:  {st['entity_count']}")

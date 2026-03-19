@@ -120,66 +120,34 @@ class PythonParser(BaseLanguageParser):
 
         return inheritances
 
-    def parse(self, path: Path):
-        """Parse a Python source file.
-
-        This overrides the base parse() method to add module docstring extraction.
-
-        Args:
-            path: Path to the source file
-
-        Returns:
-            ParseResult containing symbols, imports, calls, and inheritances
-        """
+    def _build_python_parse_result(self, tree, path, source_bytes: bytes, file_lines: int):
+        """Extract all Python parse content and return a ParseResult."""
         from ..parser import ParseResult
-
         try:
-            source_bytes = path.read_bytes()
-        except Exception as e:
-            return ParseResult(path=path, error=str(e), file_lines=0)
-
-        # Calculate file lines
-        file_lines = source_bytes.count(b"\n") + (
-            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
-        )
-
-        # Parse with tree-sitter
-        tree = self.parser.parse(source_bytes)
-
-        # Check for syntax errors (tree-sitter doesn't throw exceptions)
-        if tree.root_node.has_error:
-            return ParseResult(
-                path=path,
-                error="Syntax error in source file",
-                file_lines=file_lines,
-            )
-
-        # Extract all information
-        try:
-            # Extract module docstring first
             module_docstring = self._extract_module_docstring(tree, source_bytes)
-
             symbols = self.extract_symbols(tree, source_bytes)
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
-
-            return ParseResult(
-                path=path,
-                symbols=symbols,
-                imports=imports,
-                inheritances=inheritances,
-                calls=calls,
-                file_lines=file_lines,
-                module_docstring=module_docstring,
-            )
+            return ParseResult(path=path, symbols=symbols, imports=imports, inheritances=inheritances,
+                               calls=calls, file_lines=file_lines, module_docstring=module_docstring)
         except Exception as e:
-            # Return partial result with error
-            return ParseResult(
-                path=path,
-                error=f"Parse error: {str(e)}",
-                file_lines=file_lines,
-            )
+            return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
+
+    def parse(self, path: Path):
+        """Parse a Python source file."""
+        from ..parser import ParseResult
+        try:
+            source_bytes = path.read_bytes()
+        except Exception as e:
+            return ParseResult(path=path, error=str(e), file_lines=0)
+        file_lines = source_bytes.count(b"\n") + (
+            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
+        )
+        tree = self.parser.parse(source_bytes)
+        if tree.root_node.has_error:
+            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+        return self._build_python_parse_result(tree, path, source_bytes, file_lines)
 
     # ============================================================================
     # Symbol Extraction Helpers
@@ -241,175 +209,103 @@ class PythonParser(BaseLanguageParser):
             line_end=node.end_point[0] + 1,
         )
 
-    def _parse_class(
-        self,
-        node: Node,
-        source_bytes: bytes,
-        parent_class: str = "",
-        inheritances: list[Inheritance] | None = None,
-    ) -> list[Symbol]:
-        """Parse a class definition node and its methods.
-
-        Args:
-            node: Tree-sitter class_definition node
-            source_bytes: Source code bytes
-            parent_class: Parent class name for nested classes (e.g., "Outer" for Outer.Inner)
-            inheritances: List to append Inheritance objects to (Epic 10, Story 10.1.1)
-
-        Returns:
-            List of Symbol objects (class + methods)
-        """
-        if inheritances is None:
-            inheritances = []
-
-        symbols = []
-        class_name = ""
-        bases = []
-
+    def _parse_python_class_header(
+        self, node: Node, source_bytes: bytes, parent_class: str,
+    ) -> tuple[str, list[str], str]:
+        """Extract (full_class_name, bases, signature) from a class_definition node."""
+        class_name, bases = "", []
         for child in node.children:
-            if child.type == "identifier":  # class name is 'identifier', not 'name'
+            if child.type == "identifier":
                 class_name = get_node_text(child, source_bytes)
             elif child.type == "argument_list":
-                # Extract base classes from argument_list
-                # Format: (BaseA, BaseB, Generic[T])
                 for arg_child in child.children:
                     if arg_child.type in ("identifier", "attribute", "subscript"):
                         base_text = get_node_text(arg_child, source_bytes)
-                        # Remove generic type parameters: List[str] -> List
-                        base_name = base_text.split("[")[0] if "[" in base_text else base_text
-                        bases.append(base_name)
-
-        # Build full class name (handle nested classes)
+                        bases.append(base_text.split("[")[0] if "[" in base_text else base_text)
         full_class_name = f"{parent_class}.{class_name}" if parent_class else class_name
+        signature = f"class {class_name}" + (f"({', '.join(bases)})" if bases else "")
+        return full_class_name, bases, signature
 
-        signature = f"class {class_name}"
-        if bases:
-            signature += f"({', '.join(bases)})"
+    def _parse_class(
+        self, node: Node, source_bytes: bytes,
+        parent_class: str = "", inheritances: list[Inheritance] | None = None,
+    ) -> list[Symbol]:
+        """Parse a class definition node and its methods."""
+        if inheritances is None:
+            inheritances = []
 
-        docstring = self._extract_docstring(node, source_bytes)
-
-        symbols.append(
-            Symbol(
-                name=full_class_name,
-                kind="class",
-                signature=signature,
-                docstring=docstring,
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-            )
-        )
-
-        # Create Inheritance objects (Epic 10, Story 10.1.1)
+        full_class_name, bases, signature = self._parse_python_class_header(node, source_bytes, parent_class)
+        symbols = [Symbol(
+            name=full_class_name, kind="class", signature=signature,
+            docstring=self._extract_docstring(node, source_bytes),
+            line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
+        )]
         for base in bases:
             inheritances.append(Inheritance(child=full_class_name, parent=base))
 
-        # Parse methods and nested classes
         for child in node.children:
             if child.type == "block":
                 for block_child in child.children:
                     if block_child.type == "function_definition":
-                        method = self._parse_function(
-                            block_child, source_bytes, full_class_name
-                        )
-                        symbols.append(method)
+                        symbols.append(self._parse_function(block_child, source_bytes, full_class_name))
                     elif block_child.type == "class_definition":
-                        # Nested class (Epic 10, Story 10.1.1)
-                        nested_symbols = self._parse_class(
-                            block_child, source_bytes, full_class_name, inheritances
-                        )
-                        symbols.extend(nested_symbols)
+                        symbols.extend(self._parse_class(block_child, source_bytes, full_class_name, inheritances))
 
         return symbols
 
-    def _parse_import(self, node: Node, source_bytes: bytes) -> list[Import]:
-        """Parse an import statement.
-
-        Returns a list of Import objects. For imports with different aliases,
-        creates separate Import objects (Epic 10, Story 10.2.1).
-
-        Examples:
-            import numpy as np → [Import("numpy", [], False, alias="np")]
-            from typing import Dict as D, List → [Import("typing", ["Dict"], True, alias="D"),
-                                                    Import("typing", ["List"], True, alias=None)]
-        """
-        imports = []
-
-        if node.type == "import_statement":
-            # import foo, bar as baz
-            for child in node.children:
-                if child.type == "dotted_name":
-                    # Simple import without alias
-                    module_name = get_node_text(child, source_bytes)
-                    imports.append(
-                        Import(module=module_name, names=[], is_from=False, alias=None)
-                    )
-                elif child.type == "aliased_import":
-                    # import foo as bar
-                    module_name = ""
-                    alias = None
-                    for ac in child.children:
-                        if ac.type == "dotted_name":
-                            module_name = get_node_text(ac, source_bytes)
-                        elif ac.type == "identifier" and module_name:
-                            # This is the alias (after 'as')
-                            alias = get_node_text(ac, source_bytes)
-                    if module_name:
-                        imports.append(
-                            Import(module=module_name, names=[], is_from=False, alias=alias)
-                        )
-
-        elif node.type == "import_from_statement":
-            # from foo import bar, baz as qux
-            module = ""
-            imported_items = []  # List of (name, alias) tuples
-            found_module = False
-
-            # Parse the import structure
-            for child in node.children:
-                if child.type == "dotted_name" and not found_module:
-                    # This is the module name
-                    module = get_node_text(child, source_bytes)
-                    found_module = True
-                elif child.type == "relative_import" and not found_module:
-                    module = get_node_text(child, source_bytes)
-                    found_module = True
-                elif found_module:
-                    # After module, collect imported items
-                    if child.type == "dotted_name":
-                        # This could be wrongly parsed - skip if it's the module name itself
-                        name = get_node_text(child, source_bytes)
-                        if name != module:  # Don't add module name as import
-                            imported_items.append((name, None))
-                    elif child.type == "identifier":
-                        # Single identifier: from foo import bar
-                        name = get_node_text(child, source_bytes)
-                        if name not in ("import", "from", "*") and name != module:
-                            imported_items.append((name, None))
-                    elif child.type == "aliased_import":
-                        # from foo import bar as baz
-                        name = ""
-                        alias = None
-                        for ac in child.children:
-                            if ac.type in ("dotted_name", "identifier") and not name:
-                                name = get_node_text(ac, source_bytes)
-                            elif ac.type == "identifier" and name:
-                                # This is the alias (after 'as')
-                                alias = get_node_text(ac, source_bytes)
-                        if name:
-                            imported_items.append((name, alias))
-                    elif child.type == "wildcard_import":
-                        # from foo import *
-                        imported_items.append(("*", None))
-
-            # Create Import objects
-            if module and imported_items:
-                # Create separate Import for each item
-                for name, alias in imported_items:
-                    imports.append(
-                        Import(module=module, names=[name], is_from=True, alias=alias)
-                    )
-
+    def _parse_import_statement(self, node: Node, source_bytes: bytes) -> list[Import]:
+        """Parse `import foo` and `import foo as bar` statements."""
+        imports: list[Import] = []
+        for child in node.children:
+            if child.type == "dotted_name":
+                imports.append(Import(module=get_node_text(child, source_bytes), names=[], is_from=False, alias=None))
+            elif child.type == "aliased_import":
+                module_name, alias = "", None
+                for ac in child.children:
+                    if ac.type == "dotted_name":
+                        module_name = get_node_text(ac, source_bytes)
+                    elif ac.type == "identifier" and module_name:
+                        alias = get_node_text(ac, source_bytes)
+                if module_name:
+                    imports.append(Import(module=module_name, names=[], is_from=False, alias=alias))
         return imports
+
+    def _parse_from_import_statement(self, node: Node, source_bytes: bytes) -> list[Import]:
+        """Parse `from foo import bar, baz as qux` statements."""
+        module, imported_items, found_module = "", [], False
+        for child in node.children:
+            if child.type in ("dotted_name", "relative_import") and not found_module:
+                module = get_node_text(child, source_bytes)
+                found_module = True
+            elif found_module:
+                if child.type == "dotted_name":
+                    name = get_node_text(child, source_bytes)
+                    if name != module:
+                        imported_items.append((name, None))
+                elif child.type == "identifier":
+                    name = get_node_text(child, source_bytes)
+                    if name not in ("import", "from", "*") and name != module:
+                        imported_items.append((name, None))
+                elif child.type == "aliased_import":
+                    name, alias = "", None
+                    for ac in child.children:
+                        if ac.type in ("dotted_name", "identifier") and not name:
+                            name = get_node_text(ac, source_bytes)
+                        elif ac.type == "identifier" and name:
+                            alias = get_node_text(ac, source_bytes)
+                    if name:
+                        imported_items.append((name, alias))
+                elif child.type == "wildcard_import":
+                    imported_items.append(("*", None))
+        return [Import(module=module, names=[name], is_from=True, alias=alias) for name, alias in imported_items] if module and imported_items else []
+
+    def _parse_import(self, node: Node, source_bytes: bytes) -> list[Import]:
+        """Parse an import or from-import statement into Import objects."""
+        if node.type == "import_statement":
+            return self._parse_import_statement(node, source_bytes)
+        if node.type == "import_from_statement":
+            return self._parse_from_import_statement(node, source_bytes)
+        return []
 
     def _extract_module_docstring(self, tree: Tree, source_bytes: bytes) -> str:
         """Extract module-level docstring."""
@@ -624,6 +520,17 @@ class PythonParser(BaseLanguageParser):
 
         return ""
 
+    def _resolve_python_callee(self, callee_raw: str, caller: str, parent_map: dict[str, str]) -> str:
+        """Resolve self/super references in a callee to their concrete class names."""
+        if callee_raw.startswith("self.") and "." in caller:
+            class_name = caller.rsplit(".", 1)[0]
+            callee_raw = callee_raw.replace("self.", f"{class_name}.", 1)
+        if callee_raw.startswith("super.") and "." in caller:
+            class_name = caller.rsplit(".", 1)[0]
+            if class_name in parent_map:
+                callee_raw = callee_raw.replace("super.", f"{parent_map[class_name]}.", 1)
+        return callee_raw
+
     def _parse_python_call(
         self,
         node: Node,
@@ -632,56 +539,22 @@ class PythonParser(BaseLanguageParser):
         alias_map: dict[str, str],
         parent_map: dict[str, str],
     ) -> Optional[Call]:
-        """Parse a single Python call node.
-
-        Args:
-            node: Tree-sitter call node
-            source_bytes: Source code bytes
-            caller: Name of calling function/method (e.g., "Calculator.add" or "Child.method")
-            alias_map: Import alias mapping
-            parent_map: Parent class mapping (for super() resolution)
-
-        Returns:
-            Call object or None if cannot parse
-        """
-        # Extract function node
+        """Parse a single Python call node."""
         func_node = node.child_by_field_name("function")
         if not func_node:
             return None
 
-        # Extract callee name
         callee_raw = self._extract_call_name(func_node, source_bytes)
         if not callee_raw:
             return None
 
-        # Resolve self.method() to ClassName.method() (AC2: method call with self)
-        if callee_raw.startswith("self.") and "." in caller:
-            # Extract class name from caller (e.g., "Calculator.add" → "Calculator")
-            class_name = caller.rsplit(".", 1)[0]
-            # Replace self with class name
-            callee_raw = callee_raw.replace("self.", f"{class_name}.", 1)
-
-        # Resolve super().method() to Parent.method() (AC2: super method call)
-        if callee_raw.startswith("super.") and "." in caller:
-            # Extract class name from caller (e.g., "Child.method" → "Child")
-            class_name = caller.rsplit(".", 1)[0]
-            # Look up parent class
-            if class_name in parent_map:
-                parent_class = parent_map[class_name]
-                # Replace super with parent class name
-                callee_raw = callee_raw.replace("super.", f"{parent_class}.", 1)
-
-        # Resolve alias (CRITICAL: Epic 11, Story 11.1, AC4)
+        callee_raw = self._resolve_python_callee(callee_raw, caller, parent_map)
         callee = self._resolve_alias(callee_raw, alias_map)
 
-        # Determine call type
         call_type = self._determine_python_call_type(func_node, source_bytes)
-
-        # Constructor: format as Class.__init__
         if call_type == CallType.CONSTRUCTOR:
             callee = f"{callee}.__init__"
 
-        # Extract arguments count (best-effort)
         args_node = node.child_by_field_name("arguments")
         args_count = count_arguments(args_node) if args_node else None
 
@@ -806,6 +679,63 @@ class PythonParser(BaseLanguageParser):
 
         return calls
 
+    def _extract_class_body_method_calls(
+        self, body_node, class_name: str, source_bytes: bytes, alias_map: dict, parent_map: dict,
+    ) -> list[Call]:
+        """Extract calls from all methods inside a class body node."""
+        calls: list[Call] = []
+        for method_node in body_node.children:
+            if method_node.type == "function_definition":
+                method_name = ""
+                for node in method_node.children:
+                    if node.type == "identifier":
+                        method_name = get_node_text(node, source_bytes)
+                        break
+                if method_name:
+                    context = f"{class_name}.{method_name}"
+                    calls.extend(self._extract_decorator_calls(method_node, source_bytes, class_name))
+                    calls.extend(self._extract_python_calls(method_node, source_bytes, context, alias_map, parent_map))
+            elif method_node.type == "decorated_definition":
+                for dec_node in method_node.children:
+                    if dec_node.type == "decorator" and self._is_simple_decorator(dec_node):
+                        decorator_name = self._extract_decorator_name(dec_node, source_bytes)
+                        if decorator_name:
+                            calls.append(Call(
+                                caller=class_name, callee=decorator_name,
+                                line_number=dec_node.start_point[0] + 1,
+                                call_type=CallType.FUNCTION, arguments_count=1,
+                            ))
+                for dec_child in method_node.children:
+                    if dec_child.type == "function_definition":
+                        method_name = ""
+                        for node in dec_child.children:
+                            if node.type == "identifier":
+                                method_name = get_node_text(node, source_bytes)
+                                break
+                        if method_name:
+                            calls.extend(self._extract_python_calls(
+                                dec_child, source_bytes, f"{class_name}.{method_name}", alias_map, parent_map,
+                            ))
+        return calls
+
+    def _extract_class_node_calls(
+        self, class_node, source_bytes: bytes, caller: str, alias_map: dict, parent_map: dict,
+    ) -> list[Call]:
+        """Extract calls from a class definition node (decorators + methods)."""
+        calls: list[Call] = []
+        class_name = ""
+        for node in class_node.children:
+            if node.type == "identifier":
+                class_name = get_node_text(node, source_bytes)
+                break
+        if not class_name:
+            return calls
+        calls.extend(self._extract_decorator_calls(class_node, source_bytes, caller))
+        body_node = next((n for n in class_node.children if n.type == "block"), None)
+        if body_node:
+            calls.extend(self._extract_class_body_method_calls(body_node, class_name, source_bytes, alias_map, parent_map))
+        return calls
+
     def _extract_python_calls_from_tree(
         self,
         tree: Tree,
@@ -813,218 +743,40 @@ class PythonParser(BaseLanguageParser):
         imports: list[Import],
         inheritances: list[Inheritance],
     ) -> list[Call]:
-        """Extract all Python calls from parse tree.
-
-        Args:
-            tree: Tree-sitter parse tree
-            source_bytes: Source code bytes
-            imports: Import list (for alias resolution)
-            inheritances: Inheritance list (for super() resolution)
-
-        Returns:
-            List of Call objects
-        """
-        # Build alias map from imports (Epic 11, AC4)
+        """Extract all Python calls from parse tree."""
         alias_map = self._build_alias_map(imports)
+        parent_map = {inh.child: inh.parent for inh in inheritances}
+        calls: list[Call] = []
 
-        # Build parent map for super() resolution (child → parent)
-        parent_map = {}
-        for inh in inheritances:
-            parent_map[inh.child] = inh.parent
-
-        calls = []
-        root = tree.root_node
-
-        # Traverse top-level definitions
-        for child in root.children:
+        for child in tree.root_node.children:
             if child.type == "function_definition":
-                # Extract function name
-                func_name = ""
-                for node in child.children:
-                    if node.type == "identifier":
-                        func_name = get_node_text(node, source_bytes)
-                        break
-
-                # Extract calls within function
+                func_name = next(
+                    (get_node_text(n, source_bytes) for n in child.children if n.type == "identifier"), ""
+                )
                 if func_name:
-                    calls.extend(
-                        self._extract_python_calls(
-                            child, source_bytes, func_name, alias_map, parent_map
-                        )
-                    )
+                    calls.extend(self._extract_python_calls(child, source_bytes, func_name, alias_map, parent_map))
 
             elif child.type == "class_definition":
-                # Extract class name
-                class_name = ""
-                for node in child.children:
-                    if node.type == "identifier":
-                        class_name = get_node_text(node, source_bytes)
-                        break
-
-                if class_name:
-                    # Extract decorator calls (AC5: decorator calls)
-                    calls.extend(
-                        self._extract_decorator_calls(child, source_bytes, "<module>")
-                    )
-
-                    # Find class body
-                    body_node = None
-                    for node in child.children:
-                        if node.type == "block":
-                            body_node = node
-                            break
-
-                    if body_node:
-                        # Extract calls from methods
-                        for method_node in body_node.children:
-                            if method_node.type == "function_definition":
-                                # Extract method name
-                                method_name = ""
-                                for node in method_node.children:
-                                    if node.type == "identifier":
-                                        method_name = get_node_text(node, source_bytes)
-                                        break
-
-                                if method_name:
-                                    context = f"{class_name}.{method_name}"
-
-                                    # Extract decorator calls for method
-                                    calls.extend(
-                                        self._extract_decorator_calls(
-                                            method_node, source_bytes, class_name
-                                        )
-                                    )
-
-                                    # Extract calls within method
-                                    calls.extend(
-                                        self._extract_python_calls(
-                                            method_node,
-                                            source_bytes,
-                                            context,
-                                            alias_map,
-                                            parent_map,
-                                        )
-                                    )
-
-                            elif method_node.type == "decorated_definition":
-                                # Handle decorated methods
-                                # First extract decorators
-                                for dec_node in method_node.children:
-                                    if dec_node.type == "decorator":
-                                        if self._is_simple_decorator(dec_node):
-                                            decorator_name = self._extract_decorator_name(
-                                                dec_node, source_bytes
-                                            )
-                                            if decorator_name:
-                                                calls.append(
-                                                    Call(
-                                                        caller=class_name,
-                                                        callee=decorator_name,
-                                                        line_number=dec_node.start_point[0]
-                                                        + 1,
-                                                        call_type=CallType.FUNCTION,
-                                                        arguments_count=1,
-                                                    )
-                                                )
-
-                                # Then process the function itself
-                                for dec_child in method_node.children:
-                                    if dec_child.type == "function_definition":
-                                        method_name = ""
-                                        for node in dec_child.children:
-                                            if node.type == "identifier":
-                                                method_name = get_node_text(
-                                                    node, source_bytes
-                                                )
-                                                break
-                                        if method_name:
-                                            context = f"{class_name}.{method_name}"
-                                            calls.extend(
-                                                self._extract_python_calls(
-                                                    dec_child,
-                                                    source_bytes,
-                                                    context,
-                                                    alias_map,
-                                                    parent_map,
-                                                )
-                                            )
+                calls.extend(self._extract_class_node_calls(child, source_bytes, "<module>", alias_map, parent_map))
 
             elif child.type == "decorated_definition":
-                # Handle decorated functions/classes
-                # decorated_definition contains: decorator* + (function_definition | class_definition)
-
-                # First, extract decorators from decorated_definition node itself
                 for dec_node in child.children:
-                    if dec_node.type == "decorator":
-                        if self._is_simple_decorator(dec_node):
-                            decorator_name = self._extract_decorator_name(
-                                dec_node, source_bytes
-                            )
-                            if decorator_name:
-                                calls.append(
-                                    Call(
-                                        caller="<module>",
-                                        callee=decorator_name,
-                                        line_number=dec_node.start_point[0] + 1,
-                                        call_type=CallType.FUNCTION,
-                                        arguments_count=1,
-                                    )
-                                )
-
-                # Then, handle the decorated function/class
+                    if dec_node.type == "decorator" and self._is_simple_decorator(dec_node):
+                        decorator_name = self._extract_decorator_name(dec_node, source_bytes)
+                        if decorator_name:
+                            calls.append(Call(
+                                caller="<module>", callee=decorator_name,
+                                line_number=dec_node.start_point[0] + 1,
+                                call_type=CallType.FUNCTION, arguments_count=1,
+                            ))
                 for dec_child in child.children:
                     if dec_child.type == "function_definition":
-                        func_name = ""
-                        for node in dec_child.children:
-                            if node.type == "identifier":
-                                func_name = get_node_text(node, source_bytes)
-                                break
+                        func_name = next(
+                            (get_node_text(n, source_bytes) for n in dec_child.children if n.type == "identifier"), ""
+                        )
                         if func_name:
-                            # Extract calls within function
-                            calls.extend(
-                                self._extract_python_calls(
-                                    dec_child, source_bytes, func_name, alias_map, parent_map
-                                )
-                            )
+                            calls.extend(self._extract_python_calls(dec_child, source_bytes, func_name, alias_map, parent_map))
                     elif dec_child.type == "class_definition":
-                        class_name = ""
-                        for node in dec_child.children:
-                            if node.type == "identifier":
-                                class_name = get_node_text(node, source_bytes)
-                                break
-                        if class_name:
-                            # For decorated classes, process methods
-                            body_node = None
-                            for node in dec_child.children:
-                                if node.type == "block":
-                                    body_node = node
-                                    break
-
-                            if body_node:
-                                for method_node in body_node.children:
-                                    if method_node.type == "function_definition":
-                                        method_name = ""
-                                        for node in method_node.children:
-                                            if node.type == "identifier":
-                                                method_name = get_node_text(
-                                                    node, source_bytes
-                                                )
-                                                break
-                                        if method_name:
-                                            context = f"{class_name}.{method_name}"
-                                            calls.extend(
-                                                self._extract_decorator_calls(
-                                                    method_node, source_bytes, class_name
-                                                )
-                                            )
-                                            calls.extend(
-                                                self._extract_python_calls(
-                                                    method_node,
-                                                    source_bytes,
-                                                    context,
-                                                    alias_map,
-                                                    parent_map,
-                                                )
-                                            )
+                        calls.extend(self._extract_class_node_calls(dec_child, source_bytes, "<module>", alias_map, parent_map))
 
         return calls

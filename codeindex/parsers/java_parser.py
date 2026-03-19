@@ -171,77 +171,43 @@ class JavaParser(BaseLanguageParser):
 
         return inheritances
 
-    def parse(self, path):
-        """Parse a Java source file.
-
-        Overrides BaseLanguageParser.parse() to add module_docstring extraction.
-
-        Args:
-            path: Path to the source file
-
-        Returns:
-            ParseResult containing symbols, imports, calls, inheritances, and module_docstring
-        """
-        from pathlib import Path
-
+    def _build_java_parse_result(self, tree, path, source_bytes: bytes, file_lines: int):
+        """Extract all Java parse content and return a ParseResult."""
         from ..parser import ParseResult
-
-        try:
-            source_bytes = Path(path).read_bytes()
-        except Exception as e:
-            return ParseResult(path=path, error=str(e), file_lines=0)
-
-        # Calculate file lines
-        file_lines = source_bytes.count(b"\n") + (
-            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
-        )
-
-        # Parse with tree-sitter
-        tree = self.parser.parse(source_bytes)
-
-        # Check for syntax errors (tree-sitter doesn't throw exceptions)
-        if tree.root_node.has_error:
-            return ParseResult(
-                path=path,
-                error="Syntax error in source file",
-                file_lines=file_lines,
-            )
-
-        # Extract all information
         try:
             symbols = self.extract_symbols(tree, source_bytes)
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
-
-            # Extract module docstring (Java)
             module_docstring = self._extract_java_module_docstring(tree, source_bytes)
-
-            # Extract package namespace
             namespace = ""
-            root = tree.root_node
-            for child in root.children:
+            for child in tree.root_node.children:
                 if child.type == "package_declaration":
                     namespace = self._parse_java_package(child, source_bytes)
                     break
-
             return ParseResult(
-                path=path,
-                symbols=symbols,
-                imports=imports,
-                inheritances=inheritances,
-                calls=calls,
-                file_lines=file_lines,
-                module_docstring=module_docstring,
+                path=path, symbols=symbols, imports=imports, inheritances=inheritances,
+                calls=calls, file_lines=file_lines, module_docstring=module_docstring,
                 namespace=namespace,
             )
         except Exception as e:
-            # Return partial result with error
-            return ParseResult(
-                path=path,
-                error=f"Parse error: {str(e)}",
-                file_lines=file_lines,
-            )
+            return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
+
+    def parse(self, path):
+        """Parse a Java source file."""
+        from pathlib import Path
+        from ..parser import ParseResult
+        try:
+            source_bytes = Path(path).read_bytes()
+        except Exception as e:
+            return ParseResult(path=path, error=str(e), file_lines=0)
+        file_lines = source_bytes.count(b"\n") + (
+            1 if source_bytes and not source_bytes.endswith(b"\n") else 0
+        )
+        tree = self.parser.parse(source_bytes)
+        if tree.root_node.has_error:
+            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+        return self._build_java_parse_result(tree, path, source_bytes, file_lines)
 
     # ==================== Private Helper Methods ====================
 
@@ -382,13 +348,6 @@ class JavaParser(BaseLanguageParser):
 
         return arguments
 
-    def _find_child_by_type(self, node: Node, type_name: str) -> Node | None:
-        """Find first child node of a specific type."""
-        for child in node.children:
-            if child.type == type_name:
-                return child
-        return None
-
     def _extract_java_docstring(self, node: Node, source_bytes: bytes) -> str:
         """Extract JavaDoc comment from a node."""
         if (hasattr(node, 'prev_sibling') and node.prev_sibling and
@@ -517,6 +476,30 @@ class JavaParser(BaseLanguageParser):
 
         return symbols
 
+    def _extract_java_type_list_inheritances(
+        self,
+        parent_node: Node,
+        source_bytes: bytes,
+        child_name: str,
+        package_namespace: str,
+        import_map: dict[str, str],
+    ) -> list[Inheritance]:
+        """Extract Inheritance entries from a super_interfaces/extends_interfaces node."""
+        type_list = next((c for c in parent_node.children if c.type == "type_list"), None)
+        if not type_list:
+            return []
+        result = []
+        for type_node in type_list.children:
+            if type_node.type in ("type_identifier", "generic_type", "scoped_type_identifier"):
+                name = self._extract_type_from_node(type_node, source_bytes)
+                if name:
+                    name = self._strip_generic_type(name)
+                    result.append(Inheritance(
+                        child=child_name,
+                        parent=self._resolve_java_type(name, package_namespace, import_map),
+                    ))
+        return result
+
     def _extract_java_inheritances(
         self,
         node: Node,
@@ -537,53 +520,10 @@ class JavaParser(BaseLanguageParser):
                 inheritances.append(Inheritance(child=child_name, parent=parent_full))
 
         for child in node.children:
-            if child.type == "super_interfaces":
-                type_list = None
-                for subchild in child.children:
-                    if subchild.type == "type_list":
-                        type_list = subchild
-                        break
-
-                if type_list:
-                    for type_node in type_list.children:
-                        if type_node.type in (
-                            "type_identifier",
-                            "generic_type",
-                            "scoped_type_identifier"
-                        ):
-                            interface_name = self._extract_type_from_node(type_node, source_bytes)
-                            if interface_name:
-                                interface_name = self._strip_generic_type(interface_name)
-                                interface_full = self._resolve_java_type(
-                                    interface_name, package_namespace, import_map
-                                )
-                                inheritances.append(
-                                    Inheritance(child=child_name, parent=interface_full)
-                                )
-
-            elif child.type == "extends_interfaces":
-                type_list = None
-                for subchild in child.children:
-                    if subchild.type == "type_list":
-                        type_list = subchild
-                        break
-
-                if type_list:
-                    for type_node in type_list.children:
-                        if type_node.type in (
-                            "type_identifier",
-                            "generic_type",
-                            "scoped_type_identifier"
-                        ):
-                            extended_interface = self._extract_type_from_node(type_node, source_bytes)
-                            if extended_interface:
-                                extended_interface = self._strip_generic_type(extended_interface)
-                                extended_full = self._resolve_java_type(
-                                    extended_interface, package_namespace, import_map
-                                )
-                                inheritances.append(
-                                    Inheritance(child=child_name, parent=extended_full)
-                                )
+            if child.type in ("super_interfaces", "extends_interfaces"):
+                inheritances.extend(self._extract_java_type_list_inheritances(
+                    child, source_bytes, child_name, package_namespace, import_map,
+                ))
 
         return inheritances
 
@@ -602,6 +542,46 @@ class JavaParser(BaseLanguageParser):
 
         return ""
 
+    def _parse_java_class_header(
+        self, node: Node, source_bytes: bytes,
+    ) -> tuple[str, str, str, list[str]]:
+        """Extract class_name, type_params, superclass, interfaces from a class node."""
+        class_name, type_params, superclass, interfaces = "", "", "", []
+        for child in node.children:
+            if child.type == "identifier":
+                class_name = get_node_text(child, source_bytes)
+            elif child.type == "type_parameters":
+                type_params = get_node_text(child, source_bytes)
+            elif child.type == "superclass":
+                for sc in child.children:
+                    if sc.type == "type_identifier":
+                        superclass = get_node_text(sc, source_bytes)
+            elif child.type == "super_interfaces":
+                for ic in child.children:
+                    if ic.type == "type_list":
+                        interfaces.extend(get_node_text(tc, source_bytes) for tc in ic.children if tc.type == "type_identifier")
+        return class_name, type_params, superclass, interfaces
+
+    def _parse_java_class_body_symbols(
+        self, node: Node, source_bytes: bytes, class_name: str, namespace: str,
+        import_map: dict, inheritances: list,
+    ) -> list[Symbol]:
+        """Extract method, constructor, field, and nested class symbols from a class_body node."""
+        symbols: list[Symbol] = []
+        for child in node.children:
+            if child.type == "class_body":
+                for body_child in child.children:
+                    if body_child.type == "method_declaration":
+                        symbols.append(self._parse_java_method(body_child, source_bytes, class_name))
+                    elif body_child.type == "constructor_declaration":
+                        symbols.append(self._parse_java_constructor(body_child, source_bytes, class_name))
+                    elif body_child.type == "field_declaration":
+                        symbols.extend(self._parse_java_field(body_child, source_bytes, class_name))
+                    elif body_child.type == "class_declaration":
+                        nested_ns = f"{namespace}.{class_name}" if namespace else class_name
+                        symbols.extend(self._parse_java_class(body_child, source_bytes, nested_ns, import_map, inheritances))
+        return symbols
+
     def _parse_java_class(
         self,
         node: Node,
@@ -611,155 +591,93 @@ class JavaParser(BaseLanguageParser):
         inheritances: list[Inheritance] | None = None
     ) -> list[Symbol]:
         """Parse a Java class declaration."""
-        symbols = []
-        class_name = ""
-        type_params = ""
-        superclass = ""
-        interfaces = []
-
         if import_map is None:
             import_map = {}
         if inheritances is None:
             inheritances = []
 
+        class_name, type_params, superclass, interfaces = self._parse_java_class_header(node, source_bytes)
         modifiers = self._extract_java_modifiers(node, source_bytes)
         annotations = self._extract_java_annotations(node, source_bytes)
-
-        for child in node.children:
-            if child.type == "identifier":
-                class_name = get_node_text(child, source_bytes)
-            elif child.type == "type_parameters":
-                type_params = get_node_text(child, source_bytes)
-            elif child.type == "superclass":
-                for super_child in child.children:
-                    if super_child.type == "type_identifier":
-                        superclass = get_node_text(super_child, source_bytes)
-            elif child.type == "super_interfaces":
-                for interface_child in child.children:
-                    if interface_child.type == "type_list":
-                        for type_child in interface_child.children:
-                            if type_child.type == "type_identifier":
-                                interfaces.append(get_node_text(type_child, source_bytes))
 
         if class_name:
             full_class_name = f"{namespace}.{class_name}" if namespace else class_name
-            package_namespace = self._extract_package_namespace(full_class_name)
-            class_inheritances = self._extract_java_inheritances(
-                node, source_bytes, full_class_name, package_namespace, import_map
-            )
-            inheritances.extend(class_inheritances)
+            inheritances.extend(self._extract_java_inheritances(
+                node, source_bytes, full_class_name, self._extract_package_namespace(full_class_name), import_map,
+            ))
 
         class_decl = class_name + type_params if type_params else class_name
-        signature_parts = ["class", class_decl]
+        sig_parts = ["class", class_decl]
         if superclass:
-            signature_parts.append(f"extends {superclass}")
+            sig_parts.append(f"extends {superclass}")
         if interfaces:
-            signature_parts.append(f"implements {', '.join(interfaces)}")
+            sig_parts.append(f"implements {', '.join(interfaces)}")
 
-        signature = self._build_java_signature(modifiers, *signature_parts)
-        docstring = self._extract_java_docstring(node, source_bytes)
-
-        symbols.append(Symbol(
-            name=class_name,
-            kind="class",
-            signature=signature,
-            docstring=docstring,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
+        symbols = [Symbol(
+            name=class_name, kind="class",
+            signature=self._build_java_signature(modifiers, *sig_parts),
+            docstring=self._extract_java_docstring(node, source_bytes),
+            line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
             annotations=annotations,
-        ))
-
-        for child in node.children:
-            if child.type == "class_body":
-                for body_child in child.children:
-                    if body_child.type == "method_declaration":
-                        method = self._parse_java_method(body_child, source_bytes, class_name)
-                        symbols.append(method)
-                    elif body_child.type == "constructor_declaration":
-                        constructor = self._parse_java_constructor(body_child, source_bytes, class_name)
-                        symbols.append(constructor)
-                    elif body_child.type == "field_declaration":
-                        fields = self._parse_java_field(body_child, source_bytes, class_name)
-                        symbols.extend(fields)
-                    elif body_child.type == "class_declaration":
-                        nested_namespace = f"{namespace}.{class_name}" if namespace else class_name
-                        nested_symbols = self._parse_java_class(
-                            body_child, source_bytes, nested_namespace, import_map, inheritances
-                        )
-                        symbols.extend(nested_symbols)
-
+        )]
+        symbols.extend(self._parse_java_class_body_symbols(node, source_bytes, class_name, namespace, import_map, inheritances))
         return symbols
 
-    def _parse_java_interface(
-        self,
-        node: Node,
-        source_bytes: bytes,
-        namespace: str = "",
-        import_map: dict[str, str] | None = None,
-        inheritances: list[Inheritance] | None = None
-    ) -> list[Symbol]:
-        """Parse a Java interface declaration."""
-        symbols = []
-        interface_name = ""
-        type_params = ""
-        extends = []
-
-        if import_map is None:
-            import_map = {}
-        if inheritances is None:
-            inheritances = []
-
-        modifiers = self._extract_java_modifiers(node, source_bytes)
-        annotations = self._extract_java_annotations(node, source_bytes)
-
+    def _parse_java_interface_header(self, node: Node, source_bytes: bytes) -> tuple[str, str, list[str]]:
+        """Extract (interface_name, type_params, extends) from an interface_declaration node."""
+        interface_name, type_params, extends = "", "", []
         for child in node.children:
             if child.type == "identifier":
                 interface_name = get_node_text(child, source_bytes)
             elif child.type == "type_parameters":
                 type_params = get_node_text(child, source_bytes)
             elif child.type == "extends_interfaces":
-                for ext_child in child.children:
-                    if ext_child.type == "type_list":
-                        for type_child in ext_child.children:
-                            if type_child.type in (
-                                "type_identifier",
-                                "generic_type",
-                                "scoped_type_identifier",
-                            ):
-                                extends.append(get_node_text(type_child, source_bytes))
+                for ec in child.children:
+                    if ec.type == "type_list":
+                        extends.extend(
+                            get_node_text(tc, source_bytes) for tc in ec.children
+                            if tc.type in ("type_identifier", "generic_type", "scoped_type_identifier")
+                        )
+        return interface_name, type_params, extends
+
+    def _parse_java_interface(
+        self, node: Node, source_bytes: bytes,
+        namespace: str = "", import_map: dict[str, str] | None = None,
+        inheritances: list[Inheritance] | None = None,
+    ) -> list[Symbol]:
+        """Parse a Java interface declaration."""
+        if import_map is None:
+            import_map = {}
+        if inheritances is None:
+            inheritances = []
+
+        interface_name, type_params, extends = self._parse_java_interface_header(node, source_bytes)
+        modifiers = self._extract_java_modifiers(node, source_bytes)
+        annotations = self._extract_java_annotations(node, source_bytes)
 
         interface_decl = interface_name + type_params if type_params else interface_name
-        signature_parts = ["interface", interface_decl]
+        sig_parts = ["interface", interface_decl]
         if extends:
-            signature_parts.append(f"extends {', '.join(extends)}")
+            sig_parts.append(f"extends {', '.join(extends)}")
 
-        signature = self._build_java_signature(modifiers, *signature_parts)
-        docstring = self._extract_java_docstring(node, source_bytes)
-
-        symbols.append(Symbol(
-            name=interface_name,
-            kind="interface",
-            signature=signature,
-            docstring=docstring,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
+        symbols = [Symbol(
+            name=interface_name, kind="interface",
+            signature=self._build_java_signature(modifiers, *sig_parts),
+            docstring=self._extract_java_docstring(node, source_bytes),
+            line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
             annotations=annotations,
-        ))
+        )]
 
         if interface_name:
-            full_interface_name = f"{namespace}.{interface_name}" if namespace else interface_name
-            package_namespace = self._extract_package_namespace(full_interface_name)
-            interface_inheritances = self._extract_java_inheritances(
-                node, source_bytes, full_interface_name, package_namespace, import_map
-            )
-            inheritances.extend(interface_inheritances)
+            full_name = f"{namespace}.{interface_name}" if namespace else interface_name
+            inheritances.extend(self._extract_java_inheritances(
+                node, source_bytes, full_name, self._extract_package_namespace(full_name), import_map,
+            ))
 
         for child in node.children:
             if child.type == "interface_body":
-                for body_child in child.children:
-                    if body_child.type == "method_declaration":
-                        method = self._parse_java_method(body_child, source_bytes, interface_name)
-                        symbols.append(method)
+                symbols.extend(self._parse_java_method(bc, source_bytes, interface_name)
+                                for bc in child.children if bc.type == "method_declaration")
 
         return symbols
 
@@ -934,6 +852,80 @@ class JavaParser(BaseLanguageParser):
 
         return None
 
+    def _extract_java_call_identifiers(self, node: Node, source_bytes: bytes) -> tuple[list[str], bool, object]:
+        """Parse method invocation node into (identifiers, has_super, chained_object_expr)."""
+        def extract_field_ids(field_node):
+            ids = []
+            for child in field_node.children:
+                if child.type == "identifier":
+                    ids.append(get_node_text(child, source_bytes))
+                elif child.type == "field_access":
+                    ids.extend(extract_field_ids(child))
+            return ids
+
+        identifiers, has_super, object_expr = [], False, None
+        for child in node.children:
+            if child.type == "identifier":
+                identifiers.append(get_node_text(child, source_bytes))
+            elif child.type == "super":
+                has_super = True
+            elif child.type == "field_access":
+                identifiers.extend(extract_field_ids(child))
+            elif child.type == "method_invocation":
+                object_expr = child
+        return identifiers, has_super, object_expr
+
+    def _build_java_callee_raw(
+        self, identifiers: list[str], has_super: bool, object_expr, caller: str,
+        parent_map: dict[str, str], namespace: str, source_bytes: bytes,
+    ) -> tuple[str, bool]:
+        """Build raw callee string from parsed identifiers. Returns (callee_raw, skip_resolution)."""
+        if has_super and identifiers:
+            method_name = identifiers[-1]
+            if "." in caller:
+                class_name = caller.rsplit(".", 1)[0]
+                if class_name in parent_map:
+                    return f"{parent_map[class_name]}.{method_name}", True
+            return f"{namespace}.Parent.{method_name}", True
+        if object_expr and identifiers:
+            def get_chain_obj(n):
+                for c in n.children:
+                    if c.type == "identifier":
+                        return get_node_text(c, source_bytes)
+                    elif c.type == "method_invocation":
+                        return get_chain_obj(c)
+                return None
+            base_obj = get_chain_obj(object_expr)
+            return (f"{base_obj}.{identifiers[-1]}" if base_obj else identifiers[-1]), False
+        if len(identifiers) == 1:
+            return identifiers[0], False
+        if len(identifiers) >= 2:
+            return ".".join(identifiers), False
+        return "", False
+
+    def _resolve_java_callee(
+        self, callee_raw: str, skip_resolution: bool,
+        import_map: dict[str, str], static_import_map: dict[str, str], namespace: str,
+    ) -> str:
+        """Resolve a raw callee string to a fully qualified name."""
+        if skip_resolution:
+            return callee_raw
+        if "." not in callee_raw:
+            static_resolved = self._resolve_java_static_import(callee_raw, static_import_map)
+            return static_resolved if static_resolved else f"{namespace}.{callee_raw}"
+        parts = callee_raw.split(".")
+        if len(parts) >= 3 and parts[0][0].islower():
+            return callee_raw
+        class_part, method_part = parts[0], ".".join(parts[1:])
+        if class_part in import_map:
+            return f"{import_map[class_part]}.{method_part}"
+        if class_part[0].isupper():
+            return f"{namespace}.{callee_raw}"
+        capitalized = class_part.capitalize()
+        if capitalized in import_map:
+            return f"{import_map[capitalized]}.{method_part}"
+        return f"{namespace}.{capitalized}.{method_part}"
+
     def _parse_java_method_call(
         self,
         node: Node,
@@ -945,130 +937,31 @@ class JavaParser(BaseLanguageParser):
         parent_map: dict[str, str]
     ) -> Optional[Call]:
         """Parse a Java method invocation node."""
-        def extract_field_identifiers(field_node):
-            ids = []
-            for child in field_node.children:
-                if child.type == "identifier":
-                    ids.append(get_node_text(child, source_bytes))
-                elif child.type == "field_access":
-                    ids.extend(extract_field_identifiers(child))
-            return ids
-
-        identifiers = []
-        has_super = False
-        object_expr = None
-
-        for child in node.children:
-            if child.type == "identifier":
-                identifiers.append(get_node_text(child, source_bytes))
-            elif child.type == "super":
-                has_super = True
-            elif child.type == "field_access":
-                identifiers.extend(extract_field_identifiers(child))
-            elif child.type == "method_invocation":
-                object_expr = child
-
+        identifiers, has_super, object_expr = self._extract_java_call_identifiers(node, source_bytes)
         if not identifiers and not object_expr:
             return None
 
-        callee_raw = ""
-        skip_resolution = False
-
-        if has_super and identifiers:
-            method_name = identifiers[-1]
-            if "." in caller:
-                class_name = caller.rsplit(".", 1)[0]
-                if class_name in parent_map:
-                    parent_class = parent_map[class_name]
-                    callee_raw = f"{parent_class}.{method_name}"
-                    skip_resolution = True
-            if not callee_raw:
-                callee_raw = f"{namespace}.Parent.{method_name}"
-                skip_resolution = True
-
-        elif object_expr and identifiers:
-            def get_chain_object(n):
-                for c in n.children:
-                    if c.type == "identifier":
-                        return get_node_text(c, source_bytes)
-                    elif c.type == "method_invocation":
-                        return get_chain_object(c)
-                return None
-
-            base_obj = get_chain_object(object_expr)
-            if base_obj and identifiers:
-                method_name = identifiers[-1]
-                callee_raw = f"{base_obj}.{method_name}"
-            elif identifiers:
-                callee_raw = identifiers[-1]
-
-        elif len(identifiers) == 1:
-            callee_raw = identifiers[0]
-
-        elif len(identifiers) >= 2:
-            callee_raw = ".".join(identifiers)
-
+        callee_raw, skip_resolution = self._build_java_callee_raw(
+            identifiers, has_super, object_expr, caller, parent_map, namespace, source_bytes,
+        )
         if not callee_raw:
             return None
 
-        if skip_resolution:
-            callee = callee_raw
-        else:
-            callee = callee_raw
-
-            if "." not in callee_raw:
-                static_resolved = self._resolve_java_static_import(callee_raw, static_import_map)
-                if static_resolved:
-                    callee = static_resolved
-                else:
-                    callee = f"{namespace}.{callee_raw}"
-
-            elif "." in callee_raw:
-                parts = callee_raw.split(".")
-
-                if len(parts) >= 3 and parts[0][0].islower():
-                    callee = callee_raw
-                else:
-                    class_part = parts[0]
-                    method_part = ".".join(parts[1:])
-
-                    if class_part in import_map:
-                        full_class = import_map[class_part]
-                        callee = f"{full_class}.{method_part}"
-                    elif class_part[0].isupper():
-                        callee = f"{namespace}.{callee_raw}"
-                    else:
-                        capitalized = class_part.capitalize()
-                        if capitalized in import_map:
-                            full_class = import_map[capitalized]
-                            callee = f"{full_class}.{method_part}"
-                        else:
-                            callee = f"{namespace}.{capitalized}.{method_part}"
+        callee = self._resolve_java_callee(callee_raw, skip_resolution, import_map, static_import_map, namespace)
 
         if "." in callee_raw:
             first_part = callee_raw.split(".")[0]
-            if first_part[0].isupper() or first_part == "super":
-                call_type = CallType.STATIC_METHOD
-            else:
-                call_type = CallType.METHOD
+            call_type = CallType.STATIC_METHOD if (first_part[0].isupper() or first_part == "super") else CallType.METHOD
         else:
             call_type = CallType.FUNCTION
 
         args_count = None
         for child in node.children:
             if child.type == "argument_list":
-                args_count = sum(
-                    1 for c in child.children
-                    if c.type not in (",", "(", ")")
-                )
+                args_count = sum(1 for c in child.children if c.type not in (",", "(", ")"))
 
-        return Call(
-            caller=caller,
-            callee=callee,
-            line_number=node.start_point[0] + 1,
-            call_type=call_type,
-            arguments_count=args_count
-        )
+        return Call(caller=caller, callee=callee, line_number=node.start_point[0] + 1,
+                    call_type=call_type, arguments_count=args_count)
 
     def _parse_java_constructor_call(
         self,
@@ -1175,100 +1068,44 @@ class JavaParser(BaseLanguageParser):
         for inh in inheritances:
             parent_map[inh.child] = inh.parent
 
-        calls = []
-
+        calls: list[Call] = []
         for child in root.children:
-            if child.type in ("class_declaration", "interface_declaration"):
-                class_name = ""
-                for node in child.children:
-                    if node.type == "identifier":
-                        class_name = get_node_text(node, source_bytes)
-                        break
-
-                if not class_name:
-                    continue
-
-                full_class_name = f"{namespace}.{class_name}" if namespace else class_name
-
-                body_node = None
-                for node in child.children:
-                    if node.type in ("class_body", "interface_body"):
-                        body_node = node
-                        break
-
-                if not body_node:
-                    continue
-
-                for method_node in body_node.children:
-                    if method_node.type == "method_declaration":
-                        method_name = ""
-                        for node in method_node.children:
-                            if node.type == "identifier":
-                                method_name = get_node_text(node, source_bytes)
-                                break
-
-                        if method_name:
-                            caller = f"{full_class_name}.{method_name}"
-                            calls.extend(
-                                self._extract_java_calls(
-                                    method_node, source_bytes, caller,
-                                    import_map, static_import_map, namespace, parent_map
-                                )
-                            )
-
-                    elif method_node.type == "constructor_declaration":
-                        caller = f"{full_class_name}.<init>"
-                        calls.extend(
-                            self._extract_java_calls(
-                                method_node, source_bytes, caller,
-                                import_map, static_import_map, namespace, parent_map
-                            )
-                        )
-
+            if child.type not in ("class_declaration", "interface_declaration"):
+                continue
+            class_name = next(
+                (get_node_text(n, source_bytes) for n in child.children if n.type == "identifier"), ""
+            )
+            if not class_name:
+                continue
+            full_class_name = f"{namespace}.{class_name}" if namespace else class_name
+            body_node = next((n for n in child.children if n.type in ("class_body", "interface_body")), None)
+            if not body_node:
+                continue
+            calls.extend(self._extract_java_class_method_calls(
+                body_node, full_class_name, source_bytes, import_map, static_import_map, namespace, parent_map,
+            ))
         return calls
 
+    def _extract_java_class_method_calls(
+        self, body_node, full_class_name: str, source_bytes: bytes,
+        import_map: dict, static_import_map: dict, namespace: str, parent_map: dict,
+    ) -> list[Call]:
+        """Extract calls from all methods and constructors in a Java class/interface body."""
+        calls: list[Call] = []
+        for method_node in body_node.children:
+            if method_node.type == "method_declaration":
+                method_name = next(
+                    (get_node_text(n, source_bytes) for n in method_node.children if n.type == "identifier"), ""
+                )
+                if method_name:
+                    calls.extend(self._extract_java_calls(
+                        method_node, source_bytes, f"{full_class_name}.{method_name}",
+                        import_map, static_import_map, namespace, parent_map,
+                    ))
+            elif method_node.type == "constructor_declaration":
+                calls.extend(self._extract_java_calls(
+                    method_node, source_bytes, f"{full_class_name}.<init>",
+                    import_map, static_import_map, namespace, parent_map,
+                ))
+        return calls
 
-# ==================== Backward Compatibility Functions ====================
-
-def is_java_file(path: str) -> bool:
-    """Check if file is a Java source file."""
-    return path.endswith('.java')
-
-
-def get_java_parser():
-    """Get the Java parser instance (lazy loading)."""
-    from ..parser import _get_parser
-    return _get_parser("java")
-
-
-def parse_java_file(file_path: str, content: str):
-    """Parse a Java source file.
-
-    Args:
-        file_path: Path to the Java file (for error reporting)
-        content: Java source code content
-
-    Returns:
-        ParseResult containing symbols, imports, and docstrings
-    """
-    import os
-    import tempfile
-    from pathlib import Path
-
-    from ..parser import parse_file
-
-    # Create temporary file with Java content
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False) as f:
-        f.write(content)
-        temp_path = f.name
-
-    try:
-        # Parse using the main parser
-        result = parse_file(Path(temp_path), language="java")
-        # Update path to original file path
-        result.path = Path(file_path)
-        return result
-    finally:
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)

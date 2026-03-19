@@ -13,6 +13,27 @@ core/      — 核心模块 (saas_client, ast_sync)
 saas/      — 数据服务后端 (:3700)
 ```
 
+## R760 生产服务器
+
+| 项目 | 值 |
+|------|-----|
+| 地址 | `117.131.45.179:2212` |
+| 用户 | `root` |
+| 认证 | key-based — `~/.ssh/id_ed25519` |
+| 服务目录 | `/root/manon` |
+| 服务端口 | `:3700` |
+
+```bash
+# SSH 登录
+ssh -i ~/.ssh/id_ed25519 -p 2212 root@117.131.45.179
+
+# 部署（强制）
+python scripts/deploy-r760.py
+
+# 部署（仅服务端文件变更时）
+python scripts/deploy-r760.py --auto
+```
+
 ## 浏览器验证（改 web/ 后 MUST）
 
 ```bash

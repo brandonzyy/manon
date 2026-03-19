@@ -23,7 +23,7 @@ import paramiko
 HOST = "117.131.45.179"
 PORT = 2212
 USER = "root"
-PASS = "Ubuntu@2026!@#"
+KEY_PATH = os.path.expanduser("~/.ssh/id_ed25519")
 REMOTE_DIR = "/root/manon"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,12 +35,23 @@ SYSTEMD_UNIT = """\
 [Unit]
 Description=Manon SaaS API
 After=network.target
+# Allow up to 10 rapid restarts in 120s before giving up (watchdog will recover beyond that)
+StartLimitIntervalSec=120
+StartLimitBurst=10
 
 [Service]
 WorkingDirectory=/root/manon
+# Kill any process holding port 3700 before starting (handles orphans from SSH sessions)
+ExecStartPre=-/usr/bin/fuser -k 3700/tcp
+ExecStartPre=-/bin/sleep 1
 ExecStart=/usr/bin/python3 -m saas
+# Restart=always ensures SIGTERM (clean stop) also triggers restart — prevents orphan scenarios
 Restart=always
 RestartSec=3
+# Kill the entire process group on stop, not just the main PID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=10
 Environment=PYTHONUNBUFFERED=1
 Environment=SAAS_EMBEDDING_URL=http://172.16.15.21:9624
 Environment=SAAS_LLM_API_URL=https://api.matrixone.online/v1/chat/completions
@@ -50,6 +61,58 @@ Environment=SAAS_ADMIN_SECRET=XWhc4E2VLkkv4QmqKSYtvlfCtpr4kgbCR9j2tMLdUdc
 
 [Install]
 WantedBy=multi-user.target
+"""
+
+# Watchdog script deployed to /root/manon/scripts/healthcheck.sh
+# Runs every 5 minutes via cron. Checks port → health → llm_model → embedding.
+# On any failure: reset-failed + restart. Embedding failure is logged only (separate service).
+HEALTHCHECK_SH = """\
+#!/bin/bash
+set -euo pipefail
+
+EXPECTED_LLM="glm-4.7-fp8"
+EMBEDDING_URL="http://172.16.15.21:9624"
+LOG="/var/log/manon-watchdog.log"
+TS=$(date '+%Y-%m-%d %H:%M:%S')
+
+log() { echo "$TS [watchdog] $*" >> "$LOG"; }
+
+restart_service() {
+    log "RESTART: $1"
+    systemctl reset-failed manon-saas 2>/dev/null || true
+    systemctl restart manon-saas
+    sleep 5
+    STATUS=$(systemctl is-active manon-saas 2>/dev/null || echo "unknown")
+    log "post-restart status: $STATUS"
+}
+
+# 1. Port check — catches StartLimitBurst-silenced failures
+if ! ss -tlnp 2>/dev/null | grep -q ':3700 '; then
+    restart_service "port 3700 not listening"
+    exit 0
+fi
+
+# 2. Health endpoint check
+HEALTH=$(curl -sfS --max-time 5 http://localhost:3700/health 2>/dev/null || true)
+if [ -z "$HEALTH" ]; then
+    restart_service "health endpoint unresponsive"
+    exit 0
+fi
+
+# 3. LLM model check — detects orphan process running without env vars
+LLM=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('llm_model',''))" 2>/dev/null || true)
+if [ "$LLM" != "$EXPECTED_LLM" ]; then
+    restart_service "wrong llm_model: got $LLM expected $EXPECTED_LLM orphan-process?"
+    exit 0
+fi
+
+# 4. Embedding check — log only, embedding is a separate service
+EMB=$(curl -sfS --max-time 5 "$EMBEDDING_URL/health" 2>/dev/null || true)
+if [ -z "$EMB" ]; then
+    log "WARN: embedding server unreachable at $EMBEDDING_URL"
+else
+    log "OK: llm=$LLM embedding=ok"
+fi
 """
 
 def server_files_hash():
@@ -92,7 +155,7 @@ def save_deploy_stamp():
 def connect():
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, port=PORT, username=USER, password=PASS, timeout=15)
+    c.connect(HOST, port=PORT, username=USER, key_filename=KEY_PATH, timeout=15)
     return c
 
 
@@ -203,43 +266,94 @@ def setup_systemd(c):
 
 
 def restart(c):
-    """Restart saas — kill old process first, prefer systemd, fallback to nohup."""
+    """Restart saas via systemd. Requires manon-saas.service to be installed."""
     print("\n=== 重启 saas ===")
-    # Always kill existing process first to free the port
-    run(c, "pgrep -f 'python3 -m saas' | xargs -r kill; sleep 2")
-
     status = run(c, "systemctl is-enabled manon-saas 2>/dev/null || echo 'not-found'")
-    if "not-found" not in status:
-        run(c, "systemctl restart manon-saas --no-block", timeout=10)
-        if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
-            print("  WARN: manon-saas did not report active within the wait window")
-        out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
-        print(out)
-    else:
-        script = (
-            f"cd {REMOTE_DIR} && nohup python3 -m saas > /tmp/saas.log 2>&1 & "
-            "sleep 3; "
-            "pgrep -f 'python3 -m saas' | head -1"
+    if "not-found" in status:
+        raise RuntimeError(
+            "manon-saas.service not found — run with --setup-systemd first"
         )
-        out = run(c, script)
-        print(f"  PID: {out}")
+
+    # 1. Stop cleanly so Restart=always doesn't race against us.
+    run(c, "systemctl stop manon-saas 2>/dev/null || true", timeout=10)
+    # 2. Kill anything still holding the port (nohup leftovers, etc.).
+    run(c, "fuser -k 3700/tcp 2>/dev/null || true; sleep 1")
+    # 3. Clear failure counter so StartLimitBurst doesn't block a fresh start.
+    run(c, "systemctl reset-failed manon-saas 2>/dev/null || true")
+    # 4. Start fresh.
+    run(c, "systemctl start manon-saas", timeout=20)
+    if not wait_for_service(c, "manon-saas", attempts=20, delay=2):
+        print("  WARN: manon-saas did not report active within the wait window")
+    out = run(c, "systemctl status manon-saas --no-pager -l | head -12")
+    print(out)
 
 
 def verify(c):
-    """Health + version check on HTTP 3700."""
+    """Health + version + llm_model + embedding check on HTTP 3700."""
+    import json
     print("\n=== 验证 ===")
-    health = wait_for_http(c, "http://localhost:3700/health", attempts=20, delay=2)
-    if not health:
-        print("  WARN: health endpoint did not recover in time")
-        return False
-    print(f"  health: {health}")
 
+    # 1. Port listening
+    port_ok = run(c, "ss -tlnp 2>/dev/null | grep ':3700 ' | head -1")
+    if not port_ok:
+        print("  FAIL: port 3700 not listening")
+        return False
+    print(f"  port 3700: LISTEN")
+
+    # 2. Health endpoint
+    health_raw = wait_for_http(c, "http://localhost:3700/health", attempts=20, delay=2)
+    if not health_raw:
+        print("  FAIL: health endpoint did not recover in time")
+        return False
+    print(f"  health: {health_raw}")
+
+    # 3. llm_model check — orphan process detection
+    try:
+        llm_model = json.loads(health_raw).get("llm_model", "")
+    except Exception:
+        llm_model = ""
+    expected_llm = "glm-4.7-fp8"
+    if llm_model != expected_llm:
+        print(f"  FAIL: llm_model='{llm_model}' (expected '{expected_llm}') — possible orphan process")
+        return False
+    print(f"  llm_model: {llm_model} OK")
+
+    # 4. Version
     version = wait_for_http(c, "http://localhost:3700/version", attempts=10, delay=1)
     if not version:
         print("  WARN: version endpoint did not recover in time")
-        return False
-    print(f"  version: {version}")
+    else:
+        print(f"  version: {version}")
+
+    # 5. Embedding reachability (warn only — separate service)
+    emb = run(c, "curl -sfS --max-time 5 http://172.16.15.21:9624/health 2>/dev/null || true")
+    if emb:
+        print(f"  embedding: ok ({emb[:60]})")
+    else:
+        print("  embedding: WARN — unreachable at 172.16.15.21:9624 (separate service, not blocking)")
+
     return True
+
+
+def install_watchdog(c):
+    """Deploy healthcheck.sh and install cron job to run it every 5 minutes."""
+    print("\n=== 安装 Watchdog ===")
+    scripts_dir = f"{REMOTE_DIR}/scripts"
+    hc_path = f"{scripts_dir}/healthcheck.sh"
+
+    run(c, f"mkdir -p {scripts_dir}")
+    sftp = c.open_sftp()
+    with sftp.open(hc_path, "w") as f:
+        f.write(HEALTHCHECK_SH)
+    sftp.close()
+    run(c, f"chmod +x {hc_path}")
+    # Strip Windows CRLF if script was written from Windows
+    run(c, f"sed -i 's/\\r$//' {hc_path}")
+
+    # Install cron entry (idempotent: remove old entry then add fresh)
+    run(c, f"crontab -l 2>/dev/null | grep -v healthcheck.sh | {{ cat; echo '*/5 * * * * {hc_path} >> /var/log/manon-watchdog.log 2>&1'; }} | crontab -")
+    print(f"  cron: */5 * * * * {hc_path}")
+    print(f"  log:  /var/log/manon-watchdog.log")
 
 
 def main():
@@ -263,6 +377,7 @@ def main():
             setup_systemd(c)
 
         restart(c)
+        install_watchdog(c)
         if verify(c):
             save_deploy_stamp()
         else:

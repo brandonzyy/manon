@@ -1,6 +1,6 @@
 """Manon MCP — scan cache loader and batch uploader.
 
-Heavy scanning is done by scripts/manon-scan.py (external process).
+Heavy scanning is done by skills/manon/scripts/manon-scan.py (external process).
 This module only loads cached results and uploads them in batches.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from core.ast import (
     SYNC_BATCH_SIZE,
 )
 
-# ── Scan cache on disk (written by scripts/manon-scan.py) ─
+# ── Scan cache on disk (written by skills/manon/scripts/manon-scan.py) ─
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 _SYNC_PROGRESS_FILE = Path.home() / ".manon" / "sync_progress.json"
 
@@ -84,7 +84,7 @@ def _is_syncing(repo_id: str) -> bool:
 
 
 def scan_files(repo_id: str) -> dict:
-    """Load scan results from disk cache (written by scripts/manon-scan.py).
+    """Load scan results from disk cache (written by skills/manon/scripts/manon-scan.py).
 
     Reads ~/.manon/scan_cache/<repo_id>.json into memory _scan_cache,
     then removes the disk file.
@@ -96,7 +96,7 @@ def scan_files(repo_id: str) -> dict:
     if not cache_file.exists():
         raise FileNotFoundError(
             f"No scan cache at {cache_file}. "
-            "Run `<MANON_PYTHON> <MANON_DIR>/scripts/manon-scan.py {repo_id}` first (use the Python path from manon_init output)."
+            "Run `<MANON_PYTHON> <MANON_DIR>/skills/manon/scripts/manon-scan.py {repo_id}` first (use the Python path from manon_init output)."
         )
 
     cache_data = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -125,6 +125,34 @@ def scan_files(repo_id: str) -> dict:
         "deleted_files": len(deleted),
         "total_batches": total_batches,
     }
+
+
+def _update_project_hashes(
+    repo_id: str, batch_files: list, deleted: list, new_hashes: dict, cursor: int, is_done: bool,
+) -> None:
+    """Update local project file_hashes after uploading a batch."""
+    found = find_project_by_repo_id(repo_id)
+    if not found:
+        return
+    lp, info = found
+    current_hashes = info.get("file_hashes", {})
+    for f in batch_files:
+        rp = f["rel_path"]
+        if rp in new_hashes:
+            current_hashes[rp] = new_hashes[rp]
+    if cursor == 0:
+        for d in deleted:
+            current_hashes.pop(d, None)
+    if is_done:
+        try:
+            status_resp = _client._get(f"/api/v1/repos/{repo_id}/index-status")
+            server_hashes = (status_resp.get("stats") or {}).get("file_hashes")
+            current_hashes = server_hashes if server_hashes is not None else new_hashes
+        except Exception:
+            current_hashes = new_hashes
+    info["file_hashes"] = current_hashes
+    info["last_sync"] = datetime.datetime.now().isoformat()
+    set_project(lp, info)
 
 
 def upload_next_batch(repo_id: str) -> dict:
@@ -169,35 +197,7 @@ def upload_next_batch(repo_id: str) -> dict:
     is_done = end >= total_files
 
     # Update file_hashes incrementally
-    new_hashes = cache["new_hashes"]
-    found = find_project_by_repo_id(repo_id)
-    if found:
-        lp, info = found
-        current_hashes = info.get("file_hashes", {})
-        # Apply this batch's hashes
-        for f in batch_files:
-            rp = f["rel_path"]
-            if rp in new_hashes:
-                current_hashes[rp] = new_hashes[rp]
-        # Apply deletes (first batch only)
-        if cursor == 0:
-            for d in deleted:
-                current_hashes.pop(d, None)
-        if is_done:
-            # 从服务端获取实际入图的文件哈希，替换本地
-            try:
-                status_resp = _client._get(f"/api/v1/repos/{repo_id}/index-status")
-                server_stats = status_resp.get("stats") or {}
-                server_hashes = server_stats.get("file_hashes")
-                if server_hashes is not None:
-                    current_hashes = server_hashes
-                else:
-                    current_hashes = new_hashes
-            except Exception:
-                current_hashes = new_hashes  # fallback: 保留已有逻辑
-        info["file_hashes"] = current_hashes
-        info["last_sync"] = datetime.datetime.now().isoformat()
-        set_project(lp, info)
+    _update_project_hashes(repo_id, batch_files, deleted, cache["new_hashes"], cursor, is_done)
 
     if is_done:
         _scan_cache.pop(repo_id, None)

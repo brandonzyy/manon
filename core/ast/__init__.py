@@ -2,11 +2,11 @@
 from .analysis import (
     analyze_index_coverage,
     collect_directory_signals,
-    detect_test_patterns,
     needs_smart_analysis_refresh,
     preview_project_structure,
     smart_analysis_signature,
 )
+from .framework_detection import detect_test_patterns
 from .config import (
     _load_scan_config,
     get_always_exclude,
@@ -23,7 +23,7 @@ from .project import (
     save_projects,
     set_project,
 )
-from .scanner import SYNC_BATCH_SIZE, count_scannable_files, scan_and_parse, sync_to_server
+from .scanner import SYNC_BATCH_SIZE, count_scannable_files, scan_and_parse
 
 __all__ = [
     "PROJECTS_DIR",
@@ -46,6 +46,5 @@ __all__ = [
     "ensure_parsers",
     "scan_and_parse",
     "count_scannable_files",
-    "sync_to_server",
     "SYNC_BATCH_SIZE",
 ]

@@ -27,7 +27,7 @@ from matrixone_graph import MatrixoneGraph  # noqa: E402
 from .config import settings
 from .db import init_db, close_db, get_db
 from .models import RegisterRequest
-from .routers import health, repos, indexing, query, usage, embedding, config, account, admin, analyze
+from .routers import health, repos, indexing, query, usage, embedding, config, account, admin, analyze, classify
 
 
 @asynccontextmanager
@@ -71,6 +71,7 @@ app.include_router(config.router)
 app.include_router(account.router)
 app.include_router(admin.router)
 app.include_router(analyze.router)
+app.include_router(classify.router)
 
 # static console
 _static_dir = Path(__file__).parent / "static"

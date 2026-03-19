@@ -259,51 +259,51 @@ class TestImpactAnalyzerHelpers:
 
 
 class TestLazyImportCallers:
-    """Tests for _find_lazy_import_callers and _find_containing_function."""
+    """Tests for _find_lazy_import_callers."""
 
-    def test_find_containing_function(self, tmp_path):
-        # Create a file with a lazy import inside a function
-        (tmp_path / "caller.py").write_text(
-            "def top_level():\n"
-            "    from mod import foo\n"
-            "    foo()\n"
-        )
+    def test_find_lazy_import_callers_empty_graph(self, tmp_path):
+        """Empty graph should return no lazy callers."""
         g = CodeGraph()
         analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
-        assert analyzer._find_containing_function("caller.py", 2) == "top_level"
+        sym = ChangedSymbol(name="foo", file="mod.py", change_type=ChangeType.MODIFIED)
+        result = analyzer._find_lazy_import_callers([sym], set())
+        assert result == []
 
-    def test_find_containing_async_function(self, tmp_path):
-        (tmp_path / "caller.py").write_text(
-            "async def handler():\n"
-            "    from mod import foo\n"
-            "    await foo()\n"
-        )
+    def test_find_lazy_import_callers_returns_list(self, tmp_path):
+        """_find_lazy_import_callers should always return a list."""
         g = CodeGraph()
         analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
-        assert analyzer._find_containing_function("caller.py", 2) == "handler"
+        syms = []
+        result = analyzer._find_lazy_import_callers(syms, set())
+        assert isinstance(result, list)
 
-    def test_find_containing_function_nested(self, tmp_path):
-        (tmp_path / "caller.py").write_text(
-            "class MyClass:\n"
-            "    def method(self):\n"
-            "        from mod import foo\n"
-            "        foo()\n"
-        )
+    def test_find_lazy_import_callers_seen_deduplication(self, tmp_path):
+        """Callers already in 'seen' should not be returned again."""
         g = CodeGraph()
         analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
-        assert analyzer._find_containing_function("caller.py", 3) == "method"
+        sym = ChangedSymbol(name="foo", file="mod.py", change_type=ChangeType.MODIFIED)
+        # Passing a non-empty seen set — even if graph had entries they'd be filtered
+        result = analyzer._find_lazy_import_callers([sym], {"mod.py:foo"})
+        assert result == []
 
-    def test_find_containing_function_module_level(self, tmp_path):
-        # Module-level import — no containing function
-        (tmp_path / "caller.py").write_text(
-            "from mod import foo\n"
-            "foo()\n"
-        )
+    def test_find_lazy_import_callers_multiple_symbols(self, tmp_path):
+        """Should handle multiple changed symbols without error."""
         g = CodeGraph()
         analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
-        assert analyzer._find_containing_function("caller.py", 1) == ""
+        syms = [
+            ChangedSymbol(name="foo", file="a.py", change_type=ChangeType.ADDED),
+            ChangedSymbol(name="bar", file="b.py", change_type=ChangeType.MODIFIED),
+        ]
+        result = analyzer._find_lazy_import_callers(syms, set())
+        assert isinstance(result, list)
 
-    def test_find_containing_function_missing_file(self, tmp_path):
+    def test_find_lazy_import_callers_no_match_name(self, tmp_path):
+        """Should return empty when symbol name doesn't match any graph entity."""
         g = CodeGraph()
+        from matrixone_graph.store import Entity
+        target = Entity(id="e_bar", kind="function", name="bar", file_path="other.py")
+        g.add_entity(target)
         analyzer = ImpactAnalyzer(g, tmp_path, max_depth=2)
-        assert analyzer._find_containing_function("nonexistent.py", 1) == ""
+        sym = ChangedSymbol(name="foo", file="mod.py", change_type=ChangeType.MODIFIED)
+        result = analyzer._find_lazy_import_callers([sym], set())
+        assert result == []

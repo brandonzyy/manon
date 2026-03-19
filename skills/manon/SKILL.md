@@ -25,11 +25,16 @@ user_invocable: true
   4. 向用户展示分析结果
 
 ## Step 3: Scan & Upload
-1. 从 Step 1 输出提取 `MANON_DIR` 和 `MANON_PYTHON`
-2. Bash: `"<MANON_PYTHON>" "<MANON_DIR>/scripts/manon-scan.py" <repo_id>`
-   - 如报错（ModuleNotFoundError/ImportError/文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
-3. `manon_scan_files(repo_id)`
-4. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
+1. 从 Step 1 输出提取 `MANON_PYTHON`
+2. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
+   - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
+   - Windows: `set MANON_DIR=<MANON_DIR> && "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
+   - 如报错（文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
+3. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan-tests.py" <repo_id>`
+   - 输出 `{ covered, test_files, test_functions }`，报错不阻断流程（跳过即可）
+4. `manon_scan_files(repo_id)`
+5. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
+6. `manon_upload_coverage(repo_id)` — 上传 coverage_map 到服务端（TC 指标依赖此步）
 
 ## Step 4: Index Status
 `manon_index_status(repo_id)` → **表格形式完整呈现**，不总结不省略

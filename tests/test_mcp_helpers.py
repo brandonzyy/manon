@@ -1,4 +1,4 @@
-"""Tests for mcp helper functions — _tools.py, _config.py, _hooks.py."""
+"""Tests for mcp helper functions — server.py, _config.py, _hooks.py."""
 import json
 import pytest
 from pathlib import Path
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from manon_mcp._hooks import _PRE_SEARCH_HOOK, _POST_COMMIT_HOOK, _persist_api_config, _install_hook
-from manon_mcp._tools import _write_update_status, _read_update_status, _UPDATE_STATUS_FILE
+from manon_mcp.server import _write_update_status, _read_update_status, _UPDATE_STATUS_FILE
 from manon_mcp.tools.impact import _detect_git_root, _find_changed_symbols
 from manon_mcp.tools.init_helpers import _fmt_stats
 
@@ -30,7 +30,7 @@ class TestDetectGitRoot:
 class TestUpdateStatus:
     def test_write_and_read(self, tmp_path, monkeypatch):
         status_file = tmp_path / "update_status.json"
-        monkeypatch.setattr("manon_mcp._tools._UPDATE_STATUS_FILE", status_file)
+        monkeypatch.setattr("manon_mcp.server._UPDATE_STATUS_FILE", status_file)
         _write_update_status(True, ["ok", "done"])
         msg = _read_update_status()
         assert msg is not None
@@ -39,7 +39,7 @@ class TestUpdateStatus:
         assert not status_file.exists()
 
     def test_read_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("manon_mcp._tools._UPDATE_STATUS_FILE", tmp_path / "nope.json")
+        monkeypatch.setattr("manon_mcp.server._UPDATE_STATUS_FILE", tmp_path / "nope.json")
         assert _read_update_status() is None
 
 

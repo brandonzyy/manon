@@ -127,9 +127,10 @@ def _reconstruct_parse_result(d: dict, file_path: str) -> _FakeParseResult:
 def _remove_deleted_files(body, graph, vec_index, all_chunks, meta):
     """Remove deleted files from graph, vectors, and chunks."""
     for rel_path in body.deleted_files:
+        old_entity_ids = {n for n, d in graph._g.nodes(data=True) if d.get("file_path") == rel_path}
         graph.remove_by_file(rel_path)
         old_cids = {cid for cid, c in all_chunks.items() if c.file_path == rel_path}
-        vec_index.remove_by_ids(old_cids)
+        vec_index.remove_by_ids(old_cids | old_entity_ids)
         for cid in old_cids:
             del all_chunks[cid]
         meta.get("hashes", {}).pop(rel_path, None)
@@ -142,9 +143,10 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
     new_chunks = []
     new_hashes = {}
     for f in body.files:
+        old_entity_ids = {n for n, d in graph._g.nodes(data=True) if d.get("file_path") == f.rel_path}
         graph.remove_by_file(f.rel_path)
         old_cids = {cid for cid, c in all_chunks.items() if c.file_path == f.rel_path}
-        vec_index.remove_by_ids(old_cids)
+        vec_index.remove_by_ids(old_cids | old_entity_ids)
         for cid in old_cids:
             del all_chunks[cid]
         pr = _reconstruct_parse_result(f.parse_result, f.rel_path)
@@ -165,92 +167,86 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
     return all_entities, all_relations, new_chunks, new_hashes
 
 
+async def _embed_and_index_vectors(all_entities, new_chunks, vec_index, embedding_url: str) -> None:
+    """Embed entities and chunks, add vectors to index."""
+    embedder = EmbeddingClient(base_url=embedding_url)
+    try:
+        if all_entities:
+            ent_vecs = await embedder.embed([e.description for e in all_entities])
+            vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
+        if new_chunks:
+            chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
+            vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
+    finally:
+        await embedder.close()
+
+
+def _persist_kg_state(kg_path: Path, graph, vec_index, all_chunks: dict, new_hashes: dict, meta: dict) -> None:
+    """Save graph, vectors, chunks, and metadata to disk."""
+    graph.save(kg_path / GRAPH_FILE)
+    vec_index.save(kg_path / VECTORS_FILE)
+    _save_chunks(kg_path, all_chunks)
+    meta.update({
+        "version": 1, "entity_count": graph.entity_count, "relation_count": graph.relation_count,
+        "chunk_count": len(all_chunks), "file_count": len(new_hashes), "hashes": new_hashes,
+    })
+    _save_meta(kg_path, meta)
+    invalidate_kg_cache(kg_path)
+
+
 async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
     """Background task: process pre-parsed AST data from MCP client."""
     db = await get_db()
     try:
-        await db.execute(
-            "UPDATE repos SET index_status = 'indexing', updated_at = datetime('now') WHERE id = ?",
-            (repo_id,),
-        )
+        await db.execute("UPDATE repos SET index_status = 'indexing', updated_at = datetime('now') WHERE id = ?", (repo_id,))
         await db.commit()
 
         kg_path = Path(settings.index_dir) / tenant_id / repo_name / "kg"
         kg_path.mkdir(parents=True, exist_ok=True)
 
-        graph = CodeGraph()
-        vec_index = VectorIndex()
+        graph, vec_index = CodeGraph(), VectorIndex()
         graph.load(kg_path / GRAPH_FILE)
         vec_index.load(kg_path / VECTORS_FILE)
         all_chunks = _load_chunks(kg_path)
         meta = _load_meta(kg_path)
 
         if body.full_reindex:
-            graph = CodeGraph()
-            vec_index = VectorIndex()
-            all_chunks = {}
-            meta = {"version": 1, "hashes": {}}
+            graph, vec_index, all_chunks, meta = CodeGraph(), VectorIndex(), {}, {"version": 1, "hashes": {}}
 
         _remove_deleted_files(body, graph, vec_index, all_chunks, meta)
-        all_entities, all_relations, new_chunks, file_hashes = _process_ast_files(
-            body, graph, all_chunks, vec_index,
-        )
-        new_hashes = dict(meta.get("hashes", {}))
-        new_hashes.update(file_hashes)
+        all_entities, all_relations, new_chunks, file_hashes = _process_ast_files(body, graph, all_chunks, vec_index)
+        new_hashes = {**meta.get("hashes", {}), **file_hashes}
 
-        entities_added = 0
+        entities_added = len(all_entities)
+        for e in all_entities:
+            graph.add_entity(e)
         relations_added = 0
-        for ent in all_entities:
-            graph.add_entity(ent)
-            entities_added += 1
-        for rel in all_relations:
-            if graph.has_entity(rel.src_id) or graph.has_entity(rel.tgt_id):
-                graph.add_relation(rel)
+        for r in all_relations:
+            # Require at least one *real* entity (has kind) to avoid
+            # chaining phantom nodes for fully-unresolved references.
+            src_real = graph.get_entity(r.src_id) is not None
+            tgt_real = graph.get_entity(r.tgt_id) is not None
+            if src_real or tgt_real:
+                graph.add_relation(r)
                 relations_added += 1
 
-        embedder = EmbeddingClient(base_url=settings.embedding_url)
-        try:
-            if all_entities:
-                ent_vecs = await embedder.embed([e.description for e in all_entities])
-                vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
-            if new_chunks:
-                chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
-                vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
-        finally:
-            await embedder.close()
-
-        graph.save(kg_path / GRAPH_FILE)
-        vec_index.save(kg_path / VECTORS_FILE)
-        _save_chunks(kg_path, all_chunks)
-        meta.update({
-            "version": 1, "entity_count": graph.entity_count,
-            "relation_count": graph.relation_count, "chunk_count": len(all_chunks),
-            "file_count": len(new_hashes),
-            "hashes": new_hashes,
-        })
-        _save_meta(kg_path, meta)
-        invalidate_kg_cache(kg_path)
+        await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url)
+        _persist_kg_state(kg_path, graph, vec_index, all_chunks, new_hashes, meta)
 
         stats = {
             "files_synced": len(body.files), "files_deleted": len(body.deleted_files),
             "entities_added": entities_added, "relations_added": relations_added,
             "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
             "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
-            "total_files": len(new_hashes),
+            "total_files": len(new_hashes), "phantom_nodes": graph.phantom_count,
         }
-        await db.execute(
-            "UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
-            (json.dumps(stats), repo_id),
-        )
+        await db.execute("UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps(stats), repo_id))
         await db.commit()
         logger.info("sync-ast done for %s: %s", repo_id, stats)
 
     except Exception as exc:
         logger.exception("sync-ast failed for %s", repo_id)
-        await db.execute(
-            "UPDATE repos SET index_status = 'error', index_stats = ?, updated_at = datetime('now') WHERE id = ?",
-            (json.dumps({"error": str(exc)[:500]}), repo_id),
-        )
+        await db.execute("UPDATE repos SET index_status = 'error', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps({"error": str(exc)[:500]}), repo_id))
         await db.commit()
 
 

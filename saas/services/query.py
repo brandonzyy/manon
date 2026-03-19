@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sys
 from pathlib import Path
 
 from fastapi import HTTPException, status
@@ -12,9 +14,29 @@ from ..db import get_db
 from ..metering import record_query, record_usage
 from ..models import ImpactResult, SearchResult
 from ..quota import check_deep_query_quota
-from .graph import get_graph
 from .llm import llm_chat, parse_json
 from .query_log import save_deep_query_log
+
+# ensure project root is importable so `matrixone_graph` resolves
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from matrixone_graph import MatrixoneGraph  # noqa: E402
+
+MatrixoneGraph.configure(embedding_url=settings.embedding_url)
+
+
+def get_graph(tenant_id: str, repo_path: str | None, *, repo_name: str = "") -> MatrixoneGraph:
+    """Return a MatrixoneGraph instance with tenant-isolated index storage."""
+    name = repo_name or (Path(repo_path).name if repo_path else "unknown")
+    tenant_index_dir = Path(settings.index_dir) / tenant_id
+    tenant_index_dir.mkdir(parents=True, exist_ok=True)
+    kg_dir = tenant_index_dir / name / "kg"
+    kg_dir.mkdir(parents=True, exist_ok=True)
+    mg = MatrixoneGraph.get(repo_path or str(kg_dir))
+    mg.kg_path = kg_dir
+    return mg
 
 log = logging.getLogger("saas.services.query")
 
@@ -160,7 +182,16 @@ async def code_health_repo(
             repo_id, mg.kg_path, (mg.kg_path / "graph.json").exists(),
         )
 
-    graph_metrics = compute_graph_metrics(g)
+    # Load coverage map from kg directory (uploaded by manon_upload_coverage)
+    coverage_map = None
+    coverage_path = mg.kg_path / "coverage_map.json"
+    if coverage_path.exists():
+        try:
+            coverage_map = json.loads(coverage_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    graph_metrics = compute_graph_metrics(g, coverage_map=coverage_map)
     debt_metrics = None
     if body and body.get("debt_metrics"):
         debt_metrics = body["debt_metrics"]
@@ -170,6 +201,22 @@ async def code_health_repo(
     result = compute_score(graph_metrics, debt_metrics)
     await record_usage(ctx.tenant_id, "query.code_health", repo_id)
     return result
+
+
+async def upload_coverage_map_repo(
+    repo_id: str,
+    *,
+    ctx,
+    coverage_data: dict,
+):
+    row = await require_indexed_repo(repo_id, ctx.tenant_id)
+    mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
+    coverage_path = mg.kg_path / "coverage_map.json"
+    coverage_path.write_text(json.dumps(coverage_data, ensure_ascii=False), encoding="utf-8")
+    summary = coverage_data.get("summary", {})
+    return {"status": "ok", "covered": summary.get("covered", 0),
+            "test_files": summary.get("test_files", 0),
+            "test_functions": summary.get("test_functions", 0)}
 
 
 async def impact_local_repo(
@@ -222,6 +269,88 @@ async def impact_local_repo(
     }
 
 
+def _parse_follow_ups(raw_follow_ups: list) -> list[str]:
+    """Normalize follow-up query items from LLM response."""
+    follow_ups: list[str] = []
+    for item in raw_follow_ups:
+        if isinstance(item, str) and item.strip():
+            follow_ups.append(item.strip())
+        elif isinstance(item, dict):
+            val = item.get("query") or item.get("q") or item.get("text") or ""
+            if isinstance(val, str) and val.strip():
+                follow_ups.append(val.strip())
+    return follow_ups
+
+
+async def _run_query_rounds(
+    mg, question: str, max_rounds: int,
+    accumulated: str, rounds_detail: list, training_rounds: list, rounds: list,
+) -> tuple[str, list, list, list, dict]:
+    """Execute LLM-guided follow-up query rounds. Returns updated state + parsed LLM output."""
+    parsed: dict = {}
+    for i in range(max_rounds):
+        analysis = None
+        try:
+            analysis = await llm_chat([
+                {"role": "system", "content": _DEEPQUERY_SYSTEM},
+                {"role": "user", "content": f"Question:\n{question}\n\nContext:\n{accumulated[:12000]}"},
+            ], max_tokens=2048)
+            parsed = parse_json(analysis)
+        except Exception as exc:
+            log.warning(
+                "deep-query LLM round %d failed: %s (analysis=%r)",
+                i + 1, exc, analysis[:200] if isinstance(analysis, str) else analysis,
+            )
+            break
+
+        follow_ups = _parse_follow_ups(parsed.get("queries", []))
+        if not follow_ups:
+            if len(rounds_detail) == 1:
+                rounds_detail[0]["covered"] = True
+            break
+
+        async def _run_query(q: str):
+            return q, await mg.query(q, top_k=5, depth=1)
+
+        results = await asyncio.gather(*[_run_query(q) for q in follow_ups[:3]], return_exceptions=True)
+        for q, follow_up_result in (r for r in results if isinstance(r, tuple)):
+            if follow_up_result.context:
+                accumulated += f"\n\n## Follow-up: {q}\n{follow_up_result.context}"
+            rounds_detail.append({
+                "round": i + 1, "query": q,
+                "entities": [e.get("id", e.get("name", "")) for e in follow_up_result.entities],
+                "chunks": [c.get("id", c.get("entity", "")) for c in follow_up_result.chunks],
+                "covered": True,
+            })
+            training_rounds.append({"round": i + 1, "query": q, **_hits_to_log(follow_up_result)})
+        rounds.append({"round": i + 1, "queries": follow_ups, "context_chars": len(accumulated)})
+
+    return accumulated, rounds_detail, training_rounds, rounds, parsed
+
+
+async def _record_deep_query(
+    tenant_id: str, repo_id: str, question: str, rounds: list,
+    rounds_detail: list, training_rounds: list, parsed: dict,
+) -> None:
+    """Record deep query usage and save training log."""
+    sub_questions = parsed.get("sub_questions", [])
+    covered = parsed.get("covered", [])
+    coverage = len(covered) / len(sub_questions) if sub_questions else 1.0
+    asyncio.create_task(record_query(
+        tenant_id, repo_id, "deep_query", question,
+        rounds=len(rounds), rounds_detail=rounds_detail, coverage=coverage,
+    ))
+    save_deep_query_log({
+        "tenant_id": tenant_id, "repo_id": repo_id, "question": question,
+        "rounds": training_rounds, "llm_analysis": parsed,
+        "final_coverage": {
+            "sub_questions": sub_questions, "covered": covered,
+            "missing": parsed.get("missing", []), "coverage_ratio": coverage,
+        },
+    })
+    return sub_questions, covered
+
+
 async def deep_query_repo(
     repo_id: str,
     *,
@@ -238,110 +367,20 @@ async def deep_query_repo(
 
     result = await mg.query(question, top_k=10, depth=1)
     accumulated = result.context or ""
-
-    rounds_detail: list[dict] = [{
-        "round": 0,
-        "query": question,
-        "entities": [e.get("id", e.get("name", "")) for e in result.entities],
-        "chunks": [c.get("id", c.get("entity", "")) for c in result.chunks],
-        "covered": False,
-    }]
-    training_rounds: list[dict] = [{
-        "round": 0,
-        "query": question,
-        **_hits_to_log(result),
-    }]
+    rounds_detail = [{"round": 0, "query": question,
+                      "entities": [e.get("id", e.get("name", "")) for e in result.entities],
+                      "chunks": [c.get("id", c.get("entity", "")) for c in result.chunks], "covered": False}]
+    training_rounds = [{"round": 0, "query": question, **_hits_to_log(result)}]
     rounds = [{"round": 0, "query": question, "context_chars": len(accumulated)}]
-    parsed: dict = {}
 
-    for i in range(max_rounds):
-        analysis = None
-        try:
-            analysis = await llm_chat([
-                {"role": "system", "content": _DEEPQUERY_SYSTEM},
-                {"role": "user", "content": f"Question:\n{question}\n\nContext:\n{accumulated[:12000]}"},
-            ], max_tokens=2048)
-            parsed = parse_json(analysis)
-        except Exception as exc:
-            log.warning(
-                "deep-query LLM round %d failed: %s (analysis=%r)",
-                i + 1,
-                exc,
-                analysis[:200] if isinstance(analysis, str) else analysis,
-            )
-            break
-
-        raw_follow_ups = parsed.get("queries", [])
-        follow_ups: list[str] = []
-        for item in raw_follow_ups:
-            if isinstance(item, str) and item.strip():
-                follow_ups.append(item.strip())
-            elif isinstance(item, dict):
-                val = item.get("query") or item.get("q") or item.get("text") or ""
-                if isinstance(val, str) and val.strip():
-                    follow_ups.append(val.strip())
-        if not follow_ups:
-            if len(rounds_detail) == 1:
-                rounds_detail[0]["covered"] = True
-            break
-
-        async def _run_query(q: str):
-            return q, await mg.query(q, top_k=5, depth=1)
-
-        results = await asyncio.gather(
-            *[_run_query(q) for q in follow_ups[:3]],
-            return_exceptions=True,
-        )
-        results = [r for r in results if isinstance(r, tuple)]
-        for q, follow_up_result in results:
-            if follow_up_result.context:
-                accumulated += f"\n\n## Follow-up: {q}\n{follow_up_result.context}"
-            rounds_detail.append({
-                "round": i + 1,
-                "query": q,
-                "entities": [e.get("id", e.get("name", "")) for e in follow_up_result.entities],
-                "chunks": [c.get("id", c.get("entity", "")) for c in follow_up_result.chunks],
-                "covered": True,
-            })
-            training_rounds.append({
-                "round": i + 1,
-                "query": q,
-                **_hits_to_log(follow_up_result),
-            })
-
-        rounds.append({
-            "round": i + 1,
-            "queries": follow_ups,
-            "context_chars": len(accumulated),
-        })
-
-    sub_questions = parsed.get("sub_questions", [])
-    covered = parsed.get("covered", [])
-    coverage = len(covered) / len(sub_questions) if sub_questions else 1.0
+    accumulated, rounds_detail, training_rounds, rounds, parsed = await _run_query_rounds(
+        mg, question, max_rounds, accumulated, rounds_detail, training_rounds, rounds,
+    )
 
     await record_usage(ctx.tenant_id, "query.deep_query", repo_id)
-    asyncio.create_task(record_query(
-        ctx.tenant_id,
-        repo_id,
-        "deep_query",
-        question,
-        rounds=len(rounds),
-        rounds_detail=rounds_detail,
-        coverage=coverage,
-    ))
-    save_deep_query_log({
-        "tenant_id": ctx.tenant_id,
-        "repo_id": repo_id,
-        "question": question,
-        "rounds": training_rounds,
-        "llm_analysis": parsed,
-        "final_coverage": {
-            "sub_questions": sub_questions,
-            "covered": covered,
-            "missing": parsed.get("missing", []),
-            "coverage_ratio": coverage,
-        },
-    })
+    sub_questions, covered = await _record_deep_query(
+        ctx.tenant_id, repo_id, question, rounds, rounds_detail, training_rounds, parsed,
+    )
 
     return {
         "context": accumulated,

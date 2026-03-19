@@ -1,11 +1,11 @@
-"""Tests for application.mcp_init_service."""
+"""Tests for manon_mcp.tools.init.initialize_project."""
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 import pytest
 
-from application.mcp_init_service import initialize_project
+from manon_mcp.tools.init import initialize_project
 
 
 class _FakeContext:
@@ -28,10 +28,10 @@ async def test_initialize_project_existing_repo(monkeypatch, tmp_path):
     config = SimpleNamespace(API_URL="http://localhost:3700", CLIENT_VERSION="1.2.3")
 
     monkeypatch.setattr(
-        "application.mcp_init_service.get_project",
+        "manon_mcp.tools.init.get_project",
         lambda path: {"repo_id": "repo12345", "name": "demo", "last_sync": "", "file_hashes": {}},
     )
-    monkeypatch.setattr("application.mcp_init_service.needs_smart_analysis_refresh", lambda path, proj: True)
+    monkeypatch.setattr("manon_mcp.tools.init.needs_smart_analysis_refresh", lambda path, proj: True)
 
     result = await initialize_project(
         project_path=project_path,

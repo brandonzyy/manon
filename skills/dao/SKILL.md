@@ -4,285 +4,123 @@ description: 大道至简 - Universal code simplification using Manon knowledge 
 trigger: /dao
 ---
 
-# 大道至简 (Dao) - The Ultimate Simplicity
+# 大道至简 (Dao)
 
-**Philosophy**: "大道至简" — The great Dao is simple
-**Western parallel**: "Simplicity is the ultimate sophistication" — Leonardo da Vinci
+**Philosophy**: Simplicity is the ultimate sophistication.
 
-## Prerequisites Check
+不预设问题，让知识图谱告诉我们这个项目的复杂度在哪里。原则是分类词汇，不是检查清单。
 
-**FIRST STEP**: Before starting, check if Manon MCP server is available:
+## Prerequisites
 
-1. Try calling `mcp__manon__manon_repos_list`
-2. If it fails with "tool not found" or similar:
-   - Stop immediately
-   - Show installation instructions below
-   - Do NOT proceed with simplification
-
-### Manon Installation Instructions
+Call `mcp__manon__manon_repos_list`. If it fails → show install instructions and STOP.
 
 ```bash
-# Install Manon CLI
 pip install manon
-
-# Configure MCP server in ~/.claude/settings/mcp.json:
-{
-  "mcpServers": {
-    "manon": {
-      "command": "manon",
-      "args": ["mcp"],
-      "disabled": false
-    }
-  }
-}
-
-# Restart Claude Code to load MCP server
+# Add to ~/.claude/settings.json → mcpServers → manon: { "command": "manon", "args": ["mcp"] }
 ```
 
-After installation, run `/dao` again.
-
 ---
 
-## Usage
+## ⚠️ PATH RULES (read before any script call)
 
-**Manual**: `/dao` - Execute one iteration, stop
-**Auto**: `/dao auto` - Loop until simplified (max 10 iterations)
-**Auto Risk**: `/dao -autorisk` - Loop with medium/high-risk simplifications enabled
+The skill's Python scripts are **globally installed** — they are NOT inside the project directory.
 
----
+```
+SKILL_DIR  = the "Base directory for this skill" shown in the system header above
+             (e.g., C:\Users\zack_\.claude\skills\dao  or  ~/.claude/skills/dao)
 
-## Risk Levels
+SCRIPT  = <SKILL_DIR>/scripts/dao-report.py   ← global, manages issues.json
+SCANNER = <SKILL_DIR>/scripts/dao-scan.py     ← global, reads graph health
+PICKER  = <SKILL_DIR>/scripts/dao-pick.py     ← global, interactive selector
+```
 
-### Low Risk (Default Mode)
-- Dead code with zero callers
-- Duplicate functions (identical implementation)
-- Trivial wrapper functions (one-line return)
-- Small file merges (< 50 lines total)
-- Empty compatibility shims with no imports
+**`.dao/` in the project** = data directory (issues.json, quality-report.md) — NOT the scripts.
 
-### Medium/High Risk (AutoRisk Mode)
-- Deprecated compatibility layers (requires updating imports)
-- Debug/test scripts in production code (scripts/_*.py)
-- Architectural refactoring (> 5 files affected)
-- Breaking circular dependencies (requires careful ordering)
-- Removing abstractions with multiple call sites
-
-**AutoRisk Mode** (`-autorisk`):
-- Automatically handles medium/high-risk simplifications
-- Updates imports when removing compatibility layers
-- Deletes debug scripts after confirming no production usage
-- Performs multi-file refactorings
-- Still commits one principle at a time
-- Still stops if tests fail
-
----
-
-## Three-Layer Analysis
-
-**CRITICAL**: Always analyze top-down. Fix architecture before modules, modules before code.
-
-### Layer 1: Architecture (宏观 - 7 principles)
-
-**A1. Eliminate Unnecessary Layers**
-- Pattern: Repository → Service → Controller → DTO → Entity for simple CRUD
-- Detection: `mcp__manon__manon_search "repository service controller layer"` + count layers
-- Action: Collapse layers that only forward calls
-
-**A2. Reduce Over-Modularization**
-- Pattern: 10 packages for a CLI tool
-- Detection: `mcp__manon__manon_search "package module boundary"` + module count vs features
-- Action: Merge related modules
-
-**A3. Remove Premature Generalization**
-- Pattern: Plugin system with 1 plugin
-- Detection: `mcp__manon__manon_search "plugin extensible generic"` + check git history
-- Action: Replace with concrete implementation
-
-**A4. Simplify Over-Decoupling**
-- Pattern: DI container for 3 classes
-- Detection: `mcp__manon__manon_search "interface inject dependency"` + interface/impl ratio
-- Action: Use direct imports
-
-**A5. Reduce Configuration Complexity**
-- Pattern: 100 config options for simple app
-- Detection: `mcp__manon__manon_search "config option setting"` + usage analysis
-- Action: Hard-code defaults
-
-**A6. Eliminate Unnecessary Event Systems**
-- Pattern: Event bus for A→B calls
-- Detection: `mcp__manon__manon_search "event emit subscribe"` + event vs direct call ratio
-- Action: Replace with direct calls
-
-**A7. Identify Over-Patterning**
-- Pattern: Factory of Factories
-- Detection: `mcp__manon__manon_search "factory builder strategy pattern"` + pattern depth
-- Action: Replace with direct implementation
-
-### Layer 2: Module (中观 - 4 principles)
-
-**M1. Eliminate Feature Bloat**
-- Pattern: utils.ts with 50 functions
-- Detection: `mcp__manon__manon_search "utils helpers common"` + export count > 20
-- Action: Split by domain, delete unused
-
-**M2. Clarify Module Boundaries**
-- Pattern: Overlapping responsibilities
-- Detection: `mcp__manon__manon_graph direction=both depth=2` + circular deps
-- Action: Redraw boundaries
-
-**M3. Deduplicate Functionality**
-- Pattern: 3 HTTP clients
-- Detection: `mcp__manon__manon_search "similar duplicate redundant"`
-- Action: Keep best, delete others
-
-**M4. Reduce Module Dependencies**
-- Pattern: Imports from 20 modules
-- Detection: `mcp__manon__manon_graph direction=callers` + import count
-- Action: Inline small deps
-
-### Layer 3: Code (微观 - 8 principles)
-
-**C1. Reduce Indirection**
-- Pattern: Barrel files (index.ts re-exports)
-- Detection: `mcp__manon__manon_search "index export re-export barrel"`
-- Action: Inline or remove
-
-**C2. Avoid Over-Fragmentation**
-- Pattern: Single-function files (< 50 lines, 1 export)
-- Detection: `mcp__manon__manon_search "single function small file"`
-- Action: Merge related code
-
-**C3. Reduce Directory Depth**
-- Pattern: Single-file directories, > 4 levels nesting
-- Detection: Directory structure analysis
-- Action: Flatten structure
-
-**C4. Remove Dead Code**
-- Pattern: Zero callers
-- Detection: `mcp__manon__manon_graph symbol="<name>" direction=callers`
-- Action: Delete completely (no comments)
-
-**C5. Merge Related Code**
-- Pattern: Split by tech layer not domain
-- Detection: `mcp__manon__manon_search "types interfaces separated"`
-- Action: Group by domain
-
-**C6. Simplify Abstractions**
-- Pattern: Interface with single implementation
-- Detection: `mcp__manon__manon_search "interface abstract generic"`
-- Action: Collapse to concrete
-
-**C7. Reduce Dependencies**
-- Pattern: Circular dependencies
-- Detection: `mcp__manon__manon_graph direction=both depth=2`
-- Action: Break cycles
-
-**C8. Increase Cohesion**
-- Pattern: Unrelated code in same module
-- Detection: Module responsibility analysis
-- Action: Split unrelated, merge related
+Always call scripts as:
+```
+python <SKILL_DIR>/scripts/dao-report.py <args>
+```
+NEVER as `python .dao/...` or `python dao-report.py` without the full path.
 
 ---
 
 ## Execution Flow
 
-### Each Iteration
+1. `mcp__manon__manon_init(project_path)` → extract `repo_id`, `MANON_DIR`, `MANON_PYTHON`
 
-1. **Check Manon**: `mcp__manon__manon_repos_list` (if fails: show install instructions and STOP)
-2. **Init if needed**: If repo not found, run `mcp__manon__manon_init`
-3. **Analyze**: Search Layer 1 → Layer 2 → Layer 3 patterns
-4. **Select**: Pick highest impact + lowest risk + lowest effort
-5. **Execute**: Read → Simplify → Commit → `mcp__manon__manon_push_update`
-6. **Report**: Show progress
-7. **Loop** (auto mode only): Continue or stop
+2. **Analyze** — graph-driven, not pattern-driven:
+   - `python SCANNER context <project_path> <repo_id>` → JSON `{health, scan_checklist, report_exists, open_issues, changed_files}`
+   - `scan_checklist` contains all 19 principles (A1-A7, M1-M4, C1-C8); `priority: "high"` means a health dimension scored below threshold — investigate these first
+   - **First run** (`report_exists=false`): `mcp__manon__manon_deep_query(repo_id, "这个项目的复杂度、耦合和重复主要集中在哪里？有哪些可以简化的机会？")` → cover all 19 principles in the inquiry, prioritize high-signal ones → `python SCRIPT init <project_path>` → `python SCRIPT add` each finding
+   - **Subsequent runs** (`report_exists=true`): load open issues; use `changed_files` from scanner + re-run inquiry over changed areas; cover all 19 principles but focus high-priority ones → `python SCRIPT add` new findings
 
-### Auto Mode Logic
+3. **Show panel + ask** — use `AskUserQuestion`:
+   - Show only **A and M** open issues (grouped, with index numbers) — do NOT list C issues individually
+   - If there are open C issues, show only the count: "代码层 (C): N 个待处理，将自动批量执行"
+   - Ask: "选择要处理的架构/模块 issue（输入编号），或直接回车跳过进入代码层自动优化"
+   - If user picks A/M → step 4; if user skips/enters → step 5
 
-```
-iteration = 0
-while iteration < 10:
-  analyze()
-  if no_opportunities:
-    report("✓ Simplified")
-    break
-  execute_one()
-  iteration++
-```
+4. **User picks A/M issue** (e.g. `A1`, `M2`):
+   - `EnterPlanMode` — plan MUST start with this header (PreToolUse hook auto-writes marker from it):
+     ```
+     DAO: project=<project_path> issue=<issue_id> skill=<SKILL_DIR> repo=<repo_id>
+     ```
+   - Plan covers implementation only after the header; no post-steps in the document
+   - Wait for user approval → `ExitPlanMode`
+   - Execute implementation → run tests
+   - `MANON_DAO_MSG="<commit message>" python "<SKILL_DIR>/scripts/dao-commit.py" "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
+   - `manon_impact(repo_id, commit='HEAD')` → sync graph
+   - Return to step 3
+
+5. **C auto-loop** → process all C candidates without stopping:
+   - For each candidate, validate first:
+     - C2 merges: 3-question gate (git history · op-type parity · name accuracy)
+     - Any delete: `manon_graph` zero-callers confirmed
+     - Fail → skip, next candidate
+   - Implement → `git commit` → **`manon_impact HEAD`** → **`python SCRIPT done <project_path> <id> <commit_hash>`** → sync graph — all in one response per issue
+   - Post-check after commit: fn ≥6 params or >60 lines → `python SCRIPT add <project_path> C <code> "<desc>"`
+   - Continue to next candidate
 
 ---
 
-## Output Format
+## Health Score → Layer Mapping
 
-```
-## 大道至简 Report [Iteration X/10]
+Use `dao-scan.py context` scores to focus the inquiry — not to dictate what to fix (coupling may be by design).
 
-**Principle**: [e.g., A1, M3, C1]
-**Pattern**: [what found]
-**Action**: [what done]
-**Files**: [list]
-**Impact**: [-X lines, -Y files]
-**Commit**: [hash]
+| Dimension | Score < threshold | Investigate |
+|-----------|-------------------|-------------|
+| MC 模块耦合 | < 9 | Cross-module deps — is this intentional architecture or accidental? |
+| DC 死代码 | < 10 | Likely C4 candidates — verify with `manon_graph` callers |
+| FS 函数规模 | < 9 | Oversized functions — C-layer complexity |
+| TD 技术债务 | < 9 | TODOs, any_count — C-layer debt |
+| FI 扇入集中度 | < 9 | Hot modules taking too much responsibility — M1 or A1 |
+| CD 循环依赖 | < 10 | C7 or A1 — architectural cycle |
+| TC 测试覆盖 | < 9 | Risky areas to simplify — proceed with caution |
 
-[Auto: "Continuing..." OR "✓ Done"]
-[Manual: "Run /dao to continue"]
-```
+---
+
+## Principle Taxonomy
+
+Classification vocabulary for findings. Assign a code when recording issues.
+
+**Architecture (A)** — system-level structure:
+- A1 Unnecessary layers · A2 Over-modularization · A3 Premature generalization
+- A4 Over-decoupling · A5 Config complexity · A6 Event system overkill · A7 Over-patterning
+
+**Module (M)** — module responsibilities and boundaries:
+- M1 Feature bloat · M2 Unclear boundaries · M3 Duplication · M4 Excessive dependencies
+
+**Code (C)** — file and function level:
+- C1 Indirection/barrel · C2 Over-fragmentation · C3 Deep directories · C4 Dead code
+- C5 Split by tech layer · C6 Unnecessary abstraction · C7 Circular deps · C8 Low cohesion
 
 ---
 
 ## Constraints
 
-1. Never break functionality
-2. One principle per commit
-3. Update Manon after each change
-4. Stop if tests fail
-5. **Default mode**: Ask before risky changes (> 5 files)
-6. **AutoRisk mode**: Execute risky changes automatically, but verify safety first
-
----
-
-## Success Criteria
-
-- No barrel files (except public API)
-- No single-function files (except entry points)
-- No single-file directories
-- No dead code
-- No circular deps
-- File size: 100-300 lines
-- Directory depth ≤ 4
-- High cohesion
-
----
-
-## Instructions for Claude
-
-**CRITICAL FIRST STEP**: Check Manon availability by calling `mcp__manon__manon_repos_list`. If it fails, show installation instructions and STOP.
-
-**Manual Mode** (`/dao`):
-- Execute ONE iteration
-- Stop and wait
-
-**Auto Mode** (`/dao auto`):
-- Loop until simplified or max 10 iterations
-- Report after each iteration
-- Stop on: no opportunities OR max iterations OR error
-- Skip medium/high-risk opportunities (ask user first)
-
-**AutoRisk Mode** (`/dao -autorisk`):
-- Loop until simplified or max 10 iterations
-- Report after each iteration
-- Stop on: no opportunities OR max iterations OR error
-- **Execute medium/high-risk simplifications automatically**:
-  - Update imports when removing deprecated compatibility layers
-  - Delete debug scripts after verifying no production usage via `manon_graph`
-  - Perform multi-file refactorings (but still one principle per commit)
-  - Break circular dependencies with careful analysis
-- Still verify safety before each risky change
-- Still stop if tests fail
-
-**Priority**: Layer 1 > Layer 2 > Layer 3
-
-**Manon First**: Always use Manon MCP tools (mcp__manon__*), never Grep/Glob
-
-**Small Steps**: One principle, one commit, ralphy philosophy
-
-**Quality > Speed**: Fight entropy, leave codebase better
+1. Never break functionality; stop if tests fail
+2. One principle per commit; sync Manon graph after each commit
+3. Architecture/module: single issue per session, Plan mode, human approval required
+4. Code layer: auto-loop, no confirmation needed
+5. C2: max 1 merge per loop iteration; fewer files ≠ simpler (result must be describable in one sentence)
+6. Coupling or structure that appears intentional → do NOT simplify without asking

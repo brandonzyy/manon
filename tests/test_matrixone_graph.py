@@ -17,7 +17,7 @@ class TestMatrixoneGraphInit:
     def test_init_with_embedding_url(self, tmp_path):
         """Should accept custom embedding URL."""
         mg = MatrixoneGraph(tmp_path, embedding_url="http://custom:3002")
-        assert mg._embedding_url == "http://custom:3002"
+        assert mg._embedder.base_url == "http://custom:3002"
 
     def test_init_with_str_path(self, tmp_path):
         """Should accept string path."""
@@ -83,32 +83,20 @@ class TestMatrixoneGraphQuery:
 
 
 class TestMatrixoneGraphIndex:
-    """Tests for MatrixoneGraph.index_repo method."""
+    """Tests for MatrixoneGraph.status method."""
 
-    @pytest.mark.asyncio
-    async def test_index_repo_basic(self, tmp_path):
-        """Index should process repo files."""
-        # Create some source files
-        (tmp_path / "main.py").write_text("def main(): pass")
-
+    def test_status_unindexed(self, tmp_path):
+        """Status of a fresh (unindexed) repo should return indexed=False."""
         mg = MatrixoneGraph(tmp_path)
+        result = mg.status()
+        assert isinstance(result, dict)
+        assert result["indexed"] is False
 
-        with patch("matrixone_graph.index_repo", new_callable=AsyncMock) as mock_index:
-            mock_index.return_value = {"files": 1, "entities": 2, "relations": 1}
-            result = await mg.index_repo()
-
-        assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_index_repo_incremental(self, tmp_path):
-        """Index should support incremental mode."""
+    def test_status_has_required_keys(self, tmp_path):
+        """Status should always have an 'indexed' key."""
         mg = MatrixoneGraph(tmp_path)
-
-        with patch("matrixone_graph.index_repo", new_callable=AsyncMock) as mock_index:
-            mock_index.return_value = {"files": 0}
-            await mg.index_repo(incremental=True)
-
-            mock_index.assert_called_once()
+        result = mg.status()
+        assert "indexed" in result
 
 
 class TestMatrixoneGraphClose:
@@ -124,74 +112,78 @@ class TestMatrixoneGraphClose:
 
     @pytest.mark.asyncio
     async def test_context_manager(self, tmp_path):
-        """Should work as async context manager."""
-        async with MatrixoneGraph(tmp_path) as mg:
-            assert mg.repo_path == tmp_path
+        """Should support explicit close without raising."""
+        mg = MatrixoneGraph(tmp_path)
+        assert mg.repo_path == tmp_path
+        await mg.close()  # Should not raise
 
 
 class TestMatrixoneGraphGraph:
-    """Tests for MatrixoneGraph.graph method."""
+    """Tests for MatrixoneGraph.query method (used for symbol traversal)."""
 
     @pytest.mark.asyncio
     async def test_graph_returns_relations(self, tmp_path):
-        """Graph should return symbol relations."""
+        """Query should return a QueryResult."""
         mg = MatrixoneGraph(tmp_path)
 
-        with patch("matrixone_graph.graph", new_callable=AsyncMock) as mock_graph:
-            mock_graph.return_value = {
-                "symbol": "TestClass",
-                "relations": [],
-            }
-            result = await mg.graph("TestClass")
+        from matrixone_graph.pipeline import QueryResult
+        mock_result = QueryResult(entities=[], relations=[], context="TestClass context")
 
-        assert "symbol" in result
+        with patch("matrixone_graph.query", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = mock_result
+            result = await mg.query("TestClass")
+
+        assert result is not None
 
 
 class TestMatrixoneGraphImpact:
-    """Tests for MatrixoneGraph.impact method."""
+    """Tests for MatrixoneGraph.impact_commit method."""
 
-    @pytest.mark.asyncio
-    async def test_impact_returns_analysis(self, tmp_path):
-        """Impact should return analysis result."""
+    def test_impact_returns_analysis(self, tmp_path):
+        """impact_commit should return a dict with commit key."""
         mg = MatrixoneGraph(tmp_path)
 
-        with patch("matrixone_graph.impact", new_callable=AsyncMock) as mock_impact:
-            mock_impact.return_value = {
-                "commit": "HEAD",
-                "changed_symbols": [],
-                "affected_modules": [],
-            }
-            result = await mg.impact()
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {
+            "commit": "HEAD",
+            "changed_symbols": [],
+            "affected_modules": [],
+        }
+
+        with patch.object(mg, "_load_graph", return_value=MagicMock()):
+            with patch("matrixone_graph.impact.ImpactAnalyzer") as MockIA:
+                MockIA.return_value.analyze_commit.return_value = mock_result
+                result = mg.impact_commit()
 
         assert result["commit"] == "HEAD"
 
-    @pytest.mark.asyncio
-    async def test_impact_with_commit(self, tmp_path):
-        """Impact should accept commit hash."""
+    def test_impact_with_commit(self, tmp_path):
+        """impact_commit should accept a commit hash."""
         mg = MatrixoneGraph(tmp_path)
 
-        with patch("matrixone_graph.impact", new_callable=AsyncMock) as mock_impact:
-            mock_impact.return_value = {"commit": "abc123", "changed_symbols": []}
-            await mg.impact(commit="abc123")
+        mock_result = MagicMock()
+        mock_result.to_dict.return_value = {"commit": "abc123", "changed_symbols": []}
 
-            call_kwargs = mock_impact.call_args[1]
-            assert call_kwargs["commit"] == "abc123"
+        with patch.object(mg, "_load_graph", return_value=MagicMock()):
+            with patch("matrixone_graph.impact.ImpactAnalyzer") as MockIA:
+                MockIA.return_value.analyze_commit.return_value = mock_result
+                result = mg.impact_commit("abc123")
+
+        MockIA.return_value.analyze_commit.assert_called_once_with("abc123")
 
 
 class TestMatrixoneGraphCodeHealth:
-    """Tests for MatrixoneGraph.code_health method."""
+    """Tests for MatrixoneGraph.health method."""
 
     @pytest.mark.asyncio
     async def test_code_health_returns_metrics(self, tmp_path):
-        """Code health should return metrics."""
+        """health() should return a dict with score key."""
         mg = MatrixoneGraph(tmp_path)
 
-        with patch("matrixone_graph.health", new_callable=AsyncMock) as mock_health:
-            mock_health.return_value = {
-                "score": 85,
-                "grade": "A",
-                "dimensions": [],
-            }
-            result = await mg.code_health()
+        with patch.object(mg, "_load_graph", return_value=MagicMock()):
+            with patch("matrixone_graph.health.compute_graph_metrics", return_value={}):
+                with patch("matrixone_graph.health.scan_directory_debt", return_value={}):
+                    with patch("matrixone_graph.health.compute_score", return_value={"score": 85, "grade": "A"}):
+                        result = await mg.health()
 
         assert result["score"] == 85

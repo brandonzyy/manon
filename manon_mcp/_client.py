@@ -143,70 +143,47 @@ def _format_graph(result: dict) -> str:
     return _truncate("\n".join(parts))
 
 
-def _format_impact(result: dict) -> str:
-    """Format impact analysis into concise summary."""
+def _fmt_changed_symbols(changed: list, summary_mode: bool) -> list[str]:
+    """Format changed symbols section."""
     parts: list[str] = []
-
-    commit = result.get("commit", "?")
-    parts.append(f"影响分析: commit {commit[:12]}")
-
-    # Changed files
-    changed_files = result.get("changed_files", [])
-    if changed_files:
-        parts.append(f"\n变更文件 ({len(changed_files)}):")
-        for f in changed_files[:15]:
-            if isinstance(f, dict):
-                parts.append(f"  {f.get('path', '?')} [{f.get('change_type', '?')}]")
+    if summary_mode:
+        parts.append("\n[摘要模式 — 符号过多，按文件聚合]")
+        file_agg: dict[str, dict] = {}
+        for s in changed:
+            if isinstance(s, dict):
+                f = s.get("file", s.get("file_path", "?"))
+                if f not in file_agg:
+                    file_agg[f] = {"count": 0, "lines": 0}
+                file_agg[f]["count"] += 1
+                file_agg[f]["lines"] += s.get("lines_changed", 0)
+        parts.append(f"\n变更符号 ({len(changed)}, 按文件聚合):")
+        for f, agg in sorted(file_agg.items()):
+            parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['lines']})")
+    else:
+        parts.append(f"\n变更符号 ({len(changed)}):")
+        for s in changed[:15]:
+            if isinstance(s, dict):
+                diff_stat = f" (+{s['lines_changed']})" if s.get("lines_changed") else ""
+                parts.append(f"  {s.get('name', '?')} [{s.get('change_type', s.get('kind', '?'))}]{diff_stat} {s.get('file', s.get('file_path', ''))}")
             else:
-                parts.append(f"  {f}")
+                parts.append(f"  {s}")
+        if len(changed) > 15:
+            parts.append(f"  ... 还有 {len(changed) - 15} 个")
+    return parts
 
-    changed = result.get("changed_symbols", [])
-    summary_mode = len(changed) > 30
-    if changed:
-        if summary_mode:
-            parts.append(f"\n[摘要模式 — 符号过多，按文件聚合]")
-            file_agg: dict[str, dict] = {}
-            for s in changed:
-                if isinstance(s, dict):
-                    f = s.get("file", s.get("file_path", "?"))
-                    if f not in file_agg:
-                        file_agg[f] = {"count": 0, "lines": 0}
-                    file_agg[f]["count"] += 1
-                    file_agg[f]["lines"] += s.get("lines_changed", 0)
-            parts.append(f"\n变更符号 ({len(changed)}, 按文件聚合):")
-            for f, agg in sorted(file_agg.items()):
-                parts.append(f"  {f}: {agg['count']} 个符号 (+{agg['lines']})")
-        else:
-            parts.append(f"\n变更符号 ({len(changed)}):")
-            for s in changed[:15]:
-                if isinstance(s, dict):
-                    diff_stat = ""
-                    if s.get("lines_changed"):
-                        diff_stat = f" (+{s['lines_changed']})"
-                    parts.append(f"  {s.get('name', '?')} [{s.get('change_type', s.get('kind', '?'))}]{diff_stat} {s.get('file', s.get('file_path', ''))}")
-                else:
-                    parts.append(f"  {s}")
-            if len(changed) > 15:
-                parts.append(f"  ... 还有 {len(changed) - 15} 个")
 
-    callers_limit = 10 if summary_mode else 10
-    for label, key, limit in [
-        ("直接调用者", "direct_callers", callers_limit),
-        ("间接调用者", "indirect_callers", callers_limit),
-        ("受影响测试", "affected_tests", 10),
-    ]:
+def _fmt_callers_and_modules(result: dict, summary_mode: bool) -> list[str]:
+    """Format callers, modules, and propagation chains sections."""
+    parts: list[str] = []
+    for label, key in [("直接调用者", "direct_callers"), ("间接调用者", "indirect_callers"), ("受影响测试", "affected_tests")]:
         items = result.get(key, [])
         if items:
             parts.append(f"\n{label} ({len(items)}):")
-            for item in items[:limit]:
-                if isinstance(item, dict):
-                    parts.append(f"  {item.get('name', item.get('id', str(item)))}")
-                else:
-                    parts.append(f"  {item}")
-            if len(items) > limit:
-                parts.append(f"  ... 还有 {len(items) - limit} 个")
+            for item in items[:10]:
+                parts.append(f"  {item.get('name', item.get('id', str(item))) if isinstance(item, dict) else item}")
+            if len(items) > 10:
+                parts.append(f"  ... 还有 {len(items) - 10} 个")
 
-    # Split affected_modules into direct vs indirect
     all_modules = result.get("affected_modules", [])
     direct_modules_set = set(result.get("directly_changed_modules", []))
     if all_modules:
@@ -214,34 +191,45 @@ def _format_impact(result: dict) -> str:
         indirect_mods = [m for m in all_modules if m not in direct_modules_set]
         if direct_mods:
             parts.append(f"\n直接变更模块 ({len(direct_mods)}):")
-            for m in direct_mods[:10]:
-                parts.append(f"  {m}")
+            parts.extend(f"  {m}" for m in direct_mods[:10])
         if indirect_mods:
             parts.append(f"\n间接波及模块 ({len(indirect_mods)}):")
-            for m in indirect_mods[:10]:
-                parts.append(f"  {m}")
+            parts.extend(f"  {m}" for m in indirect_mods[:10])
 
-    # Propagation chains
     chains = result.get("propagation_chains", [])
     if chains:
-        chains_limit = 5 if summary_mode else 15
         parts.append(f"\n传播链路 ({len(chains)}):")
-        for c in chains[:chains_limit]:
-            parts.append(f"  {c}")
+        parts.extend(f"  {c}" for c in chains[:5 if summary_mode else 15])
+    return parts
 
-    # Boundary callers count
+
+def _format_impact(result: dict) -> str:
+    """Format impact analysis into concise summary."""
+    parts: list[str] = []
+    commit = result.get("commit", "?")
+    parts.append(f"影响分析: commit {commit[:12]}")
+
+    changed_files = result.get("changed_files", [])
+    if changed_files:
+        parts.append(f"\n变更文件 ({len(changed_files)}):")
+        for f in changed_files[:15]:
+            parts.append(f"  {f.get('path', '?')} [{f.get('change_type', '?')}]" if isinstance(f, dict) else f"  {f}")
+
+    changed = result.get("changed_symbols", [])
+    summary_mode = len(changed) > 30
+    if changed:
+        parts.extend(_fmt_changed_symbols(changed, summary_mode))
+
+    parts.extend(_fmt_callers_and_modules(result, summary_mode))
+
     boundary_count = result.get("boundary_callers_count", 0)
-    max_depth = 2  # default
     if boundary_count > 0:
-        parts.append(f"\n⚠ 当前追踪深度 {max_depth} 跳，边界有 {boundary_count} 个调用者。可用 max_depth={max_depth + 1} 扩大范围。")
+        parts.append(f"\n⚠ 当前追踪深度 2 跳，边界有 {boundary_count} 个调用者。可用 max_depth=3 扩大范围。")
 
     risk = result.get("risk", {})
     if risk:
-        level = risk.get("level", "?")
-        reason = risk.get("reason", "")
-        parts.append(f"\n风险评估: {level} — {reason}")
-        suggestions = risk.get("suggestions", [])
-        if suggestions:
-            parts.append(f"  建议: {'; '.join(suggestions)}")
+        parts.append(f"\n风险评估: {risk.get('level', '?')} — {risk.get('reason', '')}")
+        if risk.get("suggestions"):
+            parts.append(f"  建议: {'; '.join(risk['suggestions'])}")
 
     return _truncate("\n".join(parts))
