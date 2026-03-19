@@ -20,6 +20,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
+_MANON_CONFIG = Path.home() / ".manon" / "config.json"
 
 
 def _find_project_root() -> Path:
@@ -108,6 +109,108 @@ def _bootstrap_scan_runtime() -> None:
         raise RuntimeError("failed to bootstrap scan runtime")
 
 
+# ── Script classification ─────────────────────────────────────────────────────
+
+def _load_manon_config() -> dict:
+    try:
+        return json.loads(_MANON_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _classify_uncertain_via_api(
+    uncertain: list[dict], api_url: str, api_key: str,
+) -> dict[str, str]:
+    """Call /api/v1/classify-scripts with uncertain file summaries.
+
+    Returns {rel_path: "source_code" | "tool_script"}.
+    Falls back to empty dict on any error (uncertain files are kept).
+    """
+    import httpx
+
+    from core.script_classifier import ScriptClassifier, ScriptSignals
+
+    # project_packages: deduce from top-level dirs containing __init__.py
+    classifier = ScriptClassifier([])  # packages not needed for make_summary
+
+    summaries = []
+    for f in uncertain:
+        signals = ScriptSignals(f["rel_path"], parse_result=f.get("parse_result"))
+        summaries.append(classifier.make_summary(signals))
+
+    payload = {"files": summaries}
+    url = api_url.rstrip("/") + "/api/v1/classify-scripts"
+
+    try:
+        resp = httpx.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json().get("results", {})
+    except Exception as e:
+        print(f"[classify] API call failed (skipping LLM tiebreaker): {e}", file=sys.stderr)
+        return {}
+
+
+def _classify_file_results(
+    file_results: list[dict], project_path: str,
+) -> tuple[list[dict], int]:
+    """Filter tool scripts from file_results.
+
+    Returns (filtered_results, dropped_count).
+    """
+    from core.script_classifier import (
+        ScriptClassifier, ScriptSignals,
+        build_imported_paths,
+    )
+
+    # Detect project packages (dirs with __init__.py at top level)
+    project_root = Path(project_path)
+    project_packages = [
+        d.name for d in project_root.iterdir()
+        if d.is_dir() and (d / "__init__.py").exists()
+    ]
+
+    classifier = ScriptClassifier(project_packages)
+    imported_paths = build_imported_paths(file_results, project_root)
+
+    # First pass: definitive classification
+    keep, uncertain = classifier.classify_batch(file_results, imported_paths)
+
+    if not uncertain:
+        return keep, 0
+
+    # Second pass: LLM tiebreaker for uncertain files
+    cfg = _load_manon_config()
+    api_url = (
+        os.environ.get("MANON_API_URL")
+        or cfg.get("api_url")
+        or "http://saas.matrixone.online:3700"
+    )
+    api_key = os.environ.get("MANON_API_KEY") or cfg.get("api_key", "")
+
+    dropped = 0
+    if api_key:
+        llm_results = _classify_uncertain_via_api(uncertain, api_url, api_key)
+        for f in uncertain:
+            label = llm_results.get(f["rel_path"])
+            if label == "tool_script":
+                dropped += 1
+            else:
+                # source_code or unknown → keep (conservative)
+                keep.append(f)
+    else:
+        # No API key → keep all uncertain (conservative)
+        keep.extend(uncertain)
+
+    return keep, dropped
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: manon-scan.py <repo_id>"}))
@@ -138,6 +241,9 @@ def main():
         project_path, old_hashes, max_files=0,
     )
 
+    # Classify: filter tool scripts from source files
+    file_results, dropped = _classify_file_results(file_results, project_path)
+
     total_files = len(file_results)
     deleted_files = len(deleted)
     total_batches = max(math.ceil(total_files / SYNC_BATCH_SIZE), 1) if (total_files or deleted) else 0
@@ -160,6 +266,7 @@ def main():
         "total_files": total_files,
         "deleted_files": deleted_files,
         "total_batches": total_batches,
+        "tool_scripts_dropped": dropped,
     }
     print(json.dumps(summary, ensure_ascii=False))
 
