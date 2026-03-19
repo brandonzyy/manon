@@ -137,12 +137,7 @@ install.bat
 
 The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
 
-> **Included:** Installation automatically includes the `/dao` skill (大道至简 - code simplification) for Claude Code users. This skill uses Manon's knowledge graph to systematically simplify codebases through architecture → module → code analysis.
->
-> **Dao Commands:**
-> - `/dao` — Manual mode: Execute one simplification iteration, then stop and wait
-> - `/dao auto` — Auto mode: Loop until simplified (max 10 iterations), skip medium/high-risk changes
-> - `/dao -autorisk` — Auto-risk mode: Loop with automatic medium/high-risk simplifications enabled
+> **Included:** Installation automatically includes the `/dao` skill — see [大道至简 (Dao)](#-大道至简-dao--graph-driven-code-simplification) below.
 >
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
 
@@ -207,6 +202,42 @@ Write code → git push → hook auto-updates knowledge graph (zero effort)
 ```
 
 > **code_health dimensions:** Module Coupling (MC), Circular Dependencies (CD), Fan-in Concentration (FI), Dead Code (DC), Test Coverage (TC), Function Size (FS), Technical Debt (TD), Inheritance Depth (ID). Score changes output automatically after each push.
+
+---
+
+## 🌿 大道至简 (Dao) — Graph-Driven Code Simplification
+
+Bundled with Manon, `/dao` is a Claude Code skill that uses the knowledge graph to systematically find and remove unnecessary complexity from a codebase — without guessing.
+
+### How It Works
+
+Each session, `/dao` queries the knowledge graph for health scores across 8 dimensions, then runs a deep query to identify where complexity is actually concentrated. Findings are classified into three layers and recorded as issues:
+
+| Layer | Principles | Examples |
+|-------|-----------|---------|
+| **Architecture (A)** | A1–A7 | Unnecessary layers, over-modularization, premature generalization |
+| **Module (M)** | M1–M4 | Feature bloat, unclear boundaries, duplication, excessive dependencies |
+| **Code (C)** | C1–C8 | Dead code, over-fragmentation, circular deps, low cohesion, barrel files |
+
+### Three-Layer Execution Model
+
+**Architecture and Module issues** require human judgment. `/dao` presents an interactive panel listing open A/M issues, the user picks one, and Claude enters Plan mode to design the approach. After human approval, the plan is executed, tested, committed, and the graph is re-synced. One issue per session.
+
+**Code-layer issues** run automatically in a loop — no confirmation needed. Each candidate passes a validation gate before execution (e.g. C2 merges require git history check + op-type parity + naming accuracy; C4 deletes require zero-caller confirmation from the graph). The loop commits and syncs the graph after each fix, then continues to the next candidate.
+
+### Safety Gates
+
+- **C2 (merge)** — Only merges files that have never been modified independently, share the same operation type, and produce a result describable in one sentence.
+- **C4 (delete)** — Only deletes entities confirmed as zero-callers by `manon_graph`. Graph coverage blind spots (e.g. files called only from external scripts) are skipped.
+- **Any layer** — If tests fail, the session stops. Coupling that appears intentional is left alone.
+
+### Issue Tracking
+
+Issues are stored in `.dao/issues.json` in the project root and updated after each action. The graph is re-synced after every commit via `manon_impact`, so health scores reflect the current state.
+
+```
+/dao          — One iteration: query graph → show panel → fix one issue → stop
+```
 
 ---
 
@@ -412,7 +443,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ### v1.2.0 — 2026-03-19
 
-**`/dao` hook enforcement** — After completing a plan, Claude previously could skip the commit step and move on. A two-part hook now prevents this: an `EnterPlanMode` hook writes a marker file when the plan starts; a `Stop` hook blocks the session until `dao-commit` runs, the issue is closed, and the graph is synced.
+**`/dao` hook enforcement** — A two-part hook (EnterPlanMode marker + Stop blocker) now guarantees `dao-commit` always runs after plan execution, closing the issue and syncing the graph.
 
 - **Script classifier** — Filters tool scripts (`deploy_*`, `setup_*`, etc.) from the index via a 4-signal rule chain; ambiguous files go to an LLM tiebreaker.
 - **`POST /api/v1/classify-scripts`** — New endpoint for LLM-based script classification.
