@@ -28,7 +28,7 @@ user_invocable: true
 1. 从 Step 1 输出提取 `MANON_PYTHON`
 2. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
    - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
-   - Windows: `set MANON_DIR=<MANON_DIR> && "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
+   - Windows bash 同样用此格式，**不要用** `set MANON_DIR=...`（CMD 语法，bash 里不生效）
    - 如报错（文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
 3. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan-tests.py" <repo_id>`
    - 输出 `{ covered, test_files, test_functions }`，报错不阻断流程（跳过即可）
