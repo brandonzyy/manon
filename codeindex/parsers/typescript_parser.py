@@ -9,6 +9,7 @@ A single TypeScriptParser class handles all 4 file types with 3 grammar variants
 - .js/.jsx → tree-sitter-javascript (language)
 """
 
+import logging
 from pathlib import Path
 
 from tree_sitter import Node, Parser, Tree
@@ -16,6 +17,8 @@ from tree_sitter import Node, Parser, Tree
 from ..parser import Call, CallType, Import, Inheritance, Symbol
 from .base import BaseLanguageParser
 from .utils import get_node_text
+
+_log = logging.getLogger(__name__)
 
 
 class TypeScriptParser(BaseLanguageParser):
@@ -71,7 +74,7 @@ class TypeScriptParser(BaseLanguageParser):
             return ParseResult(path=path, file_lines=file_lines)
         tree = self.parser.parse(source_bytes)
         if tree.root_node.has_error:
-            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+            _log.debug("Partial parse (syntax errors) in %s — extracting available symbols", path.name)
         return self._build_parse_result(tree, path, source_bytes, file_lines)
 
     # ==================== Symbol Extraction ====================

@@ -98,7 +98,10 @@ from pathlib import Path
 
 DAO_MARKER = Path.home() / ".dao_plan_active"
 
-data = json.load(sys.stdin)
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
 
 # Prevent infinite loop: if Stop hook already fired once this turn, let Claude stop
 if data.get("stop_hook_active"):

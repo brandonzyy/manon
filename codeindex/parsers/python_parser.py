@@ -4,10 +4,13 @@ This module provides the PythonParser class that implements Python-specific
 symbol extraction, import resolution, and call relationship analysis using tree-sitter.
 """
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 from tree_sitter import Node, Tree
+
+_log = logging.getLogger(__name__)
 
 from ..parser import Call, CallType, Import, Inheritance, Symbol
 from .base import BaseLanguageParser
@@ -146,7 +149,7 @@ class PythonParser(BaseLanguageParser):
         )
         tree = self.parser.parse(source_bytes)
         if tree.root_node.has_error:
-            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+            _log.debug("Partial parse (syntax errors) in %s — extracting available symbols", path.name)
         return self._build_python_parse_result(tree, path, source_bytes, file_lines)
 
     # ============================================================================
