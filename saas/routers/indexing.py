@@ -22,7 +22,7 @@ if _project_root not in sys.path:
 from codeindex.parser import Symbol, Call, CallType, Import, Inheritance, ParseResult
 
 from matrixone_graph.pipeline import (
-    _map_parse_result, _module_from_rel_path,
+    _map_parse_result, _module_from_rel_path, _resolve_import_by_filepath,
     GRAPH_FILE, VECTORS_FILE, CHUNKS_FILE, META_FILE,
     _load_meta, _save_meta, _load_chunks, _save_chunks,
     invalidate_kg_cache,
@@ -98,10 +98,22 @@ def _remove_deleted_files(body, graph, vec_index, all_chunks, meta):
 
 def _process_ast_files(body, graph, all_chunks, vec_index):
     """Process each file's AST data. Returns (entities, relations, chunks, hashes)."""
+    # Compute local package set from this batch + already-indexed graph entities.
+    # Used to distinguish project-internal absolute imports (e.g. 'from matrixone_graph.store
+    # import X') from genuinely external ones (fastapi, httpx, etc.).
+    batch_top = {_module_from_rel_path(f.rel_path).split(".")[0] for f in body.files}
+    graph_top = {
+        eid.split(".")[0]
+        for eid, d in graph._g.nodes(data=True)
+        if d.get("kind") == "module" and "." not in eid
+    }
+    local_packages = frozenset(batch_top | graph_top)
+
     all_entities = []
     all_relations = []
     new_chunks = []
     new_hashes = {}
+    new_reexports = {}
     for f in body.files:
         old_entity_ids = {n for n, d in graph._g.nodes(data=True) if d.get("file_path") == f.rel_path}
         graph.remove_by_file(f.rel_path)
@@ -114,7 +126,7 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
             logger.warning("Skipping %s: parse error %s", f.rel_path, pr.error)
             continue
         module = _module_from_rel_path(f.rel_path)
-        entities, relations = _map_parse_result(pr, module)
+        entities, relations = _map_parse_result(pr, module, local_packages)
         all_entities.extend(entities)
         all_relations.extend(relations)
         if not f.chunks:
@@ -124,7 +136,23 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
         for c in chunks:
             all_chunks[c.id] = c
         new_hashes[f.rel_path] = f.hash
-    return all_entities, all_relations, new_chunks, new_hashes
+
+        # Extract re-export map from __init__.py files:
+        # 'from .submod import name' → {pkg.name: pkg.submod.name}
+        # Stored in meta and applied at final batch to redirect phantom edges.
+        if Path(f.rel_path).name == "__init__.py":
+            pkg_module = module  # e.g. "core.ast"
+            for imp in pr.imports:
+                if not imp.module.startswith("."):
+                    continue
+                submod = _resolve_import_by_filepath(f.rel_path, imp.module)
+                for name in imp.names:
+                    phantom_id = f"{pkg_module}.{name}"
+                    real_id = f"{submod}.{name}"
+                    if phantom_id != real_id:
+                        new_reexports[phantom_id] = real_id
+
+    return all_entities, all_relations, new_chunks, new_hashes, new_reexports
 
 
 async def _embed_and_index_vectors(all_entities, new_chunks, vec_index, embedding_url: str) -> None:
@@ -139,6 +167,36 @@ async def _embed_and_index_vectors(all_entities, new_chunks, vec_index, embeddin
             vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
     finally:
         await embedder.close()
+
+
+def _apply_reexport_map(graph, reexport_map: dict) -> int:
+    """Redirect edges from re-export phantom IDs to their canonical real entity IDs.
+
+    When core/ast/__init__.py re-exports 'find_project_by_repo_id' from '.project',
+    callers import it as 'core.ast.find_project_by_repo_id' (phantom), but the real
+    entity is 'core.ast.project.find_project_by_repo_id'. This function redirects
+    all edges and removes the phantom.
+
+    Returns count of redirected edges.
+    """
+    redirected = 0
+    for phantom_id, real_id in reexport_map.items():
+        if phantom_id not in graph._g:
+            continue
+        if graph.get_entity(real_id) is None:
+            continue  # real entity not indexed — leave phantom as-is
+        in_edges  = list(graph._g.in_edges(phantom_id, data=True))
+        out_edges = list(graph._g.out_edges(phantom_id, data=True))
+        graph._g.remove_node(phantom_id)
+        for src, _, data in in_edges:
+            if graph._g.has_node(src) and not graph._g.has_edge(src, real_id):
+                graph._g.add_edge(src, real_id, **data)
+                redirected += 1
+        for _, tgt, data in out_edges:
+            if graph._g.has_node(tgt) and not graph._g.has_edge(real_id, tgt):
+                graph._g.add_edge(real_id, tgt, **data)
+                redirected += 1
+    return redirected
 
 
 def _persist_kg_state(kg_path: Path, graph, vec_index, all_chunks: dict, new_hashes: dict, meta: dict) -> None:
@@ -174,8 +232,10 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             graph, vec_index, all_chunks, meta = CodeGraph(), VectorIndex(), {}, {"version": 1, "hashes": {}}
 
         _remove_deleted_files(body, graph, vec_index, all_chunks, meta)
-        all_entities, all_relations, new_chunks, file_hashes = _process_ast_files(body, graph, all_chunks, vec_index)
+        all_entities, all_relations, new_chunks, file_hashes, new_reexports = _process_ast_files(body, graph, all_chunks, vec_index)
         new_hashes = {**meta.get("hashes", {}), **file_hashes}
+        # Accumulate re-export map across batches (stored in meta for persistence)
+        meta.setdefault("reexport_map", {}).update(new_reexports)
 
         # Final-batch reconcile: remove any entities whose file is no longer tracked.
         # Catches stale entities from interrupted previous syncs where deleted_files
@@ -200,6 +260,11 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             pruned = graph.prune_phantoms()
             if pruned:
                 logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
+            reexport_map = meta.get("reexport_map", {})
+            if reexport_map:
+                redirected = _apply_reexport_map(graph, reexport_map)
+                if redirected:
+                    logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
 
         entities_added = len(all_entities)
         for e in all_entities:
@@ -217,13 +282,21 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url)
         _persist_kg_state(kg_path, graph, vec_index, all_chunks, new_hashes, meta)
 
+        phantom_ratio = graph.phantom_count / max(graph.entity_count, 1)
         stats = {
             "files_synced": len(body.files), "files_deleted": len(body.deleted_files),
             "entities_added": entities_added, "relations_added": relations_added,
             "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
             "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
             "total_files": len(new_hashes), "phantom_nodes": graph.phantom_count,
+            "phantom_ratio": round(phantom_ratio, 3),
         }
+        if phantom_ratio > 0.25:
+            stats["recommend_rebuild"] = True
+            logger.warning(
+                "repo %s: phantom ratio %.2f (phantoms=%d entities=%d) exceeds threshold 0.25 — recommend full reindex",
+                repo_id, phantom_ratio, graph.phantom_count, graph.entity_count,
+            )
         await db.execute("UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps(stats), repo_id))
         await db.commit()
         logger.info("sync-ast done for %s: %s", repo_id, stats)

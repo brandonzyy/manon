@@ -520,8 +520,55 @@ class PythonParser(BaseLanguageParser):
 
         return ""
 
-    def _resolve_python_callee(self, callee_raw: str, caller: str, parent_map: dict[str, str]) -> str:
-        """Resolve self/super references in a callee to their concrete class names."""
+    def _build_local_type_map(self, func_node: Node, source_bytes: bytes) -> dict[str, str]:
+        """Build var→ClassName map from simple assignments in a function body.
+
+        Patterns recognized:
+            var = ClassName(...)   →  {var: "ClassName"}
+            var: ClassName = ...   →  {var: "ClassName"}
+        Only handles direct identifier assignments; no complex generics or chained calls.
+        """
+        type_map: dict[str, str] = {}
+        body = next((n for n in func_node.children if n.type == "block"), None)
+        if body is None:
+            return type_map
+        for stmt in body.children:
+            # assignments are often wrapped: expression_statement → assignment
+            node = stmt
+            if node.type == "expression_statement" and node.child_count == 1:
+                node = node.children[0]
+            if node.type != "assignment":
+                continue
+            left = node.child_by_field_name("left")
+            if not left or left.type != "identifier":
+                continue
+            var_name = get_node_text(left, source_bytes)
+            # Pattern 1: var: ClassName = ...
+            type_ann = node.child_by_field_name("type")
+            if type_ann:
+                ann_node = type_ann
+                if ann_node.type == "type" and ann_node.child_count == 1:
+                    ann_node = ann_node.children[0]
+                if ann_node.type == "identifier":
+                    type_name = get_node_text(ann_node, source_bytes)
+                    if type_name and type_name[0].isupper():
+                        type_map[var_name] = type_name
+                continue
+            # Pattern 2: var = ClassName(...)
+            right = node.child_by_field_name("right")
+            if right and right.type == "call":
+                func_child = right.child_by_field_name("function")
+                if func_child and func_child.type == "identifier":
+                    cls_name = get_node_text(func_child, source_bytes)
+                    if cls_name and cls_name[0].isupper():
+                        type_map[var_name] = cls_name
+        return type_map
+
+    def _resolve_python_callee(
+        self, callee_raw: str, caller: str, parent_map: dict[str, str],
+        type_map: dict[str, str] | None = None,
+    ) -> str:
+        """Resolve self/super references and instance variable types in a callee."""
         if callee_raw.startswith("self.") and "." in caller:
             class_name = caller.rsplit(".", 1)[0]
             callee_raw = callee_raw.replace("self.", f"{class_name}.", 1)
@@ -529,6 +576,11 @@ class PythonParser(BaseLanguageParser):
             class_name = caller.rsplit(".", 1)[0]
             if class_name in parent_map:
                 callee_raw = callee_raw.replace("super.", f"{parent_map[class_name]}.", 1)
+        # Instance variable type inference: graph.add_relation() → CodeGraph.add_relation()
+        if type_map and "." in callee_raw:
+            prefix = callee_raw.split(".", 1)[0]
+            if prefix in type_map:
+                callee_raw = type_map[prefix] + callee_raw[len(prefix):]
         return callee_raw
 
     def _parse_python_call(
@@ -538,6 +590,7 @@ class PythonParser(BaseLanguageParser):
         caller: str,
         alias_map: dict[str, str],
         parent_map: dict[str, str],
+        type_map: dict[str, str] | None = None,
     ) -> Optional[Call]:
         """Parse a single Python call node."""
         func_node = node.child_by_field_name("function")
@@ -548,7 +601,7 @@ class PythonParser(BaseLanguageParser):
         if not callee_raw:
             return None
 
-        callee_raw = self._resolve_python_callee(callee_raw, caller, parent_map)
+        callee_raw = self._resolve_python_callee(callee_raw, caller, parent_map, type_map)
         callee = self._resolve_alias(callee_raw, alias_map)
 
         call_type = self._determine_python_call_type(func_node, source_bytes)
@@ -573,6 +626,7 @@ class PythonParser(BaseLanguageParser):
         context: str,
         alias_map: dict[str, str],
         parent_map: dict[str, str],
+        type_map: dict[str, str] | None = None,
     ) -> list[Call]:
         """Extract Python call relationships (Epic 11, Story 11.1).
 
@@ -584,6 +638,7 @@ class PythonParser(BaseLanguageParser):
             context: Current context (function/method/class name, e.g., "Child.method")
             alias_map: Import alias mapping
             parent_map: Parent class mapping (for super() resolution)
+            type_map: Local variable type map for instance method inference
 
         Returns:
             List of Call objects
@@ -593,7 +648,7 @@ class PythonParser(BaseLanguageParser):
         # Process call nodes
         if node.type == "call":
             call = self._parse_python_call(
-                node, source_bytes, context, alias_map, parent_map
+                node, source_bytes, context, alias_map, parent_map, type_map
             )
             if call:
                 calls.append(call)
@@ -602,7 +657,7 @@ class PythonParser(BaseLanguageParser):
         for child in node.children:
             calls.extend(
                 self._extract_python_calls(
-                    child, source_bytes, context, alias_map, parent_map
+                    child, source_bytes, context, alias_map, parent_map, type_map
                 )
             )
 
@@ -693,8 +748,9 @@ class PythonParser(BaseLanguageParser):
                         break
                 if method_name:
                     context = f"{class_name}.{method_name}"
+                    type_map = self._build_local_type_map(method_node, source_bytes)
                     calls.extend(self._extract_decorator_calls(method_node, source_bytes, class_name))
-                    calls.extend(self._extract_python_calls(method_node, source_bytes, context, alias_map, parent_map))
+                    calls.extend(self._extract_python_calls(method_node, source_bytes, context, alias_map, parent_map, type_map))
             elif method_node.type == "decorated_definition":
                 for dec_node in method_node.children:
                     if dec_node.type == "decorator" and self._is_simple_decorator(dec_node):
@@ -713,8 +769,9 @@ class PythonParser(BaseLanguageParser):
                                 method_name = get_node_text(node, source_bytes)
                                 break
                         if method_name:
+                            type_map = self._build_local_type_map(dec_child, source_bytes)
                             calls.extend(self._extract_python_calls(
-                                dec_child, source_bytes, f"{class_name}.{method_name}", alias_map, parent_map,
+                                dec_child, source_bytes, f"{class_name}.{method_name}", alias_map, parent_map, type_map,
                             ))
         return calls
 
@@ -754,7 +811,8 @@ class PythonParser(BaseLanguageParser):
                     (get_node_text(n, source_bytes) for n in child.children if n.type == "identifier"), ""
                 )
                 if func_name:
-                    calls.extend(self._extract_python_calls(child, source_bytes, func_name, alias_map, parent_map))
+                    type_map = self._build_local_type_map(child, source_bytes)
+                    calls.extend(self._extract_python_calls(child, source_bytes, func_name, alias_map, parent_map, type_map))
 
             elif child.type == "class_definition":
                 calls.extend(self._extract_class_node_calls(child, source_bytes, "<module>", alias_map, parent_map))
@@ -775,7 +833,8 @@ class PythonParser(BaseLanguageParser):
                             (get_node_text(n, source_bytes) for n in dec_child.children if n.type == "identifier"), ""
                         )
                         if func_name:
-                            calls.extend(self._extract_python_calls(dec_child, source_bytes, func_name, alias_map, parent_map))
+                            type_map = self._build_local_type_map(dec_child, source_bytes)
+                            calls.extend(self._extract_python_calls(dec_child, source_bytes, func_name, alias_map, parent_map, type_map))
                     elif dec_child.type == "class_definition":
                         calls.extend(self._extract_class_node_calls(dec_child, source_bytes, "<module>", alias_map, parent_map))
 
