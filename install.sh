@@ -421,7 +421,6 @@ fi
 info "Detected: ${PLATFORMS[*]}"
 
 # ── Config (fully automatic) ──────────────────────────
-API_URL="$DEFAULT_API_URL"
 API_KEY=""
 
 # ── Check for existing key ────────────────────────────
@@ -473,6 +472,7 @@ else
 fi
 cd "$SCRIPT_DIR" && git remote set-url origin "$GIT_REMOTE" 2>/dev/null || true
 info "Git remote → $GIT_REMOTE ($REGION)"
+API_URL="$DEFAULT_API_URL"
 
 # ── Venv + deps ───────────────────────────────────────
 head1 "Dependencies"
