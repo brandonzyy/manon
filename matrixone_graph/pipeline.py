@@ -38,22 +38,44 @@ class QueryResult:
 def _resolve_import_by_filepath(file_path: str, import_path: str) -> str:
     """Resolve a relative import using the actual file path.
 
-    Uses the file path with '/' separators so that filenames
-    containing dots (e.g., 'intent-detector.test.ts') are treated as
-    a single path component.
+    Handles Python/JS relative import syntax:
+    - Python: leading dots indicate package depth ('.utils' = same pkg, '..utils' = parent pkg)
+    - JS/TS: path segments with '/' ('../../utils', '../orchestrator/intent-detector')
 
     Args:
-        file_path: Relative file path, e.g. "tests/intent-detector.test.ts"
-        import_path: Import path, e.g. "../electron/orchestrator/intent-detector"
+        file_path: Relative file path, e.g. "codeindex/parsers/python_parser.py"
+        import_path: Import path, e.g. ".utils", "..base", "../electron/orchestrator"
 
     Returns:
-        Dot-separated module ID, e.g. "electron.orchestrator.intent-detector"
+        Dot-separated module ID, e.g. "codeindex.parsers.utils"
     """
     if not import_path.startswith("."):
         return import_path
     import posixpath
     file_dir = posixpath.dirname(file_path.replace("\\", "/"))
-    resolved = posixpath.normpath(posixpath.join(file_dir, import_path))
+
+    if "/" in import_path:
+        # JS/TS style: "../electron/orchestrator/intent-detector"
+        resolved = posixpath.normpath(posixpath.join(file_dir, import_path))
+        return resolved.replace("/", ".")
+
+    # Python style: leading dots encode package depth, no slashes
+    # '.'  → current package (1 dot, go up 0 levels from file_dir)
+    # '..' → parent package  (2 dots, go up 1 level)
+    dots = len(import_path) - len(import_path.lstrip("."))
+    module_suffix = import_path[dots:]  # module name after the dots, may contain dots itself
+
+    base = file_dir
+    for _ in range(dots - 1):
+        base = posixpath.dirname(base)
+
+    if module_suffix:
+        # module_suffix may be "utils" or "routers.db" — convert dots to slashes for joining
+        resolved = posixpath.join(base, module_suffix.replace(".", "/")) if base else module_suffix.replace(".", "/")
+    else:
+        resolved = base
+
+    resolved = posixpath.normpath(resolved)
     return resolved.replace("/", ".")
 
 
@@ -91,16 +113,22 @@ def _resolve_callee(
     return None  # unresolvable — skip rather than create phantom
 
 
-def _build_imported_names(pr, fp: str) -> tuple[dict[str, str], set[str]]:
+def _build_imported_names(
+    pr, fp: str, local_packages: frozenset[str] = frozenset()
+) -> tuple[dict[str, str], set[str]]:
     """Build short_name → fully_qualified_id mapping from imports.
 
     Returns (imported_names, external_names) where external_names contains
-    short names that come from non-relative (external package) imports.
+    short names that come from genuinely external (third-party) imports.
+    Project-internal absolute imports (e.g. 'from matrixone_graph.store import X')
+    are NOT treated as external when the top-level package is in local_packages.
     """
     imported_names: dict[str, str] = {}
     external_names: set[str] = set()
     for imp in pr.imports:
-        is_external = not imp.module.startswith(".")
+        is_relative = imp.module.startswith(".")
+        top_level = imp.module.lstrip(".").split(".")[0]
+        is_external = not is_relative and top_level not in local_packages
         resolved = _resolve_import_by_filepath(fp, imp.module)
         for name in imp.names:
             imported_names[name] = f"{resolved}.{name}"
@@ -114,16 +142,20 @@ def _build_imported_names(pr, fp: str) -> tuple[dict[str, str], set[str]]:
     return imported_names, external_names
 
 
-def _map_import_relations(pr, module: str, fp: str) -> list[Relation]:
+def _map_import_relations(
+    pr, module: str, fp: str, local_packages: frozenset[str] = frozenset()
+) -> list[Relation]:
     """Build import relations from a parse result.
 
-    Only emits relations for relative (project-internal) imports to avoid
-    creating phantom nodes for external packages (react, lodash, fs, etc.).
+    Emits relations for relative imports and absolute imports that reference
+    local project packages. Skips genuinely external packages (fastapi, httpx, etc.).
     """
     relations: list[Relation] = []
     for imp in pr.imports:
-        if not imp.module.startswith("."):
-            continue  # skip external package imports
+        is_relative = imp.module.startswith(".")
+        top_level = imp.module.lstrip(".").split(".")[0]
+        if not is_relative and top_level not in local_packages:
+            continue  # truly external package — skip
         resolved = _resolve_import_by_filepath(fp, imp.module)
         if imp.names:
             for name in imp.names:
@@ -135,7 +167,9 @@ def _map_import_relations(pr, module: str, fp: str) -> list[Relation]:
     return relations
 
 
-def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[Relation]]:
+def _map_parse_result(
+    pr, module: str, local_packages: frozenset[str] = frozenset()
+) -> tuple[list[Entity], list[Relation]]:
     entities: list[Entity] = []
     relations: list[Relation] = []
     fp = str(pr.path)
@@ -150,7 +184,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
                                 description=_build_description(sym), file_path=fp,
                                 line_start=sym.line_start, line_end=sym.line_end, decorators=decorators))
 
-    imported_names, external_names = _build_imported_names(pr, fp)
+    imported_names, external_names = _build_imported_names(pr, fp, local_packages)
     for call in pr.calls:
         if call.callee is None:
             continue
@@ -169,7 +203,7 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
             continue  # external or unresolvable parent class — skip
         relations.append(Relation(src_id=_make_entity_id(module, inh.child), tgt_id=parent_id,
                                   kind="inherits", description=f"{inh.child} extends {inh.parent}", file_path=fp, weight=1.0))
-    relations.extend(_map_import_relations(pr, module, fp))
+    relations.extend(_map_import_relations(pr, module, fp, local_packages))
     return entities, relations
 
 

@@ -102,6 +102,17 @@ class CodeGraph:
 
     def add_relation(self, rel: Relation) -> None:
         self._g.add_edge(rel.src_id, rel.tgt_id, **rel.to_dict())
+        # Track which file is responsible for each phantom node created by this edge.
+        # When that file is later removed/updated, we can surgically clean up its phantoms.
+        if rel.file_path:
+            for node_id in (rel.src_id, rel.tgt_id):
+                d = self._g.nodes[node_id]
+                if not d.get("kind"):  # phantom (auto-created by add_edge, no real entity)
+                    rf = d.get("responsible_files")
+                    if rf is None:
+                        self._g.nodes[node_id]["responsible_files"] = [rel.file_path]
+                    elif rel.file_path not in rf:
+                        rf.append(rel.file_path)
 
     def remove_by_file(self, file_path: str) -> None:
         to_remove = [
@@ -109,13 +120,19 @@ class CodeGraph:
             if d.get("file_path") == file_path
         ]
         self._g.remove_nodes_from(to_remove)
-        # Clean up orphaned phantom nodes left isolated after removal
-        orphans = [
-            n for n, d in self._g.nodes(data=True)
-            if not d.get("kind") and self._g.degree(n) == 0
-        ]
-        if orphans:
-            self._g.remove_nodes_from(orphans)
+        # Decrement responsible_files on surviving phantom nodes.
+        # A phantom whose last responsible file was just removed is deleted.
+        phantoms_to_remove = []
+        for n, d in self._g.nodes(data=True):
+            if d.get("kind"):
+                continue
+            rf = d.get("responsible_files", [])
+            if file_path in rf:
+                rf.remove(file_path)
+                if not rf:
+                    phantoms_to_remove.append(n)
+        if phantoms_to_remove:
+            self._g.remove_nodes_from(phantoms_to_remove)
 
     def neighbors(self, entity_id: str, depth: int = 1, direction: str = "both") -> list[tuple[Entity, list[Relation]]]:
         if entity_id not in self._g:

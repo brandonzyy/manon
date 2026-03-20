@@ -431,6 +431,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node root-cause fix, cross-module edge recovery, instance method type inference; relations +74%; code health 97/100 |
 | **v1.2.0** | 2026-03-19 | Script classifier filters tool scripts from index; LLM classify endpoint; +115 tests; code health 94/100 |
 | **v1.1.2** | 2026-03-19 | Major code cleanup via `/dao`: dead code removed, functions decomposed, test coverage 32%→61%; TC dimension now reads real coverage data |
 | **v1.1.1** | 2026-03-18 | Fixed index coverage stats inaccuracy |
@@ -444,6 +445,19 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 ---
 
 ## 📦 Changelog
+
+### v1.2.1 — 2026-03-20
+
+**Knowledge graph quality overhaul** — Four root-cause fixes that eliminate phantom node pollution and cross-module edge loss. Validated with a full rebuild: relations +74% (600→1053), cross-module edges 0→51, health score 94→97.
+
+- **Phantom file attribution** (`responsible_files`) — each phantom node now tracks which source files are responsible for it. `remove_by_file()` surgically cleans up orphaned phantoms on incremental updates, eliminating stale-graph pollution without requiring a full rebuild.
+- **Python relative import fix** — dots in `.utils` / `..utils` were misinterpreted as hidden filenames by `posixpath.normpath`, producing double/triple-dot entity IDs. Fixed by parsing leading-dot count to correctly resolve package depth.
+- **Project-internal absolute import fix** — all non-relative imports were incorrectly marked as external, silently dropping call edges to project-internal classes (e.g. `CodeGraph`, `VectorIndex`). Fixed by introducing `local_packages` (top-level dirs with `__init__.py`) to distinguish truly external packages.
+- **Instance method type inference** — Python parser now tracks `var = ClassName()` and `var: ClassName = ...` assignments in function bodies. Calls like `var.method()` are resolved to `ClassName.method()` and correctly added as graph edges.
+- **Refactored** — internal `_Fake*` dataclasses replaced with proper `codeindex.parser` types throughout the indexing pipeline.
+- **Code health** — `97/100`, up from `94/100`.
+
+---
 
 ### v1.2.0 — 2026-03-19
 
