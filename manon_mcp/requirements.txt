@@ -4,6 +4,8 @@ httpx>=0.28,<1
 tree-sitter>=0.23.0,<1
 tree-sitter-python
 tree-sitter-javascript
+# Custom fork with grammar fixes (export type * etc.): brandonzyy/tree-sitter-typescript
+# Install manually: pip install https://github.com/brandonzyy/tree-sitter-typescript/releases/download/v0.23.5/manon_tree_sitter_typescript-0.23.3-cp39-abi3-win_amd64.whl
 tree-sitter-typescript
 tree-sitter-java
 tree-sitter-php
