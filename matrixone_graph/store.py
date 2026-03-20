@@ -166,6 +166,23 @@ class CodeGraph:
         """Count of phantom nodes (unresolved external references)."""
         return sum(1 for _, d in self._g.nodes(data=True) if not d.get("kind"))
 
+    def prune_phantoms(self) -> int:
+        """Remove phantom nodes not directly adjacent to any real entity.
+
+        Phantoms that only connect to other phantoms are dead weight —
+        no real entity references them, so they can never be resolved.
+        Called as a safety net after final sync batch.
+        """
+        real_ids = {n for n, d in self._g.nodes(data=True) if d.get("kind")}
+        dead = [
+            n for n, d in self._g.nodes(data=True)
+            if not d.get("kind")
+            and not (set(self._g.predecessors(n)) | set(self._g.successors(n))) & real_ids
+        ]
+        if dead:
+            self._g.remove_nodes_from(dead)
+        return len(dead)
+
     @property
     def relation_count(self) -> int:
         return self._g.number_of_edges()

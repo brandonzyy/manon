@@ -197,6 +197,9 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             if stale_files:
                 logger.info("reconcile: removed stale entities from %d files: %s",
                             len(stale_files), list(stale_files)[:10])
+            pruned = graph.prune_phantoms()
+            if pruned:
+                logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
 
         entities_added = len(all_entities)
         for e in all_entities:

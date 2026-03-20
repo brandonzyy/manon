@@ -108,7 +108,7 @@ async def initialize_project(
         log.error("Health check failed: %s", e)
         return f"❌ Manon API unreachable ({config.API_URL}): {e}\n   Please ensure the saas service is running."
 
-    lines = [f"─── 🧠 Manon v{config.CLIENT_VERSION} {'─' * 28}"]
+    lines = [f"─── 🧠 Manon v{config._get_client_version()} {'─' * 28}"]
     lines.append("\n📦 项目状态")
     lines.append("  ✅ API 连接成功")
     prev = read_update_status()

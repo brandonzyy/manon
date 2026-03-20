@@ -68,41 +68,62 @@ def _build_description(symbol) -> str:
 
 def _resolve_callee(
     call_callee: str, local_names: set[str], imported_names: dict[str, str],
-    module: str, fp: str,
-) -> str:
-    """Resolve a callee reference to a fully qualified entity ID."""
+    external_names: set[str], module: str, fp: str,
+) -> str | None:
+    """Resolve a callee reference to a fully qualified entity ID.
+
+    Returns None for external/unresolvable callees to avoid creating phantom nodes.
+    """
     if call_callee in local_names:
         return _make_entity_id(module, call_callee)
+    if call_callee in external_names:
+        return None  # external import (e.g. React, fs, lodash) — skip
     if call_callee in imported_names:
         return imported_names[call_callee]
     if call_callee.startswith(("./", "../")):
         return _resolve_import_by_filepath(fp, call_callee)
     if "." in call_callee:
         prefix, rest = call_callee.split(".", 1)
+        if prefix in external_names:
+            return None  # e.g. React.useState, fs.readFile, console.log
         if prefix in imported_names:
             return f"{imported_names[prefix]}.{rest}"
-        parent_module = module.rsplit(".", 1)[0] if "." in module else ""
-        if parent_module:
-            return f"{parent_module}.{prefix}.{rest}"
-    return call_callee
+    return None  # unresolvable — skip rather than create phantom
 
 
-def _build_imported_names(pr, fp: str) -> dict[str, str]:
-    """Build short_name → fully_qualified_id mapping from imports."""
+def _build_imported_names(pr, fp: str) -> tuple[dict[str, str], set[str]]:
+    """Build short_name → fully_qualified_id mapping from imports.
+
+    Returns (imported_names, external_names) where external_names contains
+    short names that come from non-relative (external package) imports.
+    """
     imported_names: dict[str, str] = {}
+    external_names: set[str] = set()
     for imp in pr.imports:
+        is_external = not imp.module.startswith(".")
         resolved = _resolve_import_by_filepath(fp, imp.module)
         for name in imp.names:
             imported_names[name] = f"{resolved}.{name}"
+            if is_external:
+                external_names.add(name)
         if not imp.names:
-            imported_names[resolved.rsplit(".", 1)[-1]] = resolved
-    return imported_names
+            short = resolved.rsplit(".", 1)[-1]
+            imported_names[short] = resolved
+            if is_external:
+                external_names.add(short)
+    return imported_names, external_names
 
 
 def _map_import_relations(pr, module: str, fp: str) -> list[Relation]:
-    """Build import relations from a parse result."""
+    """Build import relations from a parse result.
+
+    Only emits relations for relative (project-internal) imports to avoid
+    creating phantom nodes for external packages (react, lodash, fs, etc.).
+    """
     relations: list[Relation] = []
     for imp in pr.imports:
+        if not imp.module.startswith("."):
+            continue  # skip external package imports
         resolved = _resolve_import_by_filepath(fp, imp.module)
         if imp.names:
             for name in imp.names:
@@ -129,15 +150,24 @@ def _map_parse_result(pr: ParseResult, module: str) -> tuple[list[Entity], list[
                                 description=_build_description(sym), file_path=fp,
                                 line_start=sym.line_start, line_end=sym.line_end, decorators=decorators))
 
-    imported_names = _build_imported_names(pr, fp)
+    imported_names, external_names = _build_imported_names(pr, fp)
     for call in pr.calls:
         if call.callee is None:
             continue
         caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
-        relations.append(Relation(src_id=caller_id, tgt_id=_resolve_callee(call.callee, local_names, imported_names, module, fp),
+        tgt_id = _resolve_callee(call.callee, local_names, imported_names, external_names, module, fp)
+        if tgt_id is None:
+            continue
+        relations.append(Relation(src_id=caller_id, tgt_id=tgt_id,
                                   kind="calls", description=f"{call.caller} -> {call.callee}", file_path=fp, weight=1.0))
     for inh in pr.inheritances:
-        relations.append(Relation(src_id=_make_entity_id(module, inh.child), tgt_id=inh.parent,
+        if inh.parent in local_names:
+            parent_id = _make_entity_id(module, inh.parent)
+        elif inh.parent in imported_names and inh.parent not in external_names:
+            parent_id = imported_names[inh.parent]
+        else:
+            continue  # external or unresolvable parent class — skip
+        relations.append(Relation(src_id=_make_entity_id(module, inh.child), tgt_id=parent_id,
                                   kind="inherits", description=f"{inh.child} extends {inh.parent}", file_path=fp, weight=1.0))
     relations.extend(_map_import_relations(pr, module, fp))
     return entities, relations
