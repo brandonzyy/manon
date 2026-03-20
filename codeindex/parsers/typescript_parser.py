@@ -838,6 +838,26 @@ class TypeScriptParser(BaseLanguageParser):
                                     )
                 return
 
+        elif node.type == "lexical_declaration":
+            # Handle: const/let foo = () => {} or const/let foo = function() {}
+            # Each variable_declarator may define a different function — process each
+            # with its own caller context so calls inside are attributed correctly.
+            # Only applies at module scope (caller == "") to avoid creating phantom
+            # nodes for locally-scoped arrow functions inside methods/functions.
+            if not caller:
+                for child in node.children:
+                    if child.type == "variable_declarator":
+                        var_name = ""
+                        has_func = False
+                        for vc in child.children:
+                            if vc.type == "identifier":
+                                var_name = get_node_text(vc, source_bytes)
+                            elif vc.type in ("arrow_function", "function"):
+                                has_func = True
+                        child_caller = var_name if (var_name and has_func) else caller
+                        self._extract_calls_from_node(child, source_bytes, child_caller, calls, import_map)
+                return
+
         elif node.type == "export_statement":
             for child in node.children:
                 self._extract_calls_from_node(child, source_bytes, caller, calls, import_map)

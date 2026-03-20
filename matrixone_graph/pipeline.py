@@ -188,7 +188,15 @@ def _map_parse_result(
     for call in pr.calls:
         if call.callee is None:
             continue
-        caller_id = _make_entity_id(module, call.caller) if call.caller in local_names else call.caller
+        # Empty caller means the call is at module scope (e.g. inside an arrow
+        # function that the TS parser couldn't attribute, or a top-level IIFE).
+        # Map it to the module entity rather than creating a phantom "" node.
+        if not call.caller:
+            caller_id = module
+        elif call.caller in local_names:
+            caller_id = _make_entity_id(module, call.caller)
+        else:
+            caller_id = call.caller
         tgt_id = _resolve_callee(call.callee, local_names, imported_names, external_names, module, fp)
         if tgt_id is None:
             continue
