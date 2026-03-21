@@ -439,3 +439,89 @@ def _install_hook(project_path: str) -> str | None:
     _persist_api_config()
     log.info("_install_hook: total %.2fs", _time.time() - t0)
     return "Push hook installed"
+
+
+# ── Skill bidirectional sync ─────────────────────────────────────────────────
+
+# Skills that have scripts subdirectories
+_SKILLS_WITH_SCRIPTS = ("manon", "dao", "tc")
+# Skills that are SKILL.md only (no scripts)
+_SKILLS_MD_ONLY = ("experience",)
+
+
+def _sync_skills() -> str | None:
+    """Bidirectional sync between repo skills/ and ~/.claude/skills/.
+
+    For each skill, compare mtime of SKILL.md in both locations.
+    Copy the newer version over the older one.
+    """
+    repo_skills_dir = Path(__file__).resolve().parent.parent / "skills"
+    local_skills_dir = Path.home() / ".claude" / "skills"
+
+    if not repo_skills_dir.is_dir():
+        return None
+
+    synced: list[str] = []
+    all_skills = list(_SKILLS_WITH_SCRIPTS) + list(_SKILLS_MD_ONLY)
+
+    for skill_name in all_skills:
+        repo_dir = repo_skills_dir / skill_name
+        local_dir = local_skills_dir / skill_name
+        repo_skill = repo_dir / "SKILL.md"
+        local_skill = local_dir / "SKILL.md"
+
+        repo_exists = repo_skill.exists()
+        local_exists = local_skill.exists()
+
+        if not repo_exists and not local_exists:
+            continue
+
+        # Determine sync direction by mtime
+        if repo_exists and local_exists:
+            repo_mtime = repo_skill.stat().st_mtime
+            local_mtime = local_skill.stat().st_mtime
+            if abs(repo_mtime - local_mtime) < 1:
+                continue  # same, skip
+            if repo_mtime > local_mtime:
+                direction = "repo→local"
+            else:
+                direction = "local→repo"
+        elif repo_exists:
+            direction = "repo→local"
+        else:
+            direction = "local→repo"
+
+        try:
+            if direction == "repo→local":
+                local_dir.mkdir(parents=True, exist_ok=True)
+                _copy_file(repo_skill, local_skill)
+                if skill_name in _SKILLS_WITH_SCRIPTS:
+                    _sync_scripts_dir(repo_dir / "scripts", local_dir / "scripts")
+            else:
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                _copy_file(local_skill, repo_skill)
+                if skill_name in _SKILLS_WITH_SCRIPTS:
+                    _sync_scripts_dir(local_dir / "scripts", repo_dir / "scripts")
+            synced.append(f"{skill_name}({direction})")
+        except Exception as exc:
+            log.warning("Skill sync failed for %s: %s", skill_name, exc)
+
+    if not synced:
+        return None
+    return f"Skills synced: {', '.join(synced)}"
+
+
+def _copy_file(src: Path, dst: Path) -> None:
+    """Copy file preserving content."""
+    dst.write_bytes(src.read_bytes())
+
+
+def _sync_scripts_dir(src_dir: Path, dst_dir: Path) -> None:
+    """Copy all .py files from src scripts dir to dst scripts dir."""
+    if not src_dir.is_dir():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for py_file in src_dir.glob("*.py"):
+        dst_file = dst_dir / py_file.name
+        if not dst_file.exists() or py_file.stat().st_mtime > dst_file.stat().st_mtime:
+            dst_file.write_bytes(py_file.read_bytes())
