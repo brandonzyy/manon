@@ -150,6 +150,13 @@ PYEOF
     mkdir -p "$exp_skill_dir"
     cp "$SCRIPT_DIR/skills/experience/SKILL.md" "$exp_skill_dir/SKILL.md"
     info "Claude Code /experience Skill installed (experience-driven dev loop)"
+
+    # Install tc skill (测试覆盖循环)
+    local tc_skill_dir="$HOME/.claude/skills/tc"
+    mkdir -p "$tc_skill_dir/scripts"
+    cp "$SCRIPT_DIR/skills/tc/SKILL.md" "$tc_skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/tc/scripts/"*.py "$tc_skill_dir/scripts/"
+    info "Claude Code /tc Skill installed (test coverage loop with Manon)"
 }
 
 # --- Cursor ---
