@@ -117,15 +117,25 @@ async def initialize_project(
 
     await progress(15, "Loading project state...")
     proj = get_project(project_path)
+    _need_match_or_create = False
     if proj:
         await progress(18, "Initializing existing project...")
-        rid, proj_lines, graph_lines = await asyncio.to_thread(
-            init_existing_project,
-            project_path,
-            proj,
-            progress_cb=sync_progress,
-        )
-    else:
+        try:
+            rid, proj_lines, graph_lines = await asyncio.to_thread(
+                init_existing_project,
+                project_path,
+                proj,
+                progress_cb=sync_progress,
+            )
+        except Exception as e:
+            # StaleRepoError (or similar) — local registration cleared, fall through
+            from .init_helpers import StaleRepoError
+            if isinstance(e, StaleRepoError):
+                log.warning("Stale repo detected for %s, will re-create", project_path)
+                _need_match_or_create = True
+            else:
+                raise
+    if not proj or _need_match_or_create:
         await progress(18, "Matching or creating repository...")
         result = await asyncio.to_thread(
             init_match_or_create,

@@ -3,8 +3,9 @@
 Signals (in priority order):
 1. is_imported_by_project  → source_code (definitive)
 2. imports_project_modules → source_code (definitive)
-3. tool name + single_main → tool_script (definitive)
-4. uncertain               → LLM tiebreaker
+3. directory heuristic      → source_code or tool_script (definitive)
+4. tool name + single_main → tool_script (definitive)
+5. uncertain               → LLM tiebreaker
 """
 from __future__ import annotations
 
@@ -30,9 +31,48 @@ _TOOL_PATTERNS = [
 ]
 _TOOL_RE = re.compile("|".join(_TOOL_PATTERNS), re.IGNORECASE)
 
+# Directory-based heuristics (language-agnostic)
+_SOURCE_DIRS = {"src", "lib", "core", "app", "pkg", "internal", "extensions", "packages", "ui",
+                 "cmd", "api", "web", "server", "client", "service", "services", "modules"}
+_TOOL_DIRS = {"scripts", "tools", "bin", "examples", "demo", "fixtures"}
+
+# All code extensions supported by codeindex (must stay in sync with codeindex/parser.py)
+_ALL_CODE_EXTS = {
+    # Specialized parsers
+    ".py", ".php", ".phtml", ".java",
+    ".ts", ".tsx", ".js", ".jsx", ".mjs",
+    # Generic parsers (tree-sitter)
+    ".go", ".rs",
+    ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx",
+    ".cs", ".rb", ".swift",
+    ".kt", ".kts", ".scala", ".lua",
+    ".r", ".R",
+    ".ex", ".exs", ".dart", ".hs",
+    ".ml", ".mli",
+    ".sh", ".bash", ".zig",
+}
+
+# Extensions with relative-path import semantics (./foo, ../bar)
+_RELATIVE_IMPORT_EXTS = {
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".go", ".rs", ".dart",
+}
+
 
 def _is_tool_name(stem: str) -> bool:
     return bool(_TOOL_RE.search(stem))
+
+
+def _top_dir(rel_path: str) -> str:
+    """Return the first directory component of a relative path."""
+    parts = Path(rel_path).parts
+    return parts[0] if len(parts) > 1 else ""
+
+
+def _is_non_python(rel_path: str) -> bool:
+    """True if the file is a non-Python source file supported by codeindex."""
+    suffix = Path(rel_path).suffix
+    return suffix in _ALL_CODE_EXTS and suffix != ".py"
 
 
 # ── AST-based signal extraction ───────────────────────────────────────────────
@@ -108,19 +148,23 @@ class ScriptSignals:
 # ── Classifier ────────────────────────────────────────────────────────────────
 
 class ScriptClassifier:
-    """Classify Python scripts as source_code or tool_script."""
+    """Classify scripts as source_code or tool_script (Python + TS/JS)."""
 
     def __init__(self, project_packages: list[str]):
         """
         Args:
-            project_packages: Top-level package names in this project
-                              (e.g. ['core', 'manon_mcp', 'saas', 'codeindex'])
+            project_packages: Top-level package names in this project.
+                Python: dirs with __init__.py (e.g. ['core', 'manon_mcp']).
+                TS/JS:  dirs with package.json or standard source dirs.
         """
         self.project_packages = set(project_packages)
 
     def _imports_project(self, signals: ScriptSignals) -> bool:
         for imp in signals.imports:
-            root = imp.split(".")[0]
+            # Python: "core.ast.scanner" → root = "core"
+            # TS/JS:  "./utils" or "../config" → relative, handled elsewhere
+            #         "openclaw/plugin-sdk" → root = "openclaw"
+            root = imp.split(".")[0].split("/")[0]
             if root in self.project_packages:
                 return True
         return False
@@ -129,6 +173,13 @@ class ScriptClassifier:
         """Only entry point is __main__ guard, few or no exported API."""
         public = [n for n in signals.exports if n != "main"]
         return signals.has_main_guard and len(public) <= 2
+
+    def _is_non_python_standalone(self, signals: ScriptSignals) -> bool:
+        """Non-Python file with no exported symbols — likely a standalone script."""
+        if not _is_non_python(signals.rel_path):
+            return False
+        exported = [n for n in signals.exports if n and not n.startswith("_")]
+        return len(exported) == 0
 
     def classify(
         self,
@@ -147,8 +198,19 @@ class ScriptClassifier:
         if self._imports_project(signals):
             return "source_code", True
 
-        # Definitive: tool name + standalone entry point
+        # Definitive: directory heuristic (language-agnostic)
+        top = _top_dir(signals.rel_path)
+        if top in _SOURCE_DIRS:
+            return "source_code", True
+        if top in _TOOL_DIRS:
+            return "tool_script", True
+
+        # Definitive: Python tool name + standalone entry point
         if _is_tool_name(signals.stem) and self._is_single_main(signals):
+            return "tool_script", True
+
+        # Definitive: non-Python tool name + no exports
+        if _is_tool_name(signals.stem) and self._is_non_python_standalone(signals):
             return "tool_script", True
 
         # Uncertain → LLM
@@ -205,39 +267,40 @@ def is_scripts_like_path(rel_path: str) -> bool:
 def build_imported_paths(file_results: list[dict], project_root: Path) -> set[str]:
     """
     Build set of rel_paths that are imported by other files.
-    Uses parse_result imports to match against known file paths.
-    Handles both absolute imports and relative imports (from . import foo).
+    Supports Python (.py) and all non-Python languages with path-based imports.
     """
-    # Map module path → rel_path
+    # Map module path → rel_path (Python: dotted module names)
     module_to_path: dict[str, str] = {}
+    # Map bare path (no ext) → rel_path (non-Python: file paths without extension)
+    bare_to_path: dict[str, str] = {}
+
     for f in file_results:
         rel = f["rel_path"]
         if rel.endswith(".py"):
             mod = rel[:-3].replace("/", ".").replace("\\", ".")
             module_to_path[mod] = rel
-            # Also map last component for stem-only imports
             module_to_path[Path(rel).stem] = rel
+        elif _is_non_python(rel):
+            # "src/browser/chrome.ts" → "src/browser/chrome"
+            bare = str(Path(rel).with_suffix("")).replace("\\", "/")
+            bare_to_path[bare] = rel
+            # Also index without /index suffix: "src/foo/index.ts" → "src/foo"
+            if bare.endswith("/index"):
+                bare_to_path[bare[:-6]] = rel
 
-    def _resolve_relative(imp_module: str, imp_names: list[str], importer_rel: str) -> list[str]:
-        """Resolve relative imports to absolute module paths."""
-        # importer_rel e.g. "manon_mcp/server.py"
+    def _resolve_py_relative(imp_module: str, imp_names: list[str], importer_rel: str) -> list[str]:
+        """Resolve Python relative imports to absolute module paths."""
         parts = importer_rel.replace("\\", "/").split("/")
-        pkg_parts = parts[:-1]  # directory parts = package
-
+        pkg_parts = parts[:-1]
         dots = len(imp_module) - len(imp_module.lstrip("."))
-        # Go up (dots-1) package levels (1 dot = current package)
         if dots > 1:
             pkg_parts = pkg_parts[:max(0, len(pkg_parts) - (dots - 1))]
-
-        suffix = imp_module.lstrip(".")  # e.g. "" for ".", "tools" for ".tools"
+        suffix = imp_module.lstrip(".")
         base_parts = pkg_parts + (suffix.split(".") if suffix else [])
-
         resolved = []
-        # Base package itself
         base = ".".join(base_parts)
         if base:
             resolved.append(base)
-        # Each imported name as sub-module (e.g. from . import _hooks → manon_mcp._hooks)
         for name in imp_names:
             if isinstance(name, str):
                 resolved.append(f"{base}.{name}" if base else name)
@@ -247,30 +310,59 @@ def build_imported_paths(file_results: list[dict], project_root: Path) -> set[st
                     resolved.append(f"{base}.{n}" if base else n)
         return resolved
 
+    def _resolve_relative_path(specifier: str, importer_rel: str) -> str:
+        """Resolve relative import to bare path (e.g. './utils' from 'src/foo.ts' → 'src/utils').
+
+        Works for any language with relative path imports (TS/JS, Go, Rust, Dart, etc.).
+        """
+        if not specifier.startswith("."):
+            return ""
+        importer_dir = str(Path(importer_rel).parent).replace("\\", "/")
+        combined = importer_dir + "/" + specifier
+        parts = []
+        for p in combined.split("/"):
+            if p == "..":
+                if parts:
+                    parts.pop()
+            elif p and p != ".":
+                parts.append(p)
+        return "/".join(parts)
+
     imported: set[str] = set()
+
     for f in file_results:
         pr = f.get("parse_result") or {}
+        is_py = f["rel_path"].endswith(".py")
+
         for imp in pr.get("imports", []):
             name = imp.get("module", "") or imp.get("name", "")
             names = imp.get("names", [])
 
-            if name.startswith("."):
-                # Relative import — resolve against importer's package
-                candidates = _resolve_relative(name, names, f["rel_path"])
-            else:
-                candidates = [name]
-                # Also resolve each explicitly imported name as sub-module
-                for n in names:
-                    n_str = n.get("name", "") if isinstance(n, dict) else str(n)
-                    if n_str:
-                        candidates.append(f"{name}.{n_str}")
+            if is_py:
+                # Python imports (dotted module paths)
+                if name.startswith("."):
+                    candidates = _resolve_py_relative(name, names, f["rel_path"])
+                else:
+                    candidates = [name]
+                    for n in names:
+                        n_str = n.get("name", "") if isinstance(n, dict) else str(n)
+                        if n_str:
+                            candidates.append(f"{name}.{n_str}")
 
-            for cand in candidates:
-                if cand in module_to_path:
-                    imported.add(module_to_path[cand])
-                # Prefix match: e.g. "core.ast" matches "core/ast/scanner.py"
-                for mod, path in module_to_path.items():
-                    if cand == mod or cand.startswith(mod + ".") or mod.startswith(cand + "."):
-                        imported.add(path)
+                for cand in candidates:
+                    if cand in module_to_path:
+                        imported.add(module_to_path[cand])
+                    for mod, path in module_to_path.items():
+                        if cand == mod or cand.startswith(mod + ".") or mod.startswith(cand + "."):
+                            imported.add(path)
+            else:
+                # Non-Python: relative path imports (./foo, ../bar)
+                if name.startswith("."):
+                    resolved = _resolve_relative_path(name, f["rel_path"])
+                    if resolved and resolved in bare_to_path:
+                        imported.add(bare_to_path[resolved])
+                # Absolute/package imports: match against bare_to_path
+                elif name in bare_to_path:
+                    imported.add(bare_to_path[name])
 
     return imported

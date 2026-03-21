@@ -311,7 +311,13 @@ class VectorIndex:
     def load(self, path: Path) -> None:
         if not path.exists():
             return
-        data = np.load(path, allow_pickle=False)
+        try:
+            data = np.load(path, allow_pickle=False)
+        except Exception:
+            # Corrupted vectors file — remove and rebuild from scratch
+            path.unlink(missing_ok=True)
+            path.with_suffix(".ids.json").unlink(missing_ok=True)
+            return
         self._entity_vecs = data["entity_vecs"] if "entity_vecs" in data else None
         self._chunk_vecs = data["chunk_vecs"] if "chunk_vecs" in data else None
         meta_path = path.with_suffix(".ids.json")

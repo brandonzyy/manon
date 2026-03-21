@@ -6,9 +6,17 @@ import os
 import time
 from pathlib import Path
 
-from core.ast import set_project
+from core.ast import set_project, load_projects, save_projects
 
 log = logging.getLogger("manon-mcp")
+
+
+class StaleRepoError(Exception):
+    """Raised when local repo_id doesn't exist on the server and can't be recovered."""
+    def __init__(self, name: str, repo_id: str):
+        self.name = name
+        self.repo_id = repo_id
+        super().__init__(f"stale repo_id {repo_id} for '{name}'")
 
 
 def _fmt_stats(stats: dict) -> str:
@@ -46,11 +54,60 @@ def _init_existing_project(
         if repo.get("index_stats"):
             graph_lines.append(_fmt_stats(repo["index_stats"]))
     except Exception as exc:
-        log.warning("Failed to fetch repo %s status: %s", repo_id, exc)
-        graph_lines.append(f"  last_sync {last_sync} | tracked_files {tracked}")
-        graph_lines.append(f"  warning: failed to fetch server status: {exc}")
+        if "404" in str(exc) or "not found" in str(exc).lower():
+            # repo_id not found on server — try to recover by name match
+            log.warning("repo_id %s not found on server, attempting recovery by name '%s'", repo_id, proj["name"])
+            recovered = _recover_repo_by_name(project_path, proj, client=client)
+            if recovered:
+                new_id, new_lines, new_graph = recovered
+                return new_id, new_lines, new_graph
+            # Cannot recover — clear local registration; raise so caller can re-create
+            norm = str(Path(project_path).resolve()).replace("\\", "/")
+            data = load_projects()
+            data["projects"].pop(norm, None)
+            save_projects(data)
+            log.warning("Cleared stale local registration for %s (repo_id %s)", proj["name"], repo_id)
+            raise StaleRepoError(proj["name"], repo_id)
+        else:
+            log.warning("Failed to fetch repo %s status: %s", repo_id, exc)
+            graph_lines.append(f"  last_sync {last_sync} | tracked_files {tracked}")
+            graph_lines.append(f"  warning: failed to fetch server status: {exc}")
 
     return repo_id, lines, graph_lines
+
+
+def _recover_repo_by_name(
+    project_path: str,
+    proj: dict,
+    *,
+    client,
+) -> tuple[str, list[str], list[str]] | None:
+    """Try to find the correct repo on the server by name and fix local state."""
+    try:
+        repos = client._get("/api/v1/repos")
+    except Exception:
+        return None
+    matched = next(
+        (r for r in repos if r["name"] == proj["name"] and r.get("source_type") == "local"),
+        None,
+    )
+    if not matched:
+        return None
+    new_id = matched["id"]
+    log.info("Recovered repo '%s': local %s -> server %s", proj["name"], proj["repo_id"][:8], new_id[:8])
+    proj["repo_id"] = new_id
+    proj["file_hashes"] = {}  # force full re-sync
+    proj["last_sync"] = ""
+    set_project(project_path, proj)
+    lines = [f"  {proj['name']} ({new_id[:8]}) (recovered)"]
+    graph_lines = [f"  index {matched['index_status']}"]
+    try:
+        repo = client._get(f"/api/v1/repos/{new_id}")
+        if repo.get("index_stats"):
+            graph_lines.append(_fmt_stats(repo["index_stats"]))
+    except Exception:
+        pass
+    return new_id, lines, graph_lines
 
 
 def _init_match_or_create(

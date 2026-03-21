@@ -3,6 +3,11 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+# Truncate individual chunk content beyond this limit (bytes).
+# Prevents minified/bundled files from producing multi-MB chunks.
+# Symbol metadata (name, kind, signature, lines) is always preserved.
+_MAX_CHUNK_CONTENT = 8 * 1024  # 8 KB
+
 
 def _make_entity_id(module: str, symbol_name: str) -> str:
     return f"{module}.{symbol_name}" if module else symbol_name
@@ -34,6 +39,9 @@ def chunk_file_from_dict(source: str, parse_result_dict: dict, rel_path: str) ->
         content = "".join(lines[start:end])
         if not content.strip():
             continue
+        if len(content) > _MAX_CHUNK_CONTENT:
+            original_len = len(content)
+            content = content[:_MAX_CHUNK_CONTENT] + f"\n# ... truncated ({original_len} chars)"
         sym_name = sym.get("name", "")
         cid = f"chunk:{_make_entity_id(module, sym_name)}"
         chunks.append({
