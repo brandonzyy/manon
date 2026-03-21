@@ -4,9 +4,9 @@ from pathlib import Path
 
 from matrixone_graph.health import (
     _entity_module, _is_test_file, _compute_mc, _compute_cd,
-    _compute_fi, _compute_dc, _compute_tc, _compute_fs, _compute_id,
-    _score_mc, _score_cd, _score_fi, _score_dc, _score_tc,
-    _score_fs, _score_td, _score_id,
+    _compute_fi, _compute_dc, _compute_fs, _compute_mf, _compute_re,
+    _score_mc, _score_cd, _score_fi, _score_dc,
+    _score_fs, _score_td, _score_mf, _score_re,
     scan_file, scan_directory_debt, compute_score, compute_graph_metrics,
     WEIGHTS, _BUILTINS,
 )
@@ -79,13 +79,6 @@ class TestScoreFunctions:
         assert _score_dc(0.46) == 4
         assert _score_dc(0.66) == 2
 
-    def test_score_tc_boundaries(self):
-        assert _score_tc(1.0) == 10
-        assert _score_tc(0.8) == 10
-        assert _score_tc(0.5) == 8
-        assert _score_tc(0.3) == 6
-        assert _score_tc(0.1) == 4
-
     def test_score_fs_boundaries(self):
         assert _score_fs(0.0) == 10
         assert _score_fs(0.05) == 10
@@ -102,12 +95,23 @@ class TestScoreFunctions:
         assert _score_td(3.1) == 6
         assert _score_td(6.1) == 4
 
-    def test_score_id_boundaries(self):
-        assert _score_id(0) == 10
-        assert _score_id(2) == 10
-        assert _score_id(3) == 7
-        assert _score_id(4) == 7
-        assert _score_id(5) == 4
+    def test_score_mf_boundaries(self):
+        assert _score_mf(0.0) == 10
+        assert _score_mf(0.15) == 10
+        assert _score_mf(0.16) == 8
+        assert _score_mf(0.25) == 8
+        assert _score_mf(0.26) == 6
+        assert _score_mf(0.40) == 6
+        assert _score_mf(0.41) == 4
+
+    def test_score_re_boundaries(self):
+        assert _score_re(0.0) == 10
+        assert _score_re(0.10) == 10
+        assert _score_re(0.11) == 8
+        assert _score_re(0.20) == 8
+        assert _score_re(0.21) == 6
+        assert _score_re(0.35) == 6
+        assert _score_re(0.36) == 4
 
 
 class TestComputeMetricHelpers:
@@ -129,9 +133,16 @@ class TestComputeMetricHelpers:
         assert result["oversized"] == 0
         assert result["total"] == 0
 
-    def test_compute_id_no_inheritance(self):
-        result = _compute_id([])
-        assert result["max_depth"] == 0
+    def test_compute_mf_empty(self):
+        result = _compute_mf({})
+        assert result["ratio"] == 0.0
+        assert result["tiny_modules"] == 0
+
+    def test_compute_re_empty(self):
+        result = _compute_re({}, [])
+        assert result["ratio"] == 0.0
+        assert result["barrel_modules"] == 0
+        assert result["total_modules"] == 0
 
 
 class TestScanFile:
@@ -191,8 +202,8 @@ class TestComputeScore:
         metrics = {
             "mc": {"ratio": 0.0}, "cd": {"cycles": 0},
             "fi": {"ratio": 0.0}, "dc": {"ratio": 0.0},
-            "tc": {"ratio": 1.0}, "fs": {"ratio": 0.0},
-            "id": {"max_depth": 0},
+            "fs": {"ratio": 0.0}, "mf": {"ratio": 0.0},
+            "re": {"ratio": 0.0},
             "entity_count": 100, "relation_count": 200,
         }
         result = compute_score(metrics, {"todos": 0, "any_count": 0, "total_lines": 1000})
@@ -202,8 +213,8 @@ class TestComputeScore:
         metrics = {
             "mc": {"ratio": 1.0}, "cd": {"cycles": 10},
             "fi": {"ratio": 1.0}, "dc": {"ratio": 1.0},
-            "tc": {"ratio": 0.0}, "fs": {"ratio": 1.0},
-            "id": {"max_depth": 10},
+            "fs": {"ratio": 1.0}, "mf": {"ratio": 1.0},
+            "re": {"ratio": 1.0},
             "entity_count": 100, "relation_count": 200,
         }
         result = compute_score(metrics, {"todos": 100, "any_count": 100, "total_lines": 100})
@@ -213,8 +224,8 @@ class TestComputeScore:
         metrics = {
             "mc": {"ratio": 0.3}, "cd": {"cycles": 0},
             "fi": {"ratio": 0.05}, "dc": {"ratio": 0.1},
-            "tc": {"ratio": 0.5}, "fs": {"ratio": 0.05},
-            "id": {"max_depth": 1},
+            "fs": {"ratio": 0.05}, "mf": {"ratio": 0.10},
+            "re": {"ratio": 0.10},
             "entity_count": 50, "relation_count": 100,
         }
         result = compute_score(metrics)
@@ -226,7 +237,7 @@ class TestWeights:
         assert sum(WEIGHTS.values()) == 100
 
     def test_all_dimensions_present(self):
-        for dim in ("mc", "cd", "fi", "dc", "tc", "fs", "td", "id"):
+        for dim in ("mc", "cd", "fi", "dc", "fs", "td", "mf", "re"):
             assert dim in WEIGHTS
 
 

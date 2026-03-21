@@ -5,10 +5,10 @@ Dimensions (weight):
   CD (10) — Circular Dependencies: SCC detection
   FI (15) — Fan-in Concentration: high in-degree entity ratio
   DC (10) — Dead Code: zero in-degree non-module entities
-  TC (15) — Test Coverage: entities referenced by test files
-  FS (10) — Function Size: oversized function ratio (>50 lines)
+  FS (10) — Function Complexity: oversized function ratio (>50 lines)
   TD (15) — Tech Debt: TODO/HACK/FIXME/`:any` density
-  ID (10) — Inheritance Depth: max inheritance chain depth
+  MF (15) — Module Fragmentation: tiny-module ratio + deep directory paths
+  RE (10) — Re-export / Indirection: barrel modules + single-impl interfaces
 
 Total weight: 100, each dimension 0-10, total = sum(dim * weight) / 10 -> 0-100
 """
@@ -178,116 +178,113 @@ def _compute_dc(nodes: dict, g: nx.DiGraph) -> tuple[dict, list]:
     return metrics, non_module_entities
 
 
-def _compute_tc(nodes: dict, edges: list, non_module_entities: list, *, coverage_map: dict | None = None) -> dict:
-    """TC: Test Coverage — via coverage_map bypass or graph-entity fallback.
-
-    Bypass (preferred): coverage_map produced by manon-scan-tests.py.
-      Intersects the covered symbol set with testable graph entities.
-    Fallback: graph-based traversal from test-file entities (requires tests
-      to be indexed — always returns 0 when tests/ is excluded).
-    """
-    if coverage_map:
-        covered_set = set(coverage_map.get("covered", []))
-        testable = non_module_entities
-
-        # Build lookup: fn_name -> list of module prefixes from covered symbols.
-        # Needed because tests often import via __init__ re-exports, producing a
-        # shorter path (e.g. "core.ast.fn") that doesn't exactly match the graph
-        # entity's definition path (e.g. "core.ast.project.fn").
-        covered_by_fn: dict[str, list[str]] = {}
-        for sym in covered_set:
-            dot = sym.rfind(".")
-            if dot != -1:
-                covered_by_fn.setdefault(sym[dot + 1:], []).append(sym[:dot])
-            else:
-                covered_by_fn.setdefault(sym, []).append("")
-
-        tested: set[str] = set()
-        for entity in testable:
-            dot = entity.rfind(".")
-            if dot != -1:
-                e_prefix, fn = entity[:dot], entity[dot + 1:]
-            else:
-                e_prefix, fn = "", entity
-            for c_prefix in covered_by_fn.get(fn, []):
-                # Re-export match: covered prefix is a leading segment of entity prefix
-                # e.g. c_prefix="core.ast", e_prefix="core.ast.project" → match
-                if e_prefix.startswith(c_prefix) or c_prefix.startswith(e_prefix):
-                    tested.add(entity)
-                    break
-
-        ratio = len(tested) / max(len(testable), 1)
-        return {"ratio": round(ratio, 3), "tested": len(tested), "testable": len(testable)}
-
-    # Fallback: graph-based (requires test files to be indexed)
-    test_entity_ids = set()
-    for nid, data in nodes.items():
-        if _is_test_file(data.get("file_path", "")):
-            test_entity_ids.add(nid)
-    # Direct references from/to test entities
-    tested_entities: set[str] = set()
-    for src, tgt, _ in edges:
-        if src in test_entity_ids and tgt not in test_entity_ids:
-            tested_entities.add(tgt)
-        if tgt in test_entity_ids and src not in test_entity_ids:
-            tested_entities.add(src)
-    # Transitive: follow outgoing calls edges
-    calls_out: dict[str, list[str]] = defaultdict(list)
-    for src, tgt, data in edges:
-        if data.get("kind") == "calls":
-            calls_out[src].append(tgt)
-    queue = list(tested_entities)
-    visited = set(tested_entities)
-    while queue:
-        node = queue.pop()
-        for callee in calls_out.get(node, []):
-            if callee not in visited and callee not in test_entity_ids:
-                visited.add(callee)
-                tested_entities.add(callee)
-                queue.append(callee)
-    testable = [nid for nid in non_module_entities if nid not in test_entity_ids]
-    tested_count = len(tested_entities & set(testable))
-    ratio = tested_count / max(len(testable), 1)
-    return {"ratio": round(ratio, 3), "tested": tested_count, "testable": len(testable)}
-
-
 def _compute_fs(nodes: dict) -> dict:
-    """FS: Function Size — oversized function ratio (>50 lines)."""
+    """FS: Function Complexity — oversized function ratio (>50 lines)."""
     functions = [d for _, d in nodes.items() if d.get("kind") in ("function", "method")]
     oversized = [f for f in functions if (f.get("line_end", 0) - f.get("line_start", 0)) > 50]
     ratio = len(oversized) / max(len(functions), 1)
     return {"ratio": round(ratio, 3), "oversized": len(oversized), "total": len(functions)}
 
 
-def _compute_id(edges: list) -> dict:
-    """ID: Inheritance Depth — max inheritance chain length."""
-    inherit_g = nx.DiGraph()
-    for src, tgt, data in edges:
-        if data.get("kind") == "inherits":
-            inherit_g.add_edge(src, tgt)
+def _compute_mf(nodes: dict) -> dict:
+    """MF: Module Fragmentation — ratio of tiny modules and deep file paths.
+
+    Tiny module: a source file with < 3 non-structural entities (function/method/class).
+    Deep path: file_path with depth >= 5 segments.
+    Combined ratio: tiny_ratio * 0.7 + deep_ratio * 0.3.
+    """
+    file_entity_count: dict[str, int] = defaultdict(int)
+    all_files: set[str] = set()
+
+    for nid, data in nodes.items():
+        kind = data.get("kind", "")
+        fp = data.get("file_path", "").replace("\\", "/")
+        if not fp:
+            continue
+        if kind == "module":
+            all_files.add(fp)
+            continue
+        if kind in _STRUCTURAL_KINDS or kind == "variable":
+            continue
+        # Count function, method, class entities per file
+        file_entity_count[fp] += 1
+        all_files.add(fp)
+
+    total_files = len(all_files)
+    if total_files == 0:
+        return {"ratio": 0.0, "tiny_modules": 0, "total_modules": 0,
+                "deep_files": 0, "max_depth": 0}
+
+    tiny = sum(1 for fp in all_files if file_entity_count.get(fp, 0) < 3)
     max_depth = 0
-    for node in inherit_g.nodes():
-        if inherit_g.in_degree(node) == 0:
-            for _, length in nx.single_source_shortest_path_length(inherit_g, node).items():
-                if length > max_depth:
-                    max_depth = length
-    return {"max_depth": max_depth}
+    deep_files = 0
+    for fp in all_files:
+        depth = fp.count("/")
+        if depth > max_depth:
+            max_depth = depth
+        if depth >= 5:
+            deep_files += 1
+
+    tiny_ratio = tiny / total_files
+    deep_ratio = deep_files / total_files
+    ratio = tiny_ratio * 0.7 + deep_ratio * 0.3
+
+    return {"ratio": round(ratio, 3), "tiny_modules": tiny,
+            "total_modules": total_files, "deep_files": deep_files,
+            "max_depth": max_depth}
 
 
-def compute_graph_metrics(graph: "CodeGraph", *, coverage_map: dict | None = None) -> dict[str, Any]:
+def _compute_re(nodes: dict, edges: list) -> dict:
+    """RE: Re-export / Indirection — barrel module ratio.
+
+    Barrel module: has import-out edges but defines no function/method/class entities.
+    These are pure re-export files (index.ts, __init__.py) that add indirection
+    without contributing logic.
+    """
+    module_has_logic: dict[str, bool] = {}
+    module_has_imports_out: dict[str, bool] = {}
+
+    for nid, data in nodes.items():
+        kind = data.get("kind", "")
+        fp = data.get("file_path", "").replace("\\", "/")
+        if not fp:
+            continue
+        if kind in ("function", "method", "class"):
+            module_has_logic[fp] = True
+        elif kind == "module":
+            module_has_logic.setdefault(fp, False)
+
+    for src, tgt, data in edges:
+        if data.get("kind") == "imports":
+            src_fp = nodes.get(src, {}).get("file_path", "").replace("\\", "/")
+            if src_fp:
+                module_has_imports_out[src_fp] = True
+
+    barrel_count = sum(
+        1 for fp, has_logic in module_has_logic.items()
+        if not has_logic and module_has_imports_out.get(fp, False)
+    )
+    total_modules = len(module_has_logic)
+    ratio = barrel_count / max(total_modules, 1)
+
+    return {"ratio": round(ratio, 3), "barrel_modules": barrel_count,
+            "total_modules": total_modules}
+
+
+def compute_graph_metrics(graph: "CodeGraph") -> dict[str, Any]:
     """Compute all 8 health dimensions from the knowledge graph."""
     g = graph._g
     nodes = dict(g.nodes(data=True))
     edges = list(g.edges(data=True))
-    dc, non_module_entities = _compute_dc(nodes, g)
+    dc, _non_module_entities = _compute_dc(nodes, g)
     return {
         "mc": _compute_mc(edges),
         "cd": _compute_cd(edges),
         "fi": _compute_fi(edges),
         "dc": dc,
-        "tc": _compute_tc(nodes, edges, non_module_entities, coverage_map=coverage_map),
         "fs": _compute_fs(nodes),
-        "id": _compute_id(edges),
+        "mf": _compute_mf(nodes),
+        "re": _compute_re(nodes, edges),
         "entity_count": len(nodes),
         "relation_count": len(edges),
     }
@@ -382,7 +379,7 @@ def scan_directory_debt(repo_path: Path) -> dict[str, int]:
 
 WEIGHTS = {
     "mc": 15, "cd": 10, "fi": 15, "dc": 10,
-    "tc": 15, "fs": 10, "td": 15, "id": 10,
+    "fs": 10, "td": 15, "mf": 15, "re": 10,
 }
 
 
@@ -407,20 +404,11 @@ def _score_fi(ratio: float) -> int:
 
 
 def _score_dc(ratio: float) -> int:
-    # Thresholds account for framework entry points (decorators, callbacks)
-    # that static analysis cannot detect as "called".
     if ratio <= 0.1: return 10
     if ratio <= 0.25: return 8
     if ratio <= 0.45: return 6
     if ratio <= 0.65: return 4
     return 2
-
-
-def _score_tc(ratio: float) -> int:
-    if ratio >= 0.8: return 10
-    if ratio >= 0.5: return 8
-    if ratio >= 0.3: return 6
-    return 4
 
 
 def _score_fs(ratio: float) -> int:
@@ -438,17 +426,27 @@ def _score_td(density: float) -> int:
     return 4
 
 
-def _score_id(max_depth: int) -> int:
-    if max_depth <= 2: return 10
-    if max_depth <= 4: return 7
+def _score_mf(ratio: float) -> int:
+    """Lower is better — fewer tiny modules and deep paths."""
+    if ratio <= 0.15: return 10
+    if ratio <= 0.25: return 8
+    if ratio <= 0.40: return 6
+    return 4
+
+
+def _score_re(ratio: float) -> int:
+    """Lower is better — fewer barrel modules and single-impl interfaces."""
+    if ratio <= 0.10: return 10
+    if ratio <= 0.20: return 8
+    if ratio <= 0.35: return 6
     return 4
 
 
 _DIM_NAMES = {
     "mc": "模块耦合度", "cd": "循环依赖", "fi": "扇入集中度", "dc": "死代码",
-    "tc": "测试覆盖", "fs": "函数规模", "td": "技术债务", "id": "继承深度",
+    "fs": "函数复杂度", "td": "技术债务", "mf": "模块碎片化", "re": "间接层密度",
 }
-_DIM_ORDER = ("mc", "cd", "fi", "dc", "tc", "fs", "td", "id")
+_DIM_ORDER = ("mc", "cd", "fi", "dc", "fs", "td", "mf", "re")
 
 
 def _build_dim_scores(graph_metrics: dict, td_density: float) -> dict[str, float]:
@@ -458,10 +456,10 @@ def _build_dim_scores(graph_metrics: dict, td_density: float) -> dict[str, float
         "cd": _score_cd(m["cd"]["cycles"]),
         "fi": _score_fi(m["fi"]["ratio"]),
         "dc": _score_dc(m["dc"]["ratio"]),
-        "tc": _score_tc(m["tc"]["ratio"]),
         "fs": _score_fs(m["fs"]["ratio"]),
         "td": _score_td(td_density),
-        "id": _score_id(m["id"]["max_depth"]),
+        "mf": _score_mf(m["mf"]["ratio"]),
+        "re": _score_re(m["re"]["ratio"]),
     }
 
 

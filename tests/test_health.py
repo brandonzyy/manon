@@ -4,7 +4,7 @@ import pytest
 from matrixone_graph.health import (
     _entity_module, _is_test_file,
     _score_mc, _score_cd, _score_fi, _score_dc,
-    _score_tc, _score_fs, _score_td, _score_id,
+    _score_fs, _score_td, _score_mf, _score_re,
     compute_graph_metrics, compute_score, scan_file,
     WEIGHTS,
 )
@@ -67,12 +67,6 @@ class TestScoreFunctions:
         assert _score_dc(0.5) == 4
         assert _score_dc(0.8) == 2
 
-    def test_score_tc(self):
-        assert _score_tc(0.9) == 10
-        assert _score_tc(0.6) == 8
-        assert _score_tc(0.4) == 6
-        assert _score_tc(0.1) == 4
-
     def test_score_fs(self):
         assert _score_fs(0.03) == 10
         assert _score_fs(0.08) == 8
@@ -85,10 +79,17 @@ class TestScoreFunctions:
         assert _score_td(5.0) == 6
         assert _score_td(10.0) == 4
 
-    def test_score_id(self):
-        assert _score_id(1) == 10
-        assert _score_id(3) == 7
-        assert _score_id(6) == 4
+    def test_score_mf(self):
+        assert _score_mf(0.10) == 10
+        assert _score_mf(0.20) == 8
+        assert _score_mf(0.30) == 6
+        assert _score_mf(0.50) == 4
+
+    def test_score_re(self):
+        assert _score_re(0.05) == 10
+        assert _score_re(0.15) == 8
+        assert _score_re(0.25) == 6
+        assert _score_re(0.40) == 4
 
 
 # ── Integration: compute_graph_metrics ────────────────
@@ -113,7 +114,8 @@ class TestComputeGraphMetrics:
         g = self._build_graph()
         m = compute_graph_metrics(g)
         assert "mc" in m and "cd" in m and "fi" in m and "dc" in m
-        assert "tc" in m and "fs" in m and "id" in m
+        assert "fs" in m and "mf" in m and "re" in m
+        assert "tc" not in m and "id" not in m
         assert m["entity_count"] == 5
         assert m["relation_count"] == 3
 
@@ -196,14 +198,45 @@ class TestComputeGraphMetrics:
         m = compute_graph_metrics(g)
         assert m["cd"]["cycles"] == 0
 
+    def test_mf_tiny_modules(self):
+        """Files with < 3 function/method/class entities should count as tiny."""
+        g = CodeGraph()
+        # mod_a has 2 functions → tiny
+        g.add_entity(Entity(id="mod_a", kind="module", name="mod_a", file_path="mod_a.py"))
+        g.add_entity(Entity(id="mod_a.f1", kind="function", name="f1", file_path="mod_a.py"))
+        g.add_entity(Entity(id="mod_a.f2", kind="function", name="f2", file_path="mod_a.py"))
+        # mod_b has 3 functions → not tiny
+        g.add_entity(Entity(id="mod_b", kind="module", name="mod_b", file_path="mod_b.py"))
+        g.add_entity(Entity(id="mod_b.f1", kind="function", name="f1", file_path="mod_b.py"))
+        g.add_entity(Entity(id="mod_b.f2", kind="function", name="f2", file_path="mod_b.py"))
+        g.add_entity(Entity(id="mod_b.f3", kind="function", name="f3", file_path="mod_b.py"))
+        m = compute_graph_metrics(g)
+        assert m["mf"]["tiny_modules"] == 1  # mod_a
+        assert m["mf"]["total_modules"] == 2
+
+    def test_re_barrel_modules(self):
+        """Modules with imports but no functions should be detected as barrels."""
+        g = CodeGraph()
+        # barrel: has imports-out but no function/method/class
+        g.add_entity(Entity(id="barrel", kind="module", name="barrel", file_path="barrel.py"))
+        # real module: has a function
+        g.add_entity(Entity(id="real", kind="module", name="real", file_path="real.py"))
+        g.add_entity(Entity(id="real.foo", kind="function", name="foo", file_path="real.py"))
+        # barrel imports from real
+        g.add_relation(Relation(src_id="barrel", tgt_id="real", kind="imports"))
+        m = compute_graph_metrics(g)
+        assert m["re"]["barrel_modules"] == 1  # barrel
+        assert m["re"]["total_modules"] == 2
+        assert "single_impl_interfaces" not in m["re"]  # removed
+
 
 class TestComputeScore:
     def test_perfect_score(self):
         metrics = {
             "mc": {"ratio": 0.1}, "cd": {"cycles": 0},
             "fi": {"ratio": 0.01}, "dc": {"ratio": 0.01},
-            "tc": {"ratio": 0.9}, "fs": {"ratio": 0.01},
-            "id": {"max_depth": 1},
+            "fs": {"ratio": 0.01}, "mf": {"ratio": 0.05},
+            "re": {"ratio": 0.05},
             "entity_count": 100, "relation_count": 200,
         }
         result = compute_score(metrics)
@@ -214,8 +247,8 @@ class TestComputeScore:
         metrics = {
             "mc": {"ratio": 0.9}, "cd": {"cycles": 5},
             "fi": {"ratio": 0.5}, "dc": {"ratio": 0.5},
-            "tc": {"ratio": 0.0}, "fs": {"ratio": 0.5},
-            "id": {"max_depth": 6},
+            "fs": {"ratio": 0.5}, "mf": {"ratio": 0.5},
+            "re": {"ratio": 0.5},
             "entity_count": 100, "relation_count": 200,
         }
         result = compute_score(metrics, {"todos": 100, "any_count": 50, "total_lines": 1000})
@@ -226,8 +259,8 @@ class TestComputeScore:
         metrics = {
             "mc": {"ratio": 0.3}, "cd": {"cycles": 0},
             "fi": {"ratio": 0.05}, "dc": {"ratio": 0.1},
-            "tc": {"ratio": 0.5}, "fs": {"ratio": 0.05},
-            "id": {"max_depth": 2},
+            "fs": {"ratio": 0.05}, "mf": {"ratio": 0.10},
+            "re": {"ratio": 0.10},
             "entity_count": 50, "relation_count": 100,
         }
         result = compute_score(metrics)

@@ -182,16 +182,7 @@ async def code_health_repo(
             repo_id, mg.kg_path, (mg.kg_path / "graph.json").exists(),
         )
 
-    # Load coverage map from kg directory (uploaded by manon_upload_coverage)
-    coverage_map = None
-    coverage_path = mg.kg_path / "coverage_map.json"
-    if coverage_path.exists():
-        try:
-            coverage_map = json.loads(coverage_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    graph_metrics = compute_graph_metrics(g, coverage_map=coverage_map)
+    graph_metrics = compute_graph_metrics(g)
     debt_metrics = None
     if body and body.get("debt_metrics"):
         debt_metrics = body["debt_metrics"]
