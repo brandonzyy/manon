@@ -6,7 +6,48 @@ from typing import Optional
 
 import yaml
 
-from codeindex.adaptive_config import DEFAULT_ADAPTIVE_CONFIG, AdaptiveSymbolsConfig
+
+# ── Adaptive symbols configuration ──────────────────
+
+
+@dataclass
+class AdaptiveSymbolsConfig:
+    """Configuration for adaptive symbol extraction.
+
+    Adjusts the number of symbols to display in README_AI.md files based on
+    file size, ensuring better information coverage for large files while
+    keeping smaller files concise.
+    """
+
+    enabled: bool = False
+    thresholds: dict[str, int] = field(default_factory=dict)
+    limits: dict[str, int] = field(default_factory=dict)
+    min_symbols: int = 5
+    max_symbols: int = 200
+
+
+DEFAULT_ADAPTIVE_CONFIG = AdaptiveSymbolsConfig(
+    enabled=False,
+    thresholds={
+        "tiny": 100,
+        "small": 200,
+        "medium": 500,
+        "large": 1000,
+        "xlarge": 2000,
+        "huge": 5000,
+    },
+    limits={
+        "tiny": 10,
+        "small": 15,
+        "medium": 30,
+        "large": 50,
+        "xlarge": 80,
+        "huge": 120,
+        "mega": 150,
+    },
+    min_symbols=5,
+    max_symbols=200,
+)
 
 DEFAULT_CONFIG_NAME = ".codeindex.yaml"
 DEFAULT_OUTPUT_FILE = "README_AI.md"
