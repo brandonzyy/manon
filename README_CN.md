@@ -123,22 +123,14 @@ Manon 提供免费的官方 SaaS 服务 — 无需自建服务器。安装后 MC
 
 **macOS / Linux**
 ```bash
-# GitHub（推荐）
 git clone https://github.com/brandonzyy/manon.git
-# 或使用 Gitee 镜像（国内更快）
-git clone https://gitee.com/ymxy_1_0/manon.git
-
 cd manon
 bash install.sh
 ```
 
 **Windows**
 ```cmd
-# GitHub（推荐）
 git clone https://github.com/brandonzyy/manon.git
-# 或使用 Gitee 镜像（国内更快）
-git clone https://gitee.com/ymxy_1_0/manon.git
-
 cd manon
 install.bat
 ```
@@ -438,6 +430,7 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **v1.2.2** | 2026-03-21 | 修复 install.sh 崩溃、Windows 兼容性、图谱幽灵节点；新增 TS/JS 覆盖支持；扫描性能优化；Git 统一至 GitHub |
 | **v1.2.1** | 2026-03-20 | 知识图谱质量全面修复：phantom 节点根治、跨模块边丢失修复、实例方法类型推断；关系数 +74%；代码健康 97/100 |
 | **v1.2.0** | 2026-03-19 | 脚本分类器过滤工具脚本；LLM 分类端点；新增 115 个单元测试；代码健康 94/100 |
 | **v1.1.2** | 2026-03-19 | `/dao` 大规模代码清理：死代码删除、函数拆分、测试覆盖率 32%→61%；TC 维度支持真实覆盖率数据 |
@@ -452,6 +445,20 @@ Manon 提供 4 个核心查询工具，覆盖从代码搜索到架构分析的�
 ---
 
 ## 📦 更新日志
+
+### v1.2.2 — 2026-03-21
+
+**Bug 修复 + 增量改进。** Git 仓库统一至 GitHub，移除 Gitee 镜像。
+
+- **修复** — `install.sh` 崩溃：`DEFAULT_API_URL: unbound variable`（API_URL 赋值移至区域检测之后）
+- **修复** — Windows skill 脚本中 `MANON_DIR` 的 `set` 语法错误
+- **修复** — 知识图谱中的幽灵节点和空调用者边
+- **修复** — dao stop hook 限定当前会话（CWD 匹配 + 6h TTL）
+- **新增** — `manon-scan-tests.py` 支持 TypeScript/JS 覆盖率
+- **优化** — 扫描性能：mtime+size 快速跳过未变更文件；语法错误时部分解析
+- **基础设施** — Git 统一至 GitHub（`github.com/brandonzyy/manon`），移除 Gitee 镜像和同步 workflow
+
+---
 
 ### v1.2.1 — 2026-03-20
 

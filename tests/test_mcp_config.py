@@ -8,7 +8,7 @@ from manon_mcp._config import (
     _get_client_version, _detect_region, _get_cached_region,
     _resolve_api_url, _git_branch, _check_version,
     CLIENT_VERSION, API_URL_CN, API_URL_INTL, REGION,
-    GIT_REMOTE_CN, GIT_REMOTE_INTL, GIT_BRANCH_CN, GIT_BRANCH_INTL,
+    GIT_REMOTE, GIT_BRANCH,
 )
 
 
@@ -55,23 +55,16 @@ class TestResolveApiUrl:
 
 
 class TestGitBranch:
-    def test_cn_branch(self, monkeypatch):
-        monkeypatch.setattr("manon_mcp._config.REGION", "CN")
-        assert _git_branch() == GIT_BRANCH_CN
-
-    def test_intl_branch(self, monkeypatch):
-        monkeypatch.setattr("manon_mcp._config.REGION", "INTL")
-        assert _git_branch() == GIT_BRANCH_INTL
+    def test_returns_master(self):
+        assert _git_branch() == "master"
 
 
 class TestConstants:
-    def test_git_remotes(self):
-        assert "gitee" in GIT_REMOTE_CN
-        assert "github" in GIT_REMOTE_INTL
+    def test_git_remote(self):
+        assert "github" in GIT_REMOTE
 
-    def test_branches(self):
-        assert GIT_BRANCH_CN == "master"
-        assert GIT_BRANCH_INTL == "main"
+    def test_branch(self):
+        assert GIT_BRANCH == "master"
 
     def test_api_url_cn_set(self):
         assert API_URL_CN != ""

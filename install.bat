@@ -72,14 +72,11 @@ exit /b %errorlevel%
 ::PS if ((Test-Path "$HOME_DIR\.codex") -or (Get-Command codex -ErrorAction SilentlyContinue)) { $PLATFORMS += "codex" }
 ::PS if ($PLATFORMS.Count -eq 0) { err "No supported platform detected (Claude Code / Cursor / Windsurf / Zed / Continue / CodeBuddy / OpenCode / Codex)" }
 ::PS info "Detected: $($PLATFORMS -join ', ')"
-::PS # ── Region-aware git remote ──────────────────────────
-::PS $GIT_REMOTE_CN = "https://gitee.com/ymxy_1_0/manon.git"
-::PS $GIT_REMOTE_INTL = "https://github.com/brandonzyy/manon.git"
-::PS $REGION = "CN"; $REGION_FILE = "$env:USERPROFILE\.manon\region.json"
-::PS if (Test-Path $REGION_FILE) { try { $REGION = (Get-Content $REGION_FILE -Raw | ConvertFrom-Json).region } catch { $REGION = "CN" } }
-::PS if ($REGION -eq "CN") { $GIT_REMOTE = $GIT_REMOTE_CN; $GIT_BRANCH = "master"; $DEFAULT_API_URL = $API_URL_CN } else { $GIT_REMOTE = $GIT_REMOTE_INTL; $GIT_BRANCH = "main"; $DEFAULT_API_URL = $API_URL_INTL }
+::PS # ── Git remote ────────────────────────────────────────
+::PS $GIT_REMOTE = "https://github.com/brandonzyy/manon.git"
+::PS $GIT_BRANCH = "master"
 ::PS try { git -C $SCRIPT_DIR remote set-url origin $GIT_REMOTE 2>$null } catch {}
-::PS info "Git remote -> $GIT_REMOTE ($REGION)"
+::PS info "Git remote -> $GIT_REMOTE"
 ::PS # ── Venv + deps ───────────────────────────────────────
 ::PS head1 "Dependencies"
 ::PS if (-not (Test-Path $VENV_DIR)) { & $pythonCmd -m venv $VENV_DIR }
