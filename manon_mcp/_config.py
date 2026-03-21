@@ -47,10 +47,8 @@ API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://203.208.134.27:3700"
 API_KEY = os.environ.get("MANON_API_KEY", "")
 _explicit_url = os.environ.get("MANON_API_URL", "")
 _REGION_CACHE = Path.home() / ".manon" / "region.json"
-GIT_REMOTE_CN = "https://gitee.com/ymxy_1_0/manon.git"
-GIT_REMOTE_INTL = "https://github.com/brandonzyy/manon.git"
-GIT_BRANCH_CN = "master"
-GIT_BRANCH_INTL = "main"
+GIT_REMOTE = "https://github.com/brandonzyy/manon.git"
+GIT_BRANCH = "master"
 
 
 _CN_TZ_KEYWORDS = ("China", "Beijing", "Shanghai", "Asia/Shanghai",
@@ -164,10 +162,7 @@ def _check_version() -> str:
         return _update_notice
     _version_checked = True
     try:
-        if REGION == "CN":
-            url = "https://gitee.com/api/v5/repos/ymxy_1_0/manon"
-        else:
-            url = "https://api.github.com/repos/brandonzyy/manon"
+        url = "https://api.github.com/repos/brandonzyy/manon"
         r = httpx.get(url, timeout=5)
         if r.status_code == 200:
             data = r.json()
@@ -192,5 +187,5 @@ def _check_version() -> str:
 
 
 def _git_branch() -> str:
-    """Return git branch name based on cached region."""
-    return GIT_BRANCH_CN if REGION == "CN" else GIT_BRANCH_INTL
+    """Return git branch name."""
+    return GIT_BRANCH

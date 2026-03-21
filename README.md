@@ -431,6 +431,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.2.2** | 2026-03-21 | Bugfixes: install.sh unbound variable crash, Windows MANON_DIR syntax, phantom graph nodes; TS/JS coverage support; scan mtime fast path |
 | **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node root-cause fix, cross-module edge recovery, instance method type inference; relations +74%; code health 97/100 |
 | **v1.2.0** | 2026-03-19 | Script classifier filters tool scripts from index; LLM classify endpoint; +115 tests; code health 94/100 |
 | **v1.1.2** | 2026-03-19 | Major code cleanup via `/dao`: dead code removed, functions decomposed, test coverage 32%→61%; TC dimension now reads real coverage data |
@@ -445,6 +446,20 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 ---
 
 ## 📦 Changelog
+
+### v1.2.2 — 2026-03-21
+
+**Bugfixes + incremental improvements.** Git repository consolidated to GitHub only (Gitee mirror removed).
+
+- **Fixed** — `install.sh` crash: `DEFAULT_API_URL: unbound variable` (API_URL assignment moved after region detection)
+- **Fixed** — Broken Windows `set` syntax for `MANON_DIR` in skill scripts
+- **Fixed** — Phantom nodes and empty-caller edges in knowledge graph
+- **Fixed** — dao stop hook scoped to current session (CWD match + 6h TTL)
+- **Added** — TypeScript/JS coverage support in `manon-scan-tests.py`
+- **Improved** — Scan performance: mtime+size fast path skips unchanged files; partial parse on syntax errors
+- **Infra** — Consolidated git to GitHub (`github.com/brandonzyy/manon`), removed Gitee mirror and sync workflow
+
+---
 
 ### v1.2.1 — 2026-03-20
 
