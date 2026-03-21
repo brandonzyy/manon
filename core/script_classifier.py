@@ -33,7 +33,7 @@ _TOOL_RE = re.compile("|".join(_TOOL_PATTERNS), re.IGNORECASE)
 
 # Directory-based heuristics (language-agnostic)
 _SOURCE_DIRS = {"src", "lib", "core", "app", "pkg", "internal", "extensions", "packages", "ui",
-                 "cmd", "api", "web", "server", "client", "service", "services", "modules"}
+                 "cmd", "api", "web", "server", "client", "service", "services", "modules", "skills"}
 _TOOL_DIRS = {"scripts", "tools", "bin", "examples", "demo", "fixtures"}
 
 # All code extensions supported by codeindex (must stay in sync with codeindex/parser.py)
