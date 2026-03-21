@@ -93,6 +93,7 @@ print(json.dumps({
 _STOP_DAO_HOOK = '''\
 """Stop hook: block Claude from stopping if dao session has pending commit."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -115,6 +116,15 @@ try:
     project_path, issue_id, skill_dir, repo_id = parts[0], parts[1], parts[2], parts[3]
 except Exception:
     DAO_MARKER.unlink(missing_ok=True)
+    sys.exit(0)
+
+# Only block if current working directory is inside the dao session\'s project
+try:
+    cwd = Path(os.getcwd()).resolve()
+    target = Path(project_path).resolve()
+    if cwd != target and target not in cwd.parents and cwd not in target.parents:
+        sys.exit(0)
+except Exception:
     sys.exit(0)
 
 print(json.dumps({
