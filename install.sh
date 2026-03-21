@@ -144,6 +144,12 @@ PYEOF
     cp "$SCRIPT_DIR/skills/dao/SKILL.md" "$dao_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/dao/scripts/"*.py "$dao_skill_dir/scripts/"
     info "Claude Code /dao Skill installed (code simplification with Manon)"
+
+    # Install experience skill (体验驱动开发循环)
+    local exp_skill_dir="$HOME/.claude/skills/experience"
+    mkdir -p "$exp_skill_dir"
+    cp "$SCRIPT_DIR/skills/experience/SKILL.md" "$exp_skill_dir/SKILL.md"
+    info "Claude Code /experience Skill installed (experience-driven dev loop)"
 }
 
 # --- Cursor ---
