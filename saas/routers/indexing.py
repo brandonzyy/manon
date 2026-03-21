@@ -237,9 +237,8 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
         # Accumulate re-export map across batches (stored in meta for persistence)
         meta.setdefault("reexport_map", {}).update(new_reexports)
 
-        # Final-batch reconcile: remove any entities whose file is no longer tracked.
-        # Catches stale entities from interrupted previous syncs where deleted_files
-        # was never sent.
+        # Final-batch reconcile (step 1): remove stale files BEFORE inserting new
+        # entities so that orphan cleanup sees the full picture.
         if body.is_final_batch and not body.full_reindex:
             tracked = set(new_hashes.keys())
             stale_files = {
@@ -257,14 +256,6 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             if stale_files:
                 logger.info("reconcile: removed stale entities from %d files: %s",
                             len(stale_files), list(stale_files)[:10])
-            pruned = graph.prune_phantoms()
-            if pruned:
-                logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
-            reexport_map = meta.get("reexport_map", {})
-            if reexport_map:
-                redirected = _apply_reexport_map(graph, reexport_map)
-                if redirected:
-                    logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
 
         entities_added = len(all_entities)
         for e in all_entities:
@@ -278,6 +269,19 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
             if src_real or tgt_real:
                 graph.add_relation(r)
                 relations_added += 1
+
+        # Final-batch reconcile (step 2): prune and reexport AFTER inserting new
+        # entities/relations so that newly-added real entities fill phantom slots
+        # before pruning, and reexport redirections see the complete graph.
+        if body.is_final_batch:
+            pruned = graph.prune_phantoms()
+            if pruned:
+                logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
+            reexport_map = meta.get("reexport_map", {})
+            if reexport_map:
+                redirected = _apply_reexport_map(graph, reexport_map)
+                if redirected:
+                    logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
 
         await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url)
         _persist_kg_state(kg_path, graph, vec_index, all_chunks, new_hashes, meta)

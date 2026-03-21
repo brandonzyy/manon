@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import site
 import subprocess
 import sys
@@ -26,6 +27,28 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 
 _TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
+
+# TypeScript/JavaScript test support
+_TS_TEST_PATTERNS = (
+    "*.test.ts", "*.test.tsx", "*.spec.ts", "*.spec.tsx",
+    "*.test.js", "*.test.jsx", "*.spec.js", "*.spec.jsx",
+)
+_TS_SKIP_DIRS = frozenset({
+    "node_modules", ".git", "dist", "build", ".turbo", ".next",
+    "coverage", "__pycache__", ".opencode", ".cache",
+})
+_TS_TEST_CALL_RE = re.compile(
+    r"""(?:^|[;\s])(?:it|test)\s*(?:\.(?:only|skip|each|todo))?\s*\(""",
+    re.MULTILINE,
+)
+_TS_IMPORT_RE = re.compile(
+    r"""^(?:import|export)\s+(?:[^'";\n]*?\s+from\s+)?['"](\.[^'"]+)['"]""",
+    re.MULTILINE,
+)
+_TS_EXPORT_FN_RE = re.compile(
+    r"""export\s+(?:async\s+)?function\s+(\w+)|export\s+const\s+(\w+)\s*[=:][^=]"""
+)
+
 
 
 def _find_project_root() -> Path:
@@ -295,6 +318,351 @@ def _static_coverage(project_path: Path) -> tuple[set[str], int, int]:
     return covered_all, len(test_files), test_func_total
 
 
+# ── TypeScript/JavaScript static coverage ─────────────────────────────────────
+
+def _find_ts_test_files(project_path: Path) -> list[Path]:
+    """Find TS/JS test files, excluding node_modules and build dirs."""
+    files: list[Path] = []
+    for pat in _TS_TEST_PATTERNS:
+        for f in project_path.rglob(pat):
+            try:
+                parts = f.relative_to(project_path).parts
+            except ValueError:
+                continue
+            if not any(p in _TS_SKIP_DIRS for p in parts):
+                files.append(f)
+    return list(dict.fromkeys(files))
+
+
+def _count_ts_test_functions(test_files: list[Path]) -> int:
+    total = 0
+    for tf in test_files:
+        try:
+            content = tf.read_text(encoding="utf-8", errors="ignore")
+            total += len(_TS_TEST_CALL_RE.findall(content))
+        except Exception:
+            pass
+    return total
+
+
+def _ts_module_from_path(project_path: Path, file_path: Path) -> str:
+    """Convert absolute TS path to dotted module name."""
+    try:
+        rel = file_path.relative_to(project_path)
+    except ValueError:
+        return file_path.stem
+    s = str(rel).replace("\\", "/")
+    for ext in (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"):
+        if s.endswith(ext):
+            s = s[: -len(ext)]
+            break
+    if s.endswith("/index"):
+        s = s[:-6]
+    return s.replace("/", ".")
+
+
+def _scan_ts_test_file_static(test_path: Path, project_path: Path) -> set[str]:
+    """Regex-based: trace relative imports → exported symbols in source files."""
+    try:
+        content = test_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return set()
+
+    covered: set[str] = set()
+    for match in _TS_IMPORT_RE.finditer(content):
+        imp = match.group(1)
+        base = (test_path.parent / imp).resolve()
+        for ext in (".ts", ".tsx", ".js", ".jsx", ""):
+            cand = base.with_suffix(ext) if ext else base
+            if not cand.is_file():
+                # try index file
+                for idx_ext in (".ts", ".tsx", ".js"):
+                    idx = base / f"index{idx_ext}"
+                    if idx.is_file():
+                        cand = idx
+                        break
+                else:
+                    continue
+            try:
+                parts = cand.relative_to(project_path).parts
+            except ValueError:
+                continue
+            if any(p in _TS_SKIP_DIRS for p in parts):
+                continue
+            module = _ts_module_from_path(project_path, cand)
+            try:
+                src = cand.read_text(encoding="utf-8", errors="ignore")
+                found_any = False
+                for m in _TS_EXPORT_FN_RE.finditer(src):
+                    fn_name = m.group(1) or m.group(2)
+                    if fn_name:
+                        covered.add(f"{module}.{fn_name}")
+                        found_any = True
+                if not found_any:
+                    covered.add(f"{module}.__module__")
+            except Exception:
+                covered.add(f"{module}.__module__")
+            break
+    return covered
+
+
+def _static_coverage_ts(project_path: Path) -> tuple[set[str], int, int]:
+    """TypeScript static coverage: co-located tests + import tracing."""
+    test_files = _find_ts_test_files(project_path)
+    covered_all: set[str] = set()
+    for tf in test_files:
+        covered_all |= _scan_ts_test_file_static(tf, project_path)
+    n_funcs = _count_ts_test_functions(test_files)
+    return covered_all, len(test_files), n_funcs
+
+
+# ── Istanbul/nyc JSON coverage ─────────────────────────────────────────────────
+
+def _find_istanbul_coverage(project_path: Path) -> Path | None:
+    for candidate in (
+        project_path / "coverage" / "coverage-summary.json",
+        project_path / "coverage-summary.json",
+        project_path / ".nyc_output" / "coverage-summary.json",
+    ):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _parse_istanbul_coverage(
+    coverage_json: Path, project_path: Path
+) -> tuple[set[str], int, int]:
+    try:
+        data = json.loads(coverage_json.read_text(encoding="utf-8"))
+    except Exception:
+        return set(), 0, 0
+    covered: set[str] = set()
+    for file_path_str, stats in data.items():
+        if file_path_str == "total":
+            continue
+        fn_pct = stats.get("functions", {}).get("pct", 0)
+        if fn_pct == 0:
+            continue
+        module = _ts_module_from_path(project_path, Path(file_path_str))
+        covered.add(f"{module}.__istanbul__")
+    test_files = _find_ts_test_files(project_path)
+    n_funcs = _count_ts_test_functions(test_files)
+    return covered, len(test_files), n_funcs
+
+
+# ── lcov coverage parser (bun / jest / vitest) ────────────────────────────────
+
+def _find_lcov(project_path: Path) -> Path | None:
+    # Direct candidates at root and common sub-package locations
+    candidates = [
+        project_path / "coverage" / "lcov.info",
+        project_path / "lcov.info",
+        project_path / "coverage" / "lcov" / "lcov.info",
+    ]
+    # Also search one level of sub-packages (monorepo pattern)
+    packages_dir = project_path / "packages"
+    if packages_dir.is_dir():
+        for sub in packages_dir.iterdir():
+            if sub.is_dir():
+                candidates.append(sub / "coverage" / "lcov.info")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+_LCOV_FN_RE = re.compile(
+    r"""^(?:export\s+)?(?:async\s+)?function\s+(\w+)|"""
+    r"""^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(""",
+    re.MULTILINE,
+)
+
+
+def _parse_lcov(lcov_path: Path, project_path: Path) -> tuple[set[str], int, int]:
+    """
+    Parse lcov.info → covered function symbols.
+    Bun emits DA:<line>,<count> (line-level) but no FN:/FNDA: (function names).
+    Strategy: collect covered lines per file, then regex-match function definitions
+    whose start line falls in the covered set.
+    """
+    covered: set[str] = set()
+    # Bun writes lcov to <work_dir>/coverage/lcov.info but SF paths are relative to <work_dir>
+    lcov_work_dir = lcov_path.parent.parent  # packages/yourcoder/coverage/ → packages/yourcoder/
+
+    def _flush_file(sf_raw: str, clines: set[int]) -> None:
+        if not sf_raw or not clines:
+            return
+        fp = Path(sf_raw)
+        if not fp.is_absolute():
+            # Try: work_dir (where bun ran) → project root → give up
+            for base in (lcov_work_dir, project_path):
+                candidate = (base / sf_raw).resolve()
+                if candidate.exists():
+                    fp = candidate
+                    break
+            else:
+                return  # not found under any base
+        if not fp.exists():
+            return
+        try:
+            parts = fp.relative_to(project_path).parts
+        except ValueError:
+            return
+        if any(p in _TS_SKIP_DIRS for p in parts):
+            return
+        module = _ts_module_from_path(project_path, fp)
+        try:
+            src = fp.read_text(encoding="utf-8", errors="ignore")
+            found_any = False
+            for m in _LCOV_FN_RE.finditer(src):
+                fn_name = m.group(1) or m.group(2)
+                if not fn_name:
+                    continue
+                line_no = src[: m.start()].count("\n") + 1
+                if line_no in clines:
+                    covered.add(f"{module}.{fn_name}")
+                    found_any = True
+            # Fallback: file has covered lines but no regex-matched functions → mark module
+            if not found_any and len(clines) >= 3:
+                covered.add(f"{module}.__module__")
+        except Exception:
+            pass
+
+    try:
+        raw = lcov_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return set(), 0, 0
+
+    current_sf: str | None = None
+    covered_lines: set[int] = set()
+
+    for line in raw:
+        if line.startswith("SF:"):
+            if current_sf is not None:
+                _flush_file(current_sf, covered_lines)
+            current_sf = line[3:].strip()
+            covered_lines = set()
+        elif line.startswith("DA:") and current_sf is not None:
+            # DA:<line_number>,<execution_count>
+            parts = line[3:].split(",", 1)
+            if len(parts) == 2 and parts[1].strip() not in ("0", ""):
+                try:
+                    covered_lines.add(int(parts[0]))
+                except ValueError:
+                    pass
+        elif line == "end_of_record":
+            if current_sf is not None:
+                _flush_file(current_sf, covered_lines)
+            current_sf = None
+            covered_lines = set()
+
+    if current_sf is not None:
+        _flush_file(current_sf, covered_lines)
+
+    test_files = _find_ts_test_files(project_path)
+    n_funcs = _count_ts_test_functions(test_files)
+    return covered, len(test_files), n_funcs
+
+
+# ── Auto test runner ───────────────────────────────────────────────────────────
+
+def _detect_runner(project_path: Path) -> tuple[str, Path] | None:
+    """Return (runner_type, work_dir) or None. Prefers sub-package with test script."""
+    import shutil
+
+    # Walk sub-packages first (monorepo pattern)
+    packages_dir = project_path / "packages"
+    candidates = list(packages_dir.glob("*/")) if packages_dir.is_dir() else []
+    candidates.insert(0, project_path)
+
+    for work_dir in candidates:
+        pkg = work_dir / "package.json"
+        if pkg.exists():
+            try:
+                d = json.loads(pkg.read_text(encoding="utf-8"))
+                if not d.get("scripts", {}).get("test"):
+                    continue
+            except Exception:
+                continue
+            # Prefer bun if lockfile or bunfig present
+            if (work_dir / "bun.lockb").exists() or (work_dir / "bunfig.toml").exists():
+                if shutil.which("bun"):
+                    return "bun", work_dir
+            if shutil.which("bun"):
+                return "bun", work_dir
+            if shutil.which("npm"):
+                return "npm", work_dir
+
+    # Python fallback
+    for marker in ("pytest.ini", "conftest.py", "pyproject.toml", "setup.cfg"):
+        if (project_path / marker).exists():
+            if shutil.which("pytest") or True:  # sys.executable always available
+                return "pytest", project_path
+
+    return None
+
+
+def _run_tests_for_coverage(
+    project_path: Path,
+) -> tuple[str | None, Path | None]:
+    """
+    Run full test suite with coverage. Returns (cov_type, cov_path) or (None, None).
+    Per-test timeout kills hanging tests individually; process cap is 60s.
+    """
+    detected = _detect_runner(project_path)
+    if detected is None:
+        return None, None
+
+    runner, work_dir = detected
+    cov_dir = work_dir / "coverage"
+
+    if runner in ("bun", "npm"):
+        import shutil
+        bun_path = shutil.which("bun")
+        if bun_path is None:
+            return None, None
+
+        lcov_out = cov_dir / "lcov.info"
+        # 30s hard cap; bun writes lcov on normal exit (pass or fail).
+        # Errors/failures are bun's problem — we just use whatever lcov appears.
+        args = [
+            bun_path, "test",
+            "--coverage",
+            "--coverage-reporter=lcov",
+            f"--coverage-dir={cov_dir}",
+        ]
+        use_shell = os.name == "nt" and bun_path.lower().endswith(".cmd")
+        cmd_str = " ".join(f'"{a}"' if " " in str(a) else str(a) for a in args)
+        try:
+            subprocess.run(
+                cmd_str if use_shell else args,
+                cwd=str(work_dir),
+                capture_output=True, text=True,
+                timeout=30,
+                shell=use_shell,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        if lcov_out.exists():
+            return "lcov", lcov_out
+
+    elif runner == "pytest":
+        xml_out = project_path / "coverage.xml"
+        cmd = [sys.executable, "-m", "pytest",
+               "--cov", "--cov-report=xml", "-q", "--tb=no"]
+        try:
+            subprocess.run(
+                cmd, cwd=str(project_path),
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        if xml_out.exists():
+            return "xml", xml_out
+
+    return None, None
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -317,14 +685,77 @@ def main() -> None:
     project_path = Path(project_path_str)
     ensure_parsers(project_path_str)
 
-    # Priority 1: dynamic coverage from coverage.xml
+    run_full = "--run-tests" in sys.argv
+
     source = "static"
-    dynamic = _dynamic_coverage(project_path)
-    if dynamic:
-        covered_all, n_files, n_funcs, xml_path = dynamic
-        source = f"dynamic:{Path(xml_path).name}"
+    covered_all: set[str] = set()
+    n_files = n_funcs = 0
+
+    def _apply_lcov(path: Path, label: str) -> bool:
+        nonlocal covered_all, n_files, n_funcs, source
+        c, f, fn = _parse_lcov(path, project_path)
+        if f > 0:
+            covered_all, n_files, n_funcs, source = c, f, fn, label
+            return True
+        return False
+
+    def _apply_xml(label: str) -> bool:
+        nonlocal covered_all, n_files, n_funcs, source
+        d = _dynamic_coverage(project_path)
+        if d:
+            covered_all, n_files, n_funcs, _ = d
+            source = label
+            return True
+        return False
+
+    if run_full:
+        # ── Explicit full run (--run-tests): force refresh, skip cached lcov ─
+        cov_type, cov_path = _run_tests_for_coverage(project_path)
+        if cov_type == "lcov" and cov_path:
+            _apply_lcov(cov_path, "dynamic:lcov(full)")
+        elif cov_type == "xml":
+            _apply_xml("dynamic:xml(full)")
+
     else:
+        # ── Normal init path: read cached → run if missing ───────────────────
+        # P1: coverage.xml (pytest)
+        d = _dynamic_coverage(project_path)
+        if d:
+            covered_all, n_files, n_funcs, xml_path = d
+            source = f"dynamic:{Path(xml_path).name}"
+
+        # P2: Istanbul/nyc JSON
+        if n_files == 0:
+            istanbul = _find_istanbul_coverage(project_path)
+            if istanbul:
+                covered_all, n_files, n_funcs = _parse_istanbul_coverage(istanbul, project_path)
+                source = "dynamic:istanbul"
+
+        # P3: lcov.info (whatever exists on disk — unit or full)
+        if n_files == 0:
+            lcov = _find_lcov(project_path)
+            if lcov:
+                _apply_lcov(lcov, "dynamic:lcov")
+
+        # P4: no coverage on disk → run tests (full suite, 60s cap, 10s per-test timeout)
+        if n_files == 0:
+            cov_type, cov_path = _run_tests_for_coverage(project_path)
+            if cov_type == "lcov" and cov_path:
+                _apply_lcov(cov_path, "dynamic:lcov(auto)")
+            elif cov_type == "xml":
+                _apply_xml("dynamic:xml(auto)")
+
+    # ── Static fallback (both paths) ─────────────────────────────────────────
+    # P5: TypeScript static import tracing
+    if n_files == 0:
+        ts_covered, ts_files, ts_funcs = _static_coverage_ts(project_path)
+        if ts_files > 0:
+            covered_all, n_files, n_funcs, source = ts_covered, ts_files, ts_funcs, "static:ts"
+
+    # P6: Python static AST analysis
+    if n_files == 0:
         covered_all, n_files, n_funcs = _static_coverage(project_path)
+        source = "static:py"
 
     coverage_data = {
         "version": 1,

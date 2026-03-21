@@ -4,10 +4,13 @@ This module defines the abstract interface that all language-specific parsers mu
 It provides a consistent API for parsing different programming languages using tree-sitter.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from tree_sitter import Parser, Tree
+
+_log = logging.getLogger(__name__)
 
 
 class BaseLanguageParser(ABC):
@@ -109,5 +112,5 @@ class BaseLanguageParser(ABC):
         )
         tree = self.parser.parse(source_bytes)
         if tree.root_node.has_error:
-            return ParseResult(path=path, error="Syntax error in source file", file_lines=file_lines)
+            _log.debug("Partial parse (syntax errors) in %s — extracting available symbols", path.name)
         return self._build_parse_result(tree, path, source_bytes, file_lines)

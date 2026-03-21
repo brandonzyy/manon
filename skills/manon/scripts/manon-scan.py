@@ -236,10 +236,24 @@ def main():
     # Ensure tree-sitter parsers are installed
     ensure_parsers(project_path)
 
+    # Load mtime stat cache for fast-path (skip SHA256 on unchanged files)
+    SCAN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    stats_cache_file = SCAN_CACHE_DIR / f"{repo_id}_stats.json"
+    try:
+        stat_cache: dict = json.loads(stats_cache_file.read_text(encoding="utf-8"))
+    except Exception:
+        stat_cache = {}
+
     # Scan and parse all changed files
     file_results, deleted, new_hashes = scan_and_parse(
-        project_path, old_hashes, max_files=0,
+        project_path, old_hashes, max_files=0, stat_cache=stat_cache,
     )
+
+    # Save updated stat cache
+    try:
+        stats_cache_file.write_text(json.dumps(stat_cache, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
     # Classify: filter tool scripts from source files
     file_results, dropped = _classify_file_results(file_results, project_path)
@@ -249,7 +263,6 @@ def main():
     total_batches = max(math.ceil(total_files / SYNC_BATCH_SIZE), 1) if (total_files or deleted) else 0
 
     # Write cache to disk
-    SCAN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = SCAN_CACHE_DIR / f"{repo_id}.json"
     cache_data = {
         "file_results": file_results,

@@ -134,8 +134,9 @@ DAO_MARKER = Path.home() / ".dao_plan_active"
 
 def cmd_arm(project_path, issue_id, skill_dir, repo_id):
     """Write dao marker before EnterPlanMode so ExitPlanMode hook can inject commit command."""
+    ts = datetime.now().isoformat()
     DAO_MARKER.write_text(
-        f"{project_path}|||{issue_id}|||{skill_dir}|||{repo_id}",
+        f"{project_path}|||{issue_id}|||{skill_dir}|||{repo_id}|||{ts}",
         encoding="utf-8",
     )
     print(f"dao marker set: {issue_id}")

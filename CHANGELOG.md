@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.2] - 2026-03-21
+
+### Fixed
+- **Critical**: Fixed `install.sh` crash (`DEFAULT_API_URL: unbound variable`) — API_URL assignment moved after region detection (`8d6920c`)
+- Fixed broken Windows `set` syntax for `MANON_DIR` in skill scripts (`6694a28`)
+- Eliminated phantom nodes and empty-caller edges in knowledge graph (`adf882a`)
+- Scoped dao stop hook to current session via CWD match + 6h TTL (`4048625`)
+
+### Added
+- TypeScript/JS coverage support in `manon-scan-tests.py` (`fbfede0`)
+- `dao-analyze.py` synced to global skill install (`254a850`)
+
+### Improved
+- Scan performance: mtime+size fast path skips unchanged files; partial parse on syntax errors (`96b58f0`)
+
+### Docs
+- Updated SKILL.md with ANALYZER/COMMITTER scripts and execution flow (`e147f97`)
+- Added comment for custom tree-sitter-typescript fork (`beafd15`)
+
 ## [1.0.0] - 2026-03-16
 
 ### Changed

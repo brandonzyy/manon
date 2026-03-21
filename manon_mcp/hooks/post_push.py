@@ -27,6 +27,7 @@ if _root not in sys.path:
 PROJECTS_FILE = Path.home() / ".manon" / "projects.json"
 STATUS_FILE = Path.home() / ".manon" / "update_status.json"
 CONFIG_FILE = Path.home() / ".manon" / "config.json"
+SCAN_CACHE_DIR = Path.home() / ".manon" / "scan_cache"
 SYNC_BATCH_SIZE = 50
 
 
@@ -143,9 +144,19 @@ def _sync_ast_changes(repo_id, info, project_path, api_url, headers):
     try:
         from core.ast import scan_and_parse, set_project
         old_hashes = info.get("file_hashes", {})
+        stats_cache_file = SCAN_CACHE_DIR / f"{repo_id}_stats.json"
+        try:
+            stat_cache: dict = json.loads(stats_cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            stat_cache = {}
         file_results, deleted, new_hashes = scan_and_parse(
-            project_path, old_hashes, max_files=200,
+            project_path, old_hashes, max_files=200, stat_cache=stat_cache,
         )
+        try:
+            SCAN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            stats_cache_file.write_text(json.dumps(stat_cache, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
         if file_results or deleted:
             changed_names = [f["rel_path"] for f in file_results]
             print(f"[manon] 变更 {len(file_results)} 个文件: {', '.join(changed_names[:5])}"

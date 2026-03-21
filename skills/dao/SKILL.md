@@ -29,9 +29,11 @@ The skill's Python scripts are **globally installed** — they are NOT inside th
 SKILL_DIR  = the "Base directory for this skill" shown in the system header above
              (e.g., C:\Users\zack_\.claude\skills\dao  or  ~/.claude/skills/dao)
 
-SCRIPT  = <SKILL_DIR>/scripts/dao-report.py   ← global, manages issues.json
-SCANNER = <SKILL_DIR>/scripts/dao-scan.py     ← global, reads graph health
-PICKER  = <SKILL_DIR>/scripts/dao-pick.py     ← global, interactive selector
+SCRIPT   = <SKILL_DIR>/scripts/dao-report.py   ← global, manages issues.json
+SCANNER  = <SKILL_DIR>/scripts/dao-scan.py    ← global, reads graph health
+ANALYZER = <SKILL_DIR>/scripts/dao-analyze.py ← global, three-layer programmatic analysis
+COMMITTER= <SKILL_DIR>/scripts/dao-commit.py  ← global, atomic commit + issue close + graph sync
+PICKER   = <SKILL_DIR>/scripts/dao-pick.py    ← global, interactive selector
 ```
 
 **`.dao/` in the project** = data directory (issues.json, quality-report.md) — NOT the scripts.
@@ -51,8 +53,12 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
 2. **Analyze** — graph-driven, not pattern-driven:
    - `python SCANNER context <project_path> <repo_id>` → JSON `{health, scan_checklist, report_exists, open_issues, changed_files}`
    - `scan_checklist` contains all 19 principles (A1-A7, M1-M4, C1-C8); `priority: "high"` means a health dimension scored below threshold — investigate these first
-   - **First run** (`report_exists=false`): `mcp__manon__manon_deep_query(repo_id, "这个项目的复杂度、耦合和重复主要集中在哪里？有哪些可以简化的机会？")` → cover all 19 principles in the inquiry, prioritize high-signal ones → `python SCRIPT init <project_path>` → `python SCRIPT add` each finding
-   - **Subsequent runs** (`report_exists=true`): load open issues; use `changed_files` from scanner + re-run inquiry over changed areas; cover all 19 principles but focus high-priority ones → `python SCRIPT add` new findings
+   - `python ANALYZER <project_path> <repo_id>` → JSON `{candidates, deep_query_raw, structural}`
+     - A-layer: health metrics + graph traversal (thin layers, hub modules)
+     - M-layer: entity-anchored deep_query (boundary clarity, type duplication)
+     - C-layer: structural analysis (dead code, fragmentation, deep nesting, cycles)
+   - **First run** (`report_exists=false`): `python SCRIPT init <project_path>` → for each candidate from ANALYZER output: `python SCRIPT add <project_path> <layer> <code> "<description>"`
+   - **Subsequent runs** (`report_exists=true`): load open issues; re-run ANALYZER to detect new candidates in changed areas → `python SCRIPT add` only genuinely new findings (skip duplicates of existing open issues)
 
 3. **Show panel + ask** — use `AskUserQuestion`:
    - Show only **A and M** open issues (grouped, with index numbers) — do NOT list C issues individually
@@ -61,6 +67,7 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - If user picks A/M → step 4; if user skips/enters → step 5
 
 4. **User picks A/M issue** (e.g. `A1`, `M2`):
+   - `python SCRIPT arm <project_path> <issue_id> <SKILL_DIR> <repo_id>` — write dao marker so hooks can inject commit command
    - `EnterPlanMode` — plan MUST start with this header (PreToolUse hook auto-writes marker from it):
      ```
      DAO: project=<project_path> issue=<issue_id> skill=<SKILL_DIR> repo=<repo_id>
@@ -68,7 +75,7 @@ NEVER as `python .dao/...` or `python dao-report.py` without the full path.
    - Plan covers implementation only after the header; no post-steps in the document
    - Wait for user approval → `ExitPlanMode`
    - Execute implementation → run tests
-   - `MANON_DAO_MSG="<commit message>" python "<SKILL_DIR>/scripts/dao-commit.py" "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
+   - `MANON_DAO_MSG="<commit message>" python COMMITTER "<project_path>" "<issue_id>" "<SKILL_DIR>" "<repo_id>"`
    - `manon_impact(repo_id, commit='HEAD')` → sync graph
    - Return to step 3
 
