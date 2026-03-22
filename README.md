@@ -2,15 +2,15 @@
 
 # Manon
 
-### Context Management for AI Coding
+### AI Architect for Your Codebase
 
-**MCP service powered by the MatrixOneGraph knowledge graph engine — precise, controllable AI programming.**
+**Knowledge graph engine + development skills — from requirements to production, grounded in code facts.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-[Quick Start](#-quick-start) · [How It Works](#-how-it-works) · [Query Tools](#-query-tools-in-depth) · [MCP Tools](#-mcp-tools) · [API Reference](#-api-reference)
+[Quick Start](#-quick-start) · [Skill System](#-skill-system) · [Knowledge Graph](#-knowledge-graph) · [Query Tools](#-query-tools) · [MCP Tools](#-mcp-tools)
 
 </div>
 
@@ -18,106 +18,38 @@
 
 ## ❓ The Problem
 
-The core flaw of AI coding: **insufficient context**.
+AI coding has two structural flaws:
 
 | Flaw | Symptom | Consequence |
 |------|---------|-------------|
-| **Insufficient context** | Model can't see call graphs, dependency chains, module boundaries | **Hallucination** — guesses relationships, misses side effects, breaks things elsewhere |
+| **Insufficient context** | Model can't see call graphs, dependency chains, module boundaries | **Hallucination** — guesses relationships, misses side effects |
+| **Unstructured workflow** | Model dives straight into code without requirements, testing, or validation | **Drift** — scope creep, untested code, silent regressions |
 
-The stronger the model, the worse the context problem — powerful model + bad context = confident garbage, faster.
+The stronger the model, the worse both problems get — powerful model + bad context + no process = confident garbage, faster.
 
 ## 💡 The Solution
 
-Manon is an MCP service powered by the **MatrixOneGraph knowledge graph engine**, providing precise context for AI coding:
+Manon provides two layers:
 
-**MatrixOneGraph Knowledge Graph** — Indexes every function, class, call relationship, import chain, and module boundary in your codebase. When the model needs context, it gets precisely the relevant entities and code — not too much, not too little.
+**Layer 1 — Knowledge Graph** (the foundation)
+Indexes every function, class, call relationship, import chain, and module boundary. Vector + graph hybrid search. When the model needs context, it gets precisely the relevant code — not too much, not too little.
 
-- **Entities, calls, imports** — full structural indexing
-- **Vector + graph hybrid search** — precise relationships + semantic queries
-- **Precise, minimally sufficient context** — eliminates hallucination
-
-## 📊 Measured Effectiveness
-
-### Real-World Analysis Benchmark
-
-Analyzed OpenClaw project (2,100 files) to develop a streamlining plan. Full report: [`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
-
-| Dimension | Using Manon | Using Native Tools | Difference |
-|-----------|-------------|-------------------|------------|
-| **Time Required** | ~30 minutes | ~8-12 hours | **16-24x faster** |
-| **Analysis Depth** | Deep semantic understanding | Surface text matching | Manon deeper |
-| **Accuracy** | 95%+ | 60-70% | **+30%** |
-| **Reliability** | Graph-based relationships | Speculation-based | Manon more reliable |
-
-**Key Advantages**:
-- **Semantic understanding** — Understands code meaning and relationships, not just text matching
-- **Relationship graph** — 52,701 entities, 73,865 relationships, instant multi-layer dependency tracing
-- **Natural language queries** — Describe intent without knowing exact keywords
-
-### Query Tools Evaluation
-
-Evaluated with 20 real-world queries (5 per tool), benchmarked against native tools (Grep/Glob/Read/git) on identical tasks. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
-
-| Metric | Manon | Native Tools | Improvement |
-|--------|-------|-------------|-------------|
-| Avg tool calls per task | 1 | 13.7 | **91% fewer** |
-| Total tokens (20 queries) | ~19.5K | ~350K | **94% savings** |
-| Avg quality score | 4.3/5 | 3.2/5 | **+34%** |
-
-| Tool | Use Case | Calls Saved | Quality (Manon → Native) |
-|------|----------|-------------|--------------------------|
-| `manon_search` | Semantic code search | 86% | 4.2 vs 2.6 |
-| `manon_graph` | Call graph traversal | 90% | 4.6 vs 2.6 |
-| `manon_deep_query` | Multi-round architecture analysis | 94% | 4.6 vs 2.6 |
-| `manon_impact` | Commit impact analysis | 95% | 3.8 vs 4.8 ¹ |
-
-> ¹ `impact` trades depth for speed — 80% of the insight in 1/66 of the tokens. For high-risk commits, pair with manual review.
-
-### Unique Value (Hard to Achieve with Native Tools)
-
-1. **Semantic search** — Describe intent in natural language without knowing exact naming. Search "error handling" to find all exception-related code, not just `Exception` keyword matches
-2. **Directional graph traversal** — Distinguish callers (who calls it) vs callees (what it calls). Native Grep only finds reference lines with no direction
-3. **Automatic coverage analysis** — LLM identifies information gaps and generates follow-up queries. Complex cross-module questions resolved in one call
-4. **Structured entities + relations** — Returns typed, scored, relationship-aware data, not raw text lines
-5. **Instant impact screening** — One call returns changed symbols, callers, propagation chains, and risk scores. Directly usable for CI/CD gating
-
-### Tool Selection Decision Tree
+**Layer 2 — Development Skills** (the workflow)
+Five skills that cover the full development lifecycle — requirements, code quality, testing, and validation. Each skill is backed by the graph, ensuring decisions are grounded in code facts, not LLM imagination.
 
 ```
-What do you need?
-├── Find code/features (don't know the keyword)
-│   └── manon_search → supplement with Grep if needed
-├── Find code (know the exact keyword)
-│   └── Grep (faster, more precise)
-├── Trace call relationships/dependencies
-│   └── manon_graph → increase depth if needed
-├── Understand cross-module architecture
-│   └── manon_deep_query (automatic multi-round)
-├── Assess commit impact
-│   ├── Quick screening → manon_impact
-│   └── risk ≥ 60 → manon_impact + native deep analysis
-├── Before modifying code
-│   └── manon_search + manon_graph (understand context)
-└── Simple file lookup
-    └── Glob
+  /idea        write code       /dao          /tc           /exp
+  ┌─────┐      ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐
+  │Refine│ ──▶ │Build│  ──▶  │Clean│  ──▶  │Test │  ──▶  │Verify│
+  │ Req  │     │     │       │     │       │     │       │ E2E  │
+  └──┬──┘      └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘
+     │            │              │              │              │
+     └──────────  all grounded in knowledge graph  ───────────┘
 ```
+
+---
 
 ## ⚡ Quick Start
-
-### Using the Official Service (Recommended)
-
-Manon provides a free official SaaS service — no server setup required. After installation, the MCP client connects to the official API automatically (geo-routed by region).
-
-**Environment variables** (optional, for customization):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MANON_API_URL` | auto (geo-routed) | Override API endpoint. Set to `http://localhost:3700` for self-hosted |
-| `MANON_API_KEY` | auto-generated | API key (auto-created on first use) |
-| `MANON_API_URL_CN` | `http://saas.matrixone.online:3700` | China endpoint |
-| `MANON_API_URL_INTL` | `http://203.208.134.27:3700` | International endpoint (Singapore) |
-
-To use the official service, just install and run — no environment variables needed.
 
 ### Installation (Claude Code / Cursor / Windsurf)
 
@@ -135,16 +67,26 @@ cd manon
 install.bat
 ```
 
-The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
+The installer auto-detects your editor, installs dependencies, registers a free account, configures MCP + Playwright, and installs all skills. Restart your editor and you're ready.
 
-> **Included:** Installation automatically includes `/dao`, `/tc`, `/idea`, and `/exp` skills — see sections below. Playwright MCP is also auto-configured for `/exp` web testing.
->
-> **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
+> **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode.
+
+**Official SaaS** — Free, zero-config, geo-routed. No server setup needed.
+
+<details>
+<summary>Environment variables (optional)</summary>
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MANON_API_URL` | auto (geo-routed) | Override API endpoint. `http://localhost:3700` for self-hosted |
+| `MANON_API_KEY` | auto-generated | API key (auto-created on first use) |
+
+</details>
 
 <details>
 <summary>Manual MCP config</summary>
 
-Add to your editor's MCP config (`~/.claude/settings.json` for Claude Code, `~/.cursor/mcp.json` for Cursor):
+Add to `~/.claude/settings.json` (Claude Code) or `~/.cursor/mcp.json` (Cursor):
 
 ```json
 {
@@ -158,130 +100,49 @@ Add to your editor's MCP config (`~/.claude/settings.json` for Claude Code, `~/.
 }
 ```
 
-The API key is managed automatically in `~/.manon/config.json`. No manual setup needed.
-
 </details>
 
-### Initialization (One-Time)
-
-```
-After installation, first use in your IDE:
-
-manon_init          → Auto-detect project, register repo, build knowledge graph
-                      Also installs Claude Code hooks (auto-remind to check graph before search/edit)
-manon_setup_hooks   → Install git pre-push hook, auto-update graph + output health score after push
-manon_code_health   → First code health check, get 8-dimension baseline score
-```
-
-Three steps, then all tools work automatically.
-
-**Claude Code Hooks (installed by install.sh/install.bat):**
-- **Before Grep/Glob** — Reminds to check knowledge graph first, avoiding blind searches
-- **Before Agent (Explore/general-purpose)** — Reminds to query Manon before spawning exploration agents
-- **After Commit** — Automatically triggers manon_impact analysis after successful git commits
-
-**Git Pre-Push Hook (installed by manon_init):**
-- Auto-incrementally updates knowledge graph after push
-- Auto-outputs code health score changes
-- Can also be manually installed via manon_setup_hooks
-
-### Daily Workflow
-
-```
-Write code → git push → hook auto-updates knowledge graph (zero effort)
-                              ↓
-┌─────────────────────────────────────────────────────┐
-│  Find code       manon_search / manon_graph          │
-│  Deep analysis   manon_deep_query                    │
-│  Assess changes  manon_impact                        │
-│  Code health     manon_code_health → 8 dimensions    │
-│                  Module coupling · Circular deps      │
-│                  Fan-in · Dead code · Test coverage   │
-│                  Function size · Tech debt · Depth    │
-└─────────────────────────────────────────────────────┘
-```
-
-> **code_health dimensions:** Module Coupling (MC), Circular Dependencies (CD), Fan-in Concentration (FI), Dead Code (DC), Function Complexity (FS), Technical Debt (TD), Module Fragmentation (MF), Indirection Density (RE). Score changes output automatically after each push.
-
 ---
 
-## 🎯 Skill System — Graph-Powered Development Lifecycle
+## 🎯 Skill System
 
-Manon's skills form a closed-loop development workflow. Each skill is backed by the knowledge graph — not pure LLM reasoning — ensuring decisions are grounded in code facts.
+Skills exist only when they provide capabilities that pure LLM conversation cannot — external tool integration (graph API, coverage data, Playwright), deterministic workflows, or structured output. If Claude can do it well in a normal chat, it doesn't need a skill.
 
-```
-  /idea                /dao               /tc               /exp
-  ┌──────┐           ┌──────┐           ┌──────┐          ┌──────┐
-  │Refine│  ──code──▶│Maintain│  ──code──▶│ Test │ ──code──▶│Verify│
-  │ Req  │           │Quality │           │Cover │          │ E2E  │
-  └──┬───┘           └──┬───┘           └──┬───┘          └──┬───┘
-     │                  │                  │                  │
-     └──── all query ───┴──── knowledge ───┴──── graph ──────┘
-```
+| Phase | Skill | What it does | Why a skill, not just chat? |
+|-------|-------|-------------|----------------------------|
+| **Requirements** | `/idea` | Graph + GitHub research → Socratic questioning → dev document | Questions based on code facts (fan-in, dependencies), not generic |
+| **Development** | Claude + graph | Write code with `manon_search` / `manon_graph` | Hooks enforce graph-first; `manon_impact` after every commit |
+| **Maintenance** | `/dao` | Health scan → 3-layer classification → auto-simplify | Batch Architecture/Module/Code analysis with graph validation |
+| **Testing** | `/tc` | Coverage scan → graph-prioritize → write tests → verify | Ranks by structural importance, not random |
+| **Validation** | `/exp` | AI agent operates the product like a real user | Playwright/Bash to click, type, read logs — not imagination |
 
-| Phase | Skill | What it does | Why not just chat with Claude? |
-|-------|-------|-------------|-------------------------------|
-| **Requirements** | `/idea` | Graph-aware Socratic questioning → dev document | Questions are based on code facts (fan-in, dependencies), not generic |
-| **Development** | Claude + graph | Write code with `manon_search` / `manon_graph` context | CLAUDE.md Pipeline enforces spec→design→decompose→execute |
-| **Maintenance** | `/dao` | Scan health → classify complexity → auto-simplify | Batch 3-layer analysis (Architecture/Module/Code) with graph validation |
-| **Testing** | `/tc` | Coverage scan → graph-prioritize → write tests | Ranks untested code by structural importance, not random |
-| **Validation** | `/exp` | AI agent operates the product like a real user | Uses Playwright/Bash to click, type, read logs — not imagination |
+### `/idea` — Requirement Refinement
 
-**Key design principle:** Skills exist only when they provide capabilities that pure LLM conversation cannot — external tool integration (graph API, coverage data, Playwright), deterministic workflows (batch scanning, 3-round retry), or structured output (dev documents, health reports). If Claude can do it well in a normal chat, it doesn't need a skill.
-
----
-
-## 🌿 大道至简 (Dao) — Graph-Driven Code Simplification
-
-Bundled with Manon, `/dao` is a Claude Code skill that uses the knowledge graph to systematically find and remove unnecessary complexity — without guessing.
-
-Type `/dao` in Claude Code. It queries the graph for health scores, identifies where complexity is concentrated, and classifies findings into three layers:
-
-| Layer | Scope | Examples |
-|-------|-------|---------|
-| **Architecture (A)** | System structure | Unnecessary layers, over-modularization, premature generalization |
-| **Module (M)** | Module boundaries | Feature bloat, unclear boundaries, duplication, excessive dependencies |
-| **Code (C)** | File & function level | Dead code, over-fragmentation, circular deps, low cohesion |
-
-**Architecture and Module issues** are shown in an interactive panel. You pick one, Claude designs and executes a plan with your approval, then commits and re-syncs the graph.
-
-**Code-layer issues** run automatically — no confirmation needed. Each fix is validated against the graph (e.g. dead code deletion only proceeds after zero-caller confirmation), committed, and the graph is updated before moving to the next.
-
-Issues are tracked in `.dao/issues.json`. Health scores update after every commit.
+Queries the knowledge graph and GitHub, then asks Socratic questions grounded in what it found — "Module X has high fan-in, should the new feature go there or in a new module?" After 3-7 rounds, proposes 2-3 approaches with impact analysis, outputs a reviewable dev document.
 
 ```
-/dao    — query graph → show A/M panel → auto-fix all C issues → stop
+/idea   — context → questioning → propose → document → review
 ```
 
----
+### `/dao` — Code Simplification
 
-## 🧪 Test Coverage (TC) — Graph-Prioritized Test Loop
-
-Bundled with Manon, `/tc` is a Claude Code skill that uses the knowledge graph to prioritize which code needs tests most — high fan-in, high complexity, zero coverage first.
-
-Type `/tc` in Claude Code. It scans existing coverage data, queries the graph for entity importance (fan-in, complexity, centrality), and generates a prioritized list of untested or under-tested code. Then it writes tests, runs them, and commits — in a loop until coverage targets are met.
+Scans code health, classifies complexity into three layers (Architecture / Module / Code), shows A/M issues for your pick, auto-fixes all C issues with graph validation (e.g., dead code deletion only after zero-caller confirmation).
 
 ```
-/tc    — scan coverage → graph-prioritize → write tests → verify → commit → repeat
+/dao    — health scan → classify → A/M panel + auto-fix C → commit
 ```
 
----
+### `/tc` — Test Coverage
 
-## 💡 Idea — Graph-Aware Requirement Refinement
-
-Type `/idea` with a feature description. It queries the knowledge graph and GitHub for context, then asks Socratic questions grounded in code facts — not generic product-manager questions. After 3-7 rounds of refinement, it proposes 2-3 technical approaches with impact analysis, and outputs a reviewable dev document.
+Scans coverage data, queries the graph for entity importance (fan-in, complexity, centrality), generates a prioritized list of untested code, writes tests, runs them, commits.
 
 ```
-/idea   — graph context + research → Socratic questioning → dev document → review
+/tc     — coverage scan → graph-prioritize → write tests → verify → commit
 ```
 
-**Why not just chat?** Claude without `/idea` can only ask questions based on your description. `/idea` first reads the graph (modules, call chains, health scores) and researches similar implementations on GitHub, then asks questions based on what it found — e.g., "Module X has high fan-in, should the new feature go there or in a new module?"
+### `/exp` — Experience Validation
 
----
-
-## 🧪 Experience — End-to-End Product Validation
-
-Type `/exp` after development. An AI agent operates the product like a real user — clicking buttons, typing inputs, reading logs — and reports what actually works vs. what doesn't. Supports 4 product types:
+AI agent operates the product like a real user. Supports 4 product types:
 
 | Type | Tools | Use Case |
 |------|-------|----------|
@@ -291,21 +152,21 @@ Type `/exp` after development. An AI agent operates the product like a real user
 | `hybrid` | Playwright + Bash | Full-stack |
 
 ```
-/exp    — define scenarios → agent operates product → report → fix → re-test (max 3 rounds)
+/exp    — define scenarios → agent operates → report → fix → re-test (max 3 rounds)
 ```
 
 ---
 
-## 🔬 How It Works
+## 🔬 Knowledge Graph
 
-### MatrixOneGraph Knowledge Graph (Edge-Cloud Architecture)
+### Architecture (Edge-Cloud)
 
 ```
 Local                                     Cloud
 ─────                                     ─────
 ① Scan project files
-② Parse AST locally
-   (functions, classes, calls, imports)
+② Parse AST locally (tree-sitter)
+   functions, classes, calls, imports
 ③ Hash files, send only changes ────────→ ④ Build knowledge graph
                                           ⑤ Generate vector index
                                           ⑥ Store entities & relations
@@ -317,112 +178,125 @@ Local                                     Cloud
 - **Incremental sync** — only changed files are uploaded
 - **Hybrid search** — graph traversal for precise relationships + vector search for semantic queries
 
+### Edge Types
+
+| Edge | Source | Example |
+|------|--------|---------|
+| `calls` | AST call expressions | `search_handler → SearchEngine.execute` |
+| `imports` | AST import statements | `router.py → SearchEngine` |
+| `inherits` | AST class definitions | `AdminUser → BaseUser` |
+| `handles` | AST route decorators | `GET /api/search → search_handler` |
+
+All edges are AST-deterministic. No string inference, no statistical correlation.
+
+### Code Health (8 Dimensions)
+
+| Abbr | Dimension | What it measures |
+|------|-----------|-----------------|
+| MC | Module Coupling | Cross-module dependency ratio |
+| CD | Circular Dependencies | Cycle count |
+| FI | Fan-in Concentration | High-fan-in entity ratio |
+| DC | Dead Code | Zero-caller entity ratio |
+| FS | Function Complexity | Oversized function ratio |
+| TD | Technical Debt | TODO/FIXME density |
+| MF | Module Fragmentation | Tiny module + deep path ratio |
+| RE | Indirection Density | Barrel re-export ratio |
+
+Score changes output automatically after every `git push`.
+
+### Language Support
+
+**Specialized parsers** (deep extraction: symbols, calls, imports, inheritances, routes):
+Python, TypeScript, JavaScript, Java, PHP (6 languages)
+
+**Generic parser** (symbols + imports via tree-sitter, auto-downloaded):
+Go, Rust, C, C++, C#, Ruby, Swift, Kotlin, Scala, Lua, R, Elixir, Dart, Haskell, OCaml, Bash, Zig (17 languages)
+
 ---
 
-## 🔍 Query Tools In Depth
+## 📊 Measured Effectiveness
 
-Manon provides 4 core query tools covering the full spectrum from code search to architecture analysis. Each tool is built on the knowledge graph, completing in a single MCP call what native tools require 7-20 calls to achieve.
+### Real-World Benchmark
+
+Analyzed OpenClaw project (2,100 files). Full report: [`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
+
+| Dimension | Manon | Native Tools | Difference |
+|-----------|-------|-------------|------------|
+| **Time** | ~30 min | ~8-12 hours | **16-24x faster** |
+| **Accuracy** | 95%+ | 60-70% | **+30%** |
+
+### Query Tools Benchmark
+
+20 real-world queries. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
+
+| Metric | Manon | Native Tools | Improvement |
+|--------|-------|-------------|-------------|
+| Tool calls per task | 1 | 13.7 | **91% fewer** |
+| Total tokens | ~19.5K | ~350K | **94% savings** |
+| Quality score | 4.3/5 | 3.2/5 | **+34%** |
+
+---
+
+## 🔍 Query Tools
 
 ### `manon_search` — Semantic Code Search
 
-**How it works:** Converts natural language queries into vector embeddings, retrieves semantically closest entities from the knowledge graph's vector index, then expands along graph edges to include related entities and relationships. Returns entities + relations + code snippets in one response.
-
-**Goal:** Solve the "don't know what keyword to search" problem. Describe intent (e.g., "error handling"), find all related code regardless of naming conventions.
-
-| Dimension | Details |
-|-----------|---------|
-| Input | Natural language query + top_k + depth |
-| Output | Matched entities (with relevance scores) + relation edges + code snippets |
-| Strength | Semantic understanding > keyword matching; cross-module aggregation |
-| Best for | Exploratory search, conceptual queries, onboarding |
-| Limitation | Very specific string searches are better with Grep |
+Converts natural language to vector embeddings, retrieves closest entities, expands along graph edges. Solves the "don't know the keyword" problem.
 
 ### `manon_graph` — Call Graph Traversal
 
-**How it works:** Locates the target symbol in the knowledge graph, traverses call edges directionally (callers = who calls it, callees = what it calls), supports multi-level depth expansion, returns complete structured call chains.
-
-**Goal:** Solve the "will changing this function break something else" problem. One call reveals all usage scenarios and dependencies. Native Grep only finds reference lines without direction.
-
-| Dimension | Details |
-|-----------|---------|
-| Input | Symbol name + direction (callers/callees/both) + depth |
-| Output | Caller/callee lists + call chain paths + entity details |
-| Strength | Directional traversal; multi-level depth; structured call chains |
-| Best for | Pre-modification impact assessment, understanding module dependencies |
-| Limitation | Dynamic calls (reflection, eval) may be missed |
+Directional traversal (callers/callees/both) with configurable depth. Solves the "will changing this break something" problem.
 
 ### `manon_deep_query` — Multi-Round Deep Query
 
-**How it works:** Server-side LLM-driven iterative querying. The LLM analyzes coverage of existing context, automatically identifies information gaps, generates supplementary queries, and iterates until all sub-aspects are covered. Single MCP call, all iterations happen server-side.
-
-**Goal:** Solve the "cross-module questions need many rounds of exploration" problem. Ask one architecture-level question, the system automatically decomposes, queries each aspect, and synthesizes a comprehensive answer.
-
-| Dimension | Details |
-|-----------|---------|
-| Input | Natural language question + max_rounds |
-| Output | Comprehensive analysis report (covering all sub-aspects) + per-round query logs |
-| Strength | Auto-identifies coverage gaps + auto-supplements; cross-module in one call |
-| Best for | Cross-module architecture understanding, multi-subsystem analysis, onboarding |
-| Limitation | Complex meta-queries may timeout and degrade to single-round |
+Server-side LLM iterative querying. Auto-identifies gaps, generates follow-up queries. One call covers cross-module architecture questions.
 
 ### `manon_impact` — Commit Impact Analysis
 
-**How it works:** Parses commit diffs, extracts changed symbols (functions/classes), traces backwards 2 hops along call edges in the knowledge graph, identifies all direct and indirect callers, computes affected modules and propagation chains, outputs a quantified risk score (0-100).
+Parses diffs → extracts changed symbols → traces callers 2 hops → computes risk score (0-100). Instant CI/CD gating.
 
-**Goal:** Solve the "will this commit break something" problem. Get a complete impact report in seconds, directly usable for CI/CD gating. High-risk commits (≥60) should be paired with manual deep review.
+<details>
+<summary>Tool selection guide</summary>
 
-| Dimension | Details |
-|-----------|---------|
-| Input | Commit hash + max_depth |
-| Output | Changed symbols + caller traces + affected modules + propagation chains + risk score |
-| Strength | Instant risk screening; quantified scoring; propagation visualization |
-| Best for | Quick risk screening, CI/CD gating, code review assistance |
-| Limitation | 2-hop depth limit truncates distant impacts; can't detect semantic behavior changes |
+```
+What do you need?
+├── Find code (don't know keyword)  → manon_search
+├── Find code (know the keyword)    → Grep
+├── Trace call relationships        → manon_graph
+├── Cross-module architecture       → manon_deep_query
+├── Assess commit risk              → manon_impact
+├── Before modifying code           → manon_search + manon_graph
+└── Simple file lookup              → Glob
+```
+
+</details>
 
 ---
 
 ## 🛠️ MCP Tools
 
-### Repository Management
+| Category | Tool | Description |
+|----------|------|-------------|
+| **Repo** | `manon_init` | Auto-detect and register project |
+| | `manon_repos_list` | List repos and index status |
+| | `manon_repos_create/get/delete` | CRUD operations |
+| **Index** | `manon_index_status` | Check indexing progress |
+| | `manon_push_update` | Incremental sync |
+| **Query** | `manon_search` | Semantic code search |
+| | `manon_graph` | Call graph traversal |
+| | `manon_impact` | Commit impact analysis |
+| | `manon_deep_query` | Multi-round deep query |
+| | `manon_code_health` | 8-dimension health scoring |
+| **Auto** | `manon_setup_hooks` | Install git pre-push hook |
+| **Util** | `manon_config/account/usage` | Configuration and account info |
 
-| Tool | Description |
-|------|-------------|
-| `manon_init` | Auto-detect and register current project |
-| `manon_repos_list` | List all repos and their index status |
-| `manon_repos_create` | Add a repo (by git URL or local path) |
-| `manon_repos_get` | Get repo details |
-| `manon_repos_delete` | Delete a repo |
+### Automation (Hooks)
 
-### Indexing
-
-| Tool | Description |
-|------|-------------|
-| `manon_index_status` | Check indexing progress |
-| `manon_push_update` | Sync latest changes (incremental) |
-
-### Code Intelligence
-
-| Tool | Description |
-|------|-------------|
-| `manon_search` | Semantic code search — find code by natural language |
-| `manon_graph` | Query call graphs and dependencies |
-| `manon_impact` | Analyze impact of recent commits |
-| `manon_deep_query` | Multi-round deep analysis with LLM reasoning |
-| `manon_code_health` | Code health scoring — 8-dimension analysis |
-
-### Automation
-
-| Tool | Description |
-|------|-------------|
-| `manon_setup_hooks` | Install git pre-push hook, auto-update graph + output health score |
-
-### Utilities
-
-| Tool | Description |
-|------|-------------|
-| `manon_config` | Show current configuration |
-| `manon_account` | Show account info and quota |
-| `manon_usage` | View API usage statistics |
+| Hook | When | What |
+|------|------|------|
+| **git pre-push** | After `git push` | Auto-update graph + output health score delta |
+| **PreToolUse** | Before Grep/Glob/Agent | Remind to check graph first |
+| **PostToolUse** | After `git commit` | Trigger `manon_impact` analysis |
 
 ---
 
@@ -480,17 +354,17 @@ Base URL: `http://your-server:3700/api/v1` — All endpoints require `X-API-Key`
 
 ## ⚙️ Configuration
 
-All configuration is stored in `~/.manon/config.json`, created automatically on first run.
+All configuration in `~/.manon/config.json`, created automatically.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `api_key` | auto-generated | Free-tier key, obtained on first use |
-| `api_url` | geo-routed | Server endpoint (auto-selected by region) |
-| `projects` | `{}` | Local project registry and file hashes |
+| `api_key` | auto-generated | Free-tier key |
+| `api_url` | geo-routed | Server endpoint |
+| `projects` | `{}` | Local project registry |
 
-Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
+Override via `MANON_API_KEY`, `MANON_API_URL`.
 
-> **Official service vs self-hosted:** By default, Manon connects to the official SaaS service (geo-routed). To use a self-hosted server, set `MANON_API_URL=http://localhost:3700`. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for self-hosting instructions.
+> **Self-hosted:** Set `MANON_API_URL=http://localhost:3700`. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
@@ -500,21 +374,16 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 |---------|------|---------|
 | **v1.2.4** | 2026-03-22 | `/idea` + `/exp` skills; HANDLES edge type; Playwright MCP auto-config; complete skill ecosystem |
 | **v1.2.3** | 2026-03-22 | `/tc` skill; health dimensions MF/RE; `_resolve()` repo_id tolerance; dao code simplification; release tooling |
-| **v1.2.2** | 2026-03-21 | Bugfixes: install.sh unbound variable crash, Windows MANON_DIR syntax, phantom graph nodes; TS/JS coverage support; scan mtime fast path |
-| **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node root-cause fix, cross-module edge recovery, instance method type inference; relations +74%; code health 97/100 |
-| **v1.2.0** | 2026-03-19 | Script classifier filters tool scripts from index; LLM classify endpoint; +115 tests; code health 94/100 |
-| **v1.1.2** | 2026-03-19 | Major code cleanup via `/dao`: dead code removed, functions decomposed, test coverage 32%→61%; TC dimension now reads real coverage data |
-| **v1.1.1** | 2026-03-18 | Fixed index coverage stats inaccuracy |
-| **v1.1.0** | 2026-03-18 | `/dao` skill bundled; C2/C4/C8 code simplification; MCP tools consolidated |
-| **v1.0.0** | 2026-03-16 | Architecture simplification; renamed `mcp/`→`manon_mcp/`, removed `shared/`; full test suite |
-| **v0.2.5** | 2026-03-13 | Scan/upload split to avoid MCP timeout; heavy ops moved out of MCP process; Claude Code hooks |
-| **v0.2.2** | 2026-03-07 | Embedded codeindex into repo; eliminated external dependency; fast language detection |
-| **v0.2.1** | 2026-03-07 | Migrated to brandonzyy/codeindex fork; auto tree-sitter parser installation |
-| **v0.2.0** | 2026-02-23 | Initial open-source release with MCP integration and knowledge graph |
+| **v1.2.2** | 2026-03-21 | Bugfixes: install.sh crash, Windows MANON_DIR, phantom nodes; TS/JS coverage; scan mtime fast path |
+| **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node fix, cross-module edge recovery, type inference; relations +74%; health 97/100 |
+| **v1.2.0** | 2026-03-19 | Script classifier; LLM classify endpoint; +115 tests; health 94/100 |
+| **v1.1.2** | 2026-03-19 | Major cleanup via `/dao`: dead code removed, test coverage 32%→61% |
+| **v1.1.0** | 2026-03-18 | `/dao` skill bundled; MCP tools consolidated |
+| **v1.0.0** | 2026-03-16 | Architecture simplification; full test suite |
+| **v0.2.0** | 2026-02-23 | Initial open-source release |
 
----
-
-## 📦 Changelog
+<details>
+<summary>Detailed changelog</summary>
 
 ### v1.2.4 — 2026-03-22
 
@@ -522,69 +391,45 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 - **Added** — `/idea` skill: graph-aware requirement refinement — queries graph + GitHub, Socratic questioning, generates reviewable dev document
 - **Added** — `/exp` skill: experience-driven validation — AI agent operates the product (web/cli/service/hybrid) like a real user, 3-round fix loop
-- **Added** — HANDLES edge type: AST-extracted HTTP route registrations (Flask/FastAPI `@router.get`, Express `app.get`, NestJS `@Get`). Existing repos need re-index to populate
-- **Added** — Playwright MCP auto-configured by installer for `/exp` web testing
-- **Added** — Skill System section in README documenting the closed-loop development lifecycle
-- **Fixed** — `/idea` check script: tolerates numbered headings (`## 1. 需求边界`), UTF-8 output on Windows
-- **Fixed** — `/idea` context script: graph API relation parsing, symbol filter fallback, Windows encoding
-
----
+- **Added** — HANDLES edge type: AST-extracted HTTP route registrations (Flask/FastAPI, Express, NestJS). Existing repos need re-index
+- **Added** — Playwright MCP auto-configured by installer
+- **Fixed** — `/idea` scripts: numbered heading tolerance, graph API parsing, Windows encoding
 
 ### v1.2.3 — 2026-03-22
 
-**New `/tc` skill, health dimension rework, and robustness improvements.**
+**New `/tc` skill, health dimension rework.**
 
-- **Added** — `/tc` skill: graph-prioritized test coverage loop — scans coverage, ranks untested code by graph importance, writes tests, verifies, and commits
-- **Refactored** — Code health dimensions: replaced Test Coverage (TC) and Inheritance Depth (ID) with Module Fragmentation (MF) and Indirection Density (RE) for graph-native coverage
-- **Added** — `_resolve()` repo_id tolerance across all MCP tools — fuzzy matching for robustness
-- **Added** — `release.py` script to prevent master/dev divergence during releases
-- **Improved** — `/dao` skill: semantic signal detection (config/event/pattern files), updated health dimension mappings
-- **Improved** — Script classifier: added "skills" to `_SOURCE_DIRS` so skill scripts are properly indexed
-- **Fixed** — Chunk truncation, VectorIndex resilience, repo-id recovery, multi-language classifier
-- **Fixed** — dao stop hook scoped to current session (CWD match)
-- **Refactored** — Skill sync moved out of MCP server to standalone tooling
-- **Refactored** — `rate_limit.py` merged into `saas/auth.py`; `adaptive_config.py` merged into `codeindex/config.py`
-- **Infra** — Consolidated git to GitHub, removed Gitee mirror
-
----
+- **Added** — `/tc` skill: graph-prioritized test coverage loop
+- **Refactored** — Health dimensions: TC/ID → MF/RE (graph-native)
+- **Added** — `_resolve()` repo_id fuzzy matching; `release.py`
+- **Improved** — `/dao` semantic signal detection; script classifier
+- **Fixed** — Chunk truncation, VectorIndex resilience, dao stop hook scoping
+- **Refactored** — Skill sync to standalone; `rate_limit.py` + `adaptive_config.py` merged
 
 ### v1.2.2 — 2026-03-21
 
-**Bugfixes + incremental improvements.** Git repository consolidated to GitHub only (Gitee mirror removed).
+**Bugfixes + consolidation.**
 
-- **Fixed** — `install.sh` crash: `DEFAULT_API_URL: unbound variable` (API_URL assignment moved after region detection)
-- **Fixed** — Broken Windows `set` syntax for `MANON_DIR` in skill scripts
-- **Fixed** — Phantom nodes and empty-caller edges in knowledge graph
-- **Fixed** — dao stop hook scoped to current session (CWD match + 6h TTL)
-- **Added** — TypeScript/JS coverage support in `manon-scan-tests.py`
-- **Improved** — Scan performance: mtime+size fast path skips unchanged files; partial parse on syntax errors
-- **Infra** — Consolidated git to GitHub (`github.com/brandonzyy/manon`), removed Gitee mirror and sync workflow
-
----
+- **Fixed** — install.sh unbound variable crash, Windows MANON_DIR syntax, phantom graph nodes, dao stop hook
+- **Added** — TypeScript/JS coverage support
+- **Improved** — Scan mtime fast path
+- **Infra** — Consolidated git to GitHub, removed Gitee mirror
 
 ### v1.2.1 — 2026-03-20
 
-**Knowledge graph quality overhaul** — Four root-cause fixes that eliminate phantom node pollution and cross-module edge loss. Validated with a full rebuild: relations +74% (600→1053), cross-module edges 0→51, health score 94→97.
+**Knowledge graph quality overhaul.** Relations +74% (600→1053), health 94→97.
 
-- **Phantom file attribution** (`responsible_files`) — each phantom node now tracks which source files are responsible for it. `remove_by_file()` surgically cleans up orphaned phantoms on incremental updates, eliminating stale-graph pollution without requiring a full rebuild.
-- **Python relative import fix** — dots in `.utils` / `..utils` were misinterpreted as hidden filenames by `posixpath.normpath`, producing double/triple-dot entity IDs. Fixed by parsing leading-dot count to correctly resolve package depth.
-- **Project-internal absolute import fix** — all non-relative imports were incorrectly marked as external, silently dropping call edges to project-internal classes (e.g. `CodeGraph`, `VectorIndex`). Fixed by introducing `local_packages` (top-level dirs with `__init__.py`) to distinguish truly external packages.
-- **Instance method type inference** — Python parser now tracks `var = ClassName()` and `var: ClassName = ...` assignments in function bodies. Calls like `var.method()` are resolved to `ClassName.method()` and correctly added as graph edges.
-- **Refactored** — internal `_Fake*` dataclasses replaced with proper `codeindex.parser` types throughout the indexing pipeline.
-- **Code health** — `97/100`, up from `94/100`.
-
----
+- **Fixed** — Phantom file attribution via `responsible_files`; Python relative import resolution; project-internal absolute import classification
+- **Added** — Instance method type inference (`var = ClassName()` tracking)
 
 ### v1.2.0 — 2026-03-19
 
-**`/dao` hook enforcement** — A two-part hook (EnterPlanMode marker + Stop blocker) now guarantees `dao-commit` always runs after plan execution, closing the issue and syncing the graph.
+- **Added** — Script classifier (4-signal rule chain + LLM tiebreaker); `POST /classify-scripts`
+- **Added** — `/dao` hook enforcement (EnterPlanMode marker + Stop blocker)
+- **Refactored** — `git_parser.py` + `symbol_extractor.py` → `parsing.py`
+- **Tests** — +115 unit tests
 
-- **Script classifier** — Filters tool scripts (`deploy_*`, `setup_*`, etc.) from the index via a 4-signal rule chain; ambiguous files go to an LLM tiebreaker.
-- **`POST /api/v1/classify-scripts`** — New endpoint for LLM-based script classification.
-- **Fixed** — 3 bugs in the classifier found during gray-scale testing: wrong import dict key, missing relative import resolution, wrong key in `build_imported_paths`.
-- **Refactored** — `git_parser.py` + `symbol_extractor.py` merged into `parsing.py`; test framework detection extracted to `framework_detection.py`.
-- **Tests** — +115 unit tests (script classifier + classify endpoint).
-- **Code health** — `94/100`, up from `88/100`.
+</details>
 
 ---
 
@@ -592,9 +437,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 ### Structured Pipeline (Planned)
 
-Another structural flaw of AI coding is **unstructured execution** — given a request, the model dives straight into writing code, leading to attention decay, requirement drift, and architecture collapse.
-
-We're developing a structured pipeline that enforces a deterministic workflow: `clarify → spec → design → decompose → execute → review`. Each step is bounded, with clear inputs and outputs, visible and interruptible. Combined with the knowledge graph's precise context, this will eliminate the black-box problem in AI coding.
+A deterministic workflow enforcing `clarify → spec → design → decompose → execute → review`. Each step bounded, with clear inputs and outputs, visible and interruptible. Combined with the knowledge graph, this will eliminate the black-box problem in AI coding.
 
 ---
 
@@ -606,28 +449,19 @@ We're developing a structured pipeline that enforces a deterministic workflow: `
 
 ## 🏗️ Self-Hosting
 
-Want to run your own Manon server? See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for:
-- Local deployment with Ollama
-- OpenAI-compatible LLM configuration
-- Multi-user setup
-- Docker deployment (coming soon)
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for local deployment with Ollama, OpenAI-compatible LLMs, multi-user setup.
 
 ## 🤝 Contributing
 
-Manon is open source and welcomes contributions! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
-- Development setup
-- Code style guidelines
-- Pull request process
-- Areas for contribution
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup and contribution guidelines.
 
 ## 💬 Community & Support
 
 - **Issues**: [Report bugs or request features](https://github.com/brandonzyy/manon/issues)
 - **Discussions**: [Ask questions or share ideas](https://github.com/brandonzyy/manon/discussions)
-- **Documentation**: [`docs/`](docs/) for architecture and deployment guides
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE).
 
 Copyright (c) 2026 MatrixOne (Hangzhou) Information Technology Co., Ltd.
