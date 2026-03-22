@@ -167,12 +167,39 @@ def _classify_file_results(
         build_imported_paths,
     )
 
-    # Detect project packages (dirs with __init__.py at top level)
+    # Detect project packages across all languages
+    # Python: __init__.py, TS/JS: package.json, Go: go.mod, Rust: Cargo.toml, etc.
     project_root = Path(project_path)
-    project_packages = [
-        d.name for d in project_root.iterdir()
-        if d.is_dir() and (d / "__init__.py").exists()
-    ]
+    _PACKAGE_MARKERS = ("__init__.py", "package.json", "Cargo.toml", "go.mod",
+                        "build.gradle", "pom.xml", "mix.exs", "pubspec.yaml")
+    project_packages = []
+    for d in project_root.iterdir():
+        if not d.is_dir():
+            continue
+        if any((d / m).exists() for m in _PACKAGE_MARKERS):
+            project_packages.append(d.name)
+    # Also detect from root package manifests
+    for manifest, key in [("package.json", "name"), ("Cargo.toml", None), ("go.mod", None)]:
+        mf = project_root / manifest
+        if not mf.exists():
+            continue
+        try:
+            import json as _json
+            if manifest == "package.json":
+                pkg = _json.loads(mf.read_text(encoding="utf-8"))
+                pkg_name = pkg.get("name", "")
+                if pkg_name and pkg_name not in project_packages:
+                    project_packages.append(pkg_name)
+            elif manifest == "go.mod":
+                # "module github.com/org/repo" → "repo"
+                for line in mf.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("module "):
+                        mod_name = line.split()[-1].split("/")[-1]
+                        if mod_name and mod_name not in project_packages:
+                            project_packages.append(mod_name)
+                        break
+        except Exception:
+            pass
 
     classifier = ScriptClassifier(project_packages)
     imported_paths = build_imported_paths(file_results, project_root)

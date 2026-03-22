@@ -14,6 +14,7 @@ from core.ast import (
 )
 
 from .deps import ToolDependencies
+from .search import _resolve
 
 
 def create_repo(*, name: str, branch: str, local_path: str, client) -> str:
@@ -122,31 +123,32 @@ def register_repo_crud_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_repos_get(repo_id: str) -> str:
         """查看仓库详情。"""
-        return get_repo(repo_id=repo_id, client=deps.client)
+        return get_repo(repo_id=_resolve(repo_id), client=deps.client)
 
     @mcp.tool()
     def manon_repos_delete(repo_id: str) -> str:
         """删除仓库及其所有索引数据。"""
-        return delete_repo(repo_id=repo_id, client=deps.client)
+        return delete_repo(repo_id=_resolve(repo_id), client=deps.client)
 
     @mcp.tool()
     def manon_scan_files(repo_id: str) -> str:
         """从磁盘缓存加载扫描结果到 MCP 内存。"""
-        return scan_files(repo_id=repo_id, sync_module=deps.sync)
+        return scan_files(repo_id=_resolve(repo_id), sync_module=deps.sync)
 
     @mcp.tool()
     def manon_upload_batch(repo_id: str) -> str:
         """从扫描缓存中取下一批文件上传到服务端。"""
-        return upload_batch(repo_id=repo_id, sync_module=deps.sync)
+        return upload_batch(repo_id=_resolve(repo_id), sync_module=deps.sync)
 
     @mcp.tool()
     def manon_upload_coverage(repo_id: str) -> str:
         """上传本地 coverage_map.json 到服务端，用于 TC 测试覆盖度计算。"""
-        return upload_coverage(repo_id=repo_id, client=deps.client)
+        return upload_coverage(repo_id=_resolve(repo_id), client=deps.client)
 
     @mcp.tool()
     def manon_index_status(repo_id: str) -> str:
         """查看仓库的索引状态和统计信息。"""
+        repo_id = _resolve(repo_id)
         result = client._get(f"/api/v1/repos/{repo_id}/index-status")
         status = result["status"]
         stats = result.get("stats")

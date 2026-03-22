@@ -97,12 +97,13 @@ Use `dao-scan.py context` scores to focus the inquiry — not to dictate what to
 | Dimension | Score < threshold | Investigate |
 |-----------|-------------------|-------------|
 | MC 模块耦合 | < 9 | Cross-module deps — is this intentional architecture or accidental? |
-| DC 死代码 | < 10 | Likely C4 candidates — verify with `manon_graph` callers |
-| FS 函数规模 | < 9 | Oversized functions — C-layer complexity |
-| TD 技术债务 | < 9 | TODOs, any_count — C-layer debt |
-| FI 扇入集中度 | < 9 | Hot modules taking too much responsibility — M1 or A1 |
 | CD 循环依赖 | < 10 | C7 or A1 — architectural cycle |
-| TC 测试覆盖 | < 9 | Risky areas to simplify — proceed with caution |
+| FI 扇入集中度 | < 9 | Hot modules taking too much responsibility — M1 or A1 |
+| DC 死代码 | < 10 | Likely C4 candidates — verify with `manon_graph` callers |
+| FS 函数复杂度 | < 9 | Oversized functions — C-layer complexity |
+| TD 技术债务 | < 9 | TODOs, any_count — C-layer debt |
+| MF 模块碎片化 | < 9 | Too many tiny modules or deep paths — A2, C2, C3 |
+| RE 间接层密度 | < 9 | Barrel re-exports or single-impl interfaces — C1, C6, A3 |
 
 ---
 

@@ -7,11 +7,27 @@ from pathlib import Path
 
 import httpx
 
-from core.ast import find_project_by_repo_id
+from core.ast import find_project_by_repo_id, load_projects
 
 from .deps import ToolDependencies
 
 log = logging.getLogger("manon-mcp")
+
+
+def _resolve(repo_id: str) -> str:
+    """Resolve repo name to UUID. If already a UUID (hex <=8), return as-is."""
+    # Already looks like a UUID (short hex id)
+    if len(repo_id) <= 8:
+        try:
+            int(repo_id, 16)
+            return repo_id
+        except ValueError:
+            pass
+    # Search projects.json by name
+    for _path, info in load_projects()["projects"].items():
+        if info.get("name") == repo_id:
+            return info["repo_id"]
+    return repo_id
 
 
 def register_search_tools(mcp, deps: ToolDependencies):
@@ -21,6 +37,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_search(repo_id: str, query: str, top_k: int = 10, depth: int = 1) -> str:
         """语义搜索代码库。"""
+        repo_id = _resolve(repo_id)
         result = client._get(f"/api/v1/repos/{repo_id}/search", q=query, top_k=top_k, depth=depth)
         if result.get("context"):
             return client._truncate(result["context"])
@@ -31,6 +48,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_graph(repo_id: str, symbol: str, depth: int = 1, direction: str = "both") -> str:
         """查询代码符号的调用关系和依赖图。"""
+        repo_id = _resolve(repo_id)
         result = client._get(f"/api/v1/repos/{repo_id}/graph", symbol=symbol, depth=depth, direction=direction)
         if result.get("context"):
             return client._truncate(result["context"])
@@ -39,6 +57,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_impact(repo_id: str, commit: str = "HEAD", max_depth: int = 2) -> str:
         """分析某次 commit 的影响范围。"""
+        repo_id = _resolve(repo_id)
         found = find_project_by_repo_id(repo_id)
         if found:
             return deps.local_impact(repo_id, found[0], commit, max_depth)
@@ -48,6 +67,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_deep_query(repo_id: str, question: str, max_rounds: int = 3) -> str:
         """深度查询代码知识图谱。"""
+        repo_id = _resolve(repo_id)
         try:
             result = client._post(
                 f"/api/v1/repos/{repo_id}/deep-query",
@@ -78,6 +98,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     @mcp.tool()
     def manon_merge_dynamic(repo_id: str, deps_path: str = "dynamic-deps.json") -> str:
         """合并运行时追踪的动态调用边到知识图谱。"""
+        repo_id = _resolve(repo_id)
         path = Path(deps_path)
         if not path.exists() and deps_path == "dynamic-deps.json":
             alt = Path(".manon-runtime-deps.json")

@@ -30,11 +30,8 @@ user_invocable: true
    - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
    - Windows bash 同样用此格式，**不要用** `set MANON_DIR=...`（CMD 语法，bash 里不生效）
    - 如报错（文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
-3. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan-tests.py" <repo_id>`
-   - 输出 `{ covered, test_files, test_functions }`，报错不阻断流程（跳过即可）
-4. `manon_scan_files(repo_id)`
-5. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
-6. `manon_upload_coverage(repo_id)` — 上传 coverage_map 到服务端（TC 指标依赖此步）
+3. `manon_scan_files(repo_id)`
+4. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
 
 ## Step 4: Index Status
 `manon_index_status(repo_id)` → **表格形式完整呈现**，不总结不省略

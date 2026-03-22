@@ -69,9 +69,10 @@ DIMENSION_SIGNALS = {
     "CD": (10, ["C7", "A1"]),
     "MC": (9,  ["M4", "M2", "A4"]),
     "FI": (9,  ["M1", "A1"]),
-    "FS": (9,  ["C8", "C2"]),
+    "FS": (9,  ["C8"]),
     "TD": (9,  ["C6", "C1"]),
-    "TC": (9,  ["C4", "C6", "C8"]),  # caution: low coverage → risky to simplify these
+    "MF": (9,  ["A2", "C2", "C3"]),
+    "RE": (9,  ["C1", "C6", "A3"]),
 }
 
 
