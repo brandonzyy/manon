@@ -27,6 +27,19 @@ AI coding has two structural flaws:
 | **Insufficient context** | Model can't see call graphs, dependency chains, module boundaries | **Hallucination** — guesses relationships, misses side effects |
 | **Unstructured workflow** | Model dives straight into code without requirements, testing, or validation | **Drift** — scope creep, untested code, silent regressions |
 
+These flaws compound into 19 specific failure modes across three layers:
+
+| Layer | What goes wrong | Examples |
+|-------|----------------|---------|
+| **Architecture** | Structural decisions made without seeing the full system | Unnecessary abstraction layers, over-modularization, premature generalization, config/event system overkill |
+| **Module** | Boundaries drawn without understanding dependencies | Feature bloat in single modules, unclear ownership, cross-module duplication, excessive coupling |
+| **Code** | Line-level changes without knowing who calls what | Dead code left behind, circular dependencies introduced, functions split too small, low cohesion |
+
+For AI coding specifically, these problems are worse than for human developers:
+- **AI can't "feel" architectural intent** — it optimizes locally, creating technically correct code that violates system-level design decisions
+- **AI generates faster than it validates** — without graph-backed verification, bad patterns propagate at machine speed
+- **Each AI session starts blind** — no memory of past decisions, so the same structural mistakes get re-introduced across conversations
+
 The stronger the model, the worse both problems get — powerful model + bad context + no process = confident garbage, faster.
 
 ## 💡 The Solution
