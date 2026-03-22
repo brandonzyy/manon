@@ -108,6 +108,11 @@ cfg["mcpServers"]["manon"] = {
     "args": [launcher],
     "env": env,
 }
+if "playwright" not in cfg["mcpServers"]:
+    cfg["mcpServers"]["playwright"] = {
+        "command": "npx",
+        "args": ["@playwright/mcp@latest"],
+    }
 os.makedirs(os.path.dirname(target), exist_ok=True)
 with open(target, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
