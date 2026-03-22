@@ -35,7 +35,7 @@ Extract `repo_id` from the matching project.
 基于 Phase 1 的图谱事实 + GitHub 调研，向用户提问。
 
 **规则：**
-1. **每次只问一个问题**
+1. **每次用 `AskUserQuestion` 只问一个问题**
 2. **优先选择题**（A/B/C），必要时才开放题
 3. 每个问题附一行理由（图谱发现或调研发现）
 4. 3-7 轮收敛，用户说"够了"可提前结束
