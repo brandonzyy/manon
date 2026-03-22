@@ -203,12 +203,6 @@ def _build_hooks_lines(project_path: str, *, hooks) -> list[str]:
             log.info("Install codex config took %.1fs", time.time() - start)
             lines.append(f"  {codex_msg}" if codex_msg else "  Codex CLI config installed")
 
-        # Bidirectional skill sync (repo ↔ ~/.claude/skills/)
-        start = time.time()
-        sync_msg = hooks._sync_skills()
-        log.info("Skill sync took %.1fs", time.time() - start)
-        if sync_msg:
-            lines.append(f"  {sync_msg}")
     except Exception as exc:
         log.warning("Hook installation failed: %s", exc)
         lines.append(f"  warning: hook install failed: {exc}")
