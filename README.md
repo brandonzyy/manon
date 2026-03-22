@@ -137,7 +137,7 @@ install.bat
 
 The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
 
-> **Included:** Installation automatically includes the `/dao` skill — see [大道至简 (Dao)](#-大道至简-dao--graph-driven-code-simplification) below.
+> **Included:** Installation automatically includes the `/dao` and `/tc` skills — see [大道至简 (Dao)](#-大道至简-dao--graph-driven-code-simplification) and [Test Coverage (TC)](#-test-coverage-tc--graph-prioritized-test-loop) below.
 >
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
 
@@ -201,7 +201,7 @@ Write code → git push → hook auto-updates knowledge graph (zero effort)
 └─────────────────────────────────────────────────────┘
 ```
 
-> **code_health dimensions:** Module Coupling (MC), Circular Dependencies (CD), Fan-in Concentration (FI), Dead Code (DC), Test Coverage (TC), Function Size (FS), Technical Debt (TD), Inheritance Depth (ID). Score changes output automatically after each push.
+> **code_health dimensions:** Module Coupling (MC), Circular Dependencies (CD), Fan-in Concentration (FI), Dead Code (DC), Function Complexity (FS), Technical Debt (TD), Module Fragmentation (MF), Indirection Density (RE). Score changes output automatically after each push.
 
 ---
 
@@ -225,6 +225,18 @@ Issues are tracked in `.dao/issues.json`. Health scores update after every commi
 
 ```
 /dao    — query graph → show A/M panel → auto-fix all C issues → stop
+```
+
+---
+
+## 🧪 Test Coverage (TC) — Graph-Prioritized Test Loop
+
+Bundled with Manon, `/tc` is a Claude Code skill that uses the knowledge graph to prioritize which code needs tests most — high fan-in, high complexity, zero coverage first.
+
+Type `/tc` in Claude Code. It scans existing coverage data, queries the graph for entity importance (fan-in, complexity, centrality), and generates a prioritized list of untested or under-tested code. Then it writes tests, runs them, and commits — in a loop until coverage targets are met.
+
+```
+/tc    — scan coverage → graph-prioritize → write tests → verify → commit → repeat
 ```
 
 ---
@@ -431,6 +443,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.2.3** | 2026-03-22 | `/tc` skill; health dimensions MF/RE; `_resolve()` repo_id tolerance; dao code simplification; release tooling |
 | **v1.2.2** | 2026-03-21 | Bugfixes: install.sh unbound variable crash, Windows MANON_DIR syntax, phantom graph nodes; TS/JS coverage support; scan mtime fast path |
 | **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node root-cause fix, cross-module edge recovery, instance method type inference; relations +74%; code health 97/100 |
 | **v1.2.0** | 2026-03-19 | Script classifier filters tool scripts from index; LLM classify endpoint; +115 tests; code health 94/100 |
@@ -446,6 +459,24 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 ---
 
 ## 📦 Changelog
+
+### v1.2.3 — 2026-03-22
+
+**New `/tc` skill, health dimension rework, and robustness improvements.**
+
+- **Added** — `/tc` skill: graph-prioritized test coverage loop — scans coverage, ranks untested code by graph importance, writes tests, verifies, and commits
+- **Refactored** — Code health dimensions: replaced Test Coverage (TC) and Inheritance Depth (ID) with Module Fragmentation (MF) and Indirection Density (RE) for graph-native coverage
+- **Added** — `_resolve()` repo_id tolerance across all MCP tools — fuzzy matching for robustness
+- **Added** — `release.py` script to prevent master/dev divergence during releases
+- **Improved** — `/dao` skill: semantic signal detection (config/event/pattern files), updated health dimension mappings
+- **Improved** — Script classifier: added "skills" to `_SOURCE_DIRS` so skill scripts are properly indexed
+- **Fixed** — Chunk truncation, VectorIndex resilience, repo-id recovery, multi-language classifier
+- **Fixed** — dao stop hook scoped to current session (CWD match)
+- **Refactored** — Skill sync moved out of MCP server to standalone tooling
+- **Refactored** — `rate_limit.py` merged into `saas/auth.py`; `adaptive_config.py` merged into `codeindex/config.py`
+- **Infra** — Consolidated git to GitHub, removed Gitee mirror
+
+---
 
 ### v1.2.2 — 2026-03-21
 
