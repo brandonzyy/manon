@@ -12,6 +12,8 @@
 
 [Quick Start](#-quick-start) · [Skill System](#-skill-system) · [Knowledge Graph](#-knowledge-graph) · [Query Tools](#-query-tools) · [MCP Tools](#-mcp-tools)
 
+[中文文档](README_CN.md)
+
 </div>
 
 ---
@@ -159,35 +161,33 @@ AI agent operates the product like a real user. Supports 4 product types:
 
 ## 🔬 Knowledge Graph
 
-### Architecture (Edge-Cloud)
+### Architecture
 
 ```
-Local                                     Cloud
-─────                                     ─────
-① Scan project files
-② Parse AST locally (tree-sitter)
-   functions, classes, calls, imports
-③ Hash files, send only changes ────────→ ④ Build knowledge graph
-                                          ⑤ Generate vector index
-                                          ⑥ Store entities & relations
-                                              ↓
-⑧ AI gets precise context ←──────────── ⑦ Respond to queries
+┌─ Local (manon_mcp) ──────────────────┐     ┌─ Cloud (saas) ──────────────────────┐
+│                                      │     │                                      │
+│  IDE (Claude Code / Cursor / ...)    │     │  FastAPI application (saas/main.py)  │
+│       ↕ MCP protocol                 │     │       ↕                              │
+│  manon_mcp/server.py                 │     │  Routers                             │
+│    ├─ tools/   (MCP tool handlers)   │     │    query / indexing / repos / ...    │
+│    ├─ _client  (HTTP → SaaS API)     │     │       ↕                              │
+│    ├─ _sync    (scan + batch upload) │     │  MatrixoneGraph (facade)             │
+│    └─ _hooks   (git + editor hooks)  │     │    ├─ CodeGraph  (NetworkX DiGraph)  │
+│       ↕                              │     │    ├─ VectorIndex (numpy cosine)     │
+│  core/ast (tree-sitter AST parsing)  │     │    ├─ pipeline   (AST → graph)       │
+│  codeindex/ (parsers per language)   │     │    └─ impact     (commit analysis)   │
+│                                      │     │       ↕                              │
+│  ① Scan files                        │     │  services/                           │
+│  ② Parse AST locally                 │     │    llm.py (deep_query)               │
+│  ③ Upload changed files ─────────────┼────▶│    embedding (vector generation)     │
+│                                      │     │                                      │
+│  ⑤ Query results ◀───────────────────┼─────┤  ④ Build graph + vectors             │
+└──────────────────────────────────────┘     └──────────────────────────────────────┘
 ```
 
-- **Local parsing, cloud storage** — code never needs to be pushed to Git
-- **Incremental sync** — only changed files are uploaded
-- **Hybrid search** — graph traversal for precise relationships + vector search for semantic queries
-
-### Edge Types
-
-| Edge | Source | Example |
-|------|--------|---------|
-| `calls` | AST call expressions | `search_handler → SearchEngine.execute` |
-| `imports` | AST import statements | `router.py → SearchEngine` |
-| `inherits` | AST class definitions | `AdminUser → BaseUser` |
-| `handles` | AST route decorators | `GET /api/search → search_handler` |
-
-All edges are AST-deterministic. No string inference, no statistical correlation.
+- **Code stays local** — only AST data is uploaded, never raw source to Git
+- **Incremental sync** — file hashes detect changes, upload only diffs
+- **Hybrid retrieval** — graph traversal (structural) + vector search (semantic)
 
 ### Code Health (8 Dimensions)
 
@@ -202,15 +202,13 @@ All edges are AST-deterministic. No string inference, no statistical correlation
 | MF | Module Fragmentation | Tiny module + deep path ratio |
 | RE | Indirection Density | Barrel re-export ratio |
 
-Score changes output automatically after every `git push`.
-
 ### Language Support
 
-**Specialized parsers** (deep extraction: symbols, calls, imports, inheritances, routes):
-Python, TypeScript, JavaScript, Java, PHP (6 languages)
+**Specialized parsers** (deep extraction — symbols, calls, imports, inheritances, routes):
+Python, TypeScript, JavaScript, Java, PHP
 
-**Generic parser** (symbols + imports via tree-sitter, auto-downloaded):
-Go, Rust, C, C++, C#, Ruby, Swift, Kotlin, Scala, Lua, R, Elixir, Dart, Haskell, OCaml, Bash, Zig (17 languages)
+**Generic parser** (symbols + imports via tree-sitter, auto-downloaded on first use):
+Go, Rust, C, C++, C#, Ruby, Swift, Kotlin, Scala, Lua, R, Elixir, Dart, Haskell, OCaml, Bash, Zig
 
 ---
 
@@ -430,14 +428,6 @@ Override via `MANON_API_KEY`, `MANON_API_URL`.
 - **Tests** — +115 unit tests
 
 </details>
-
----
-
-## 🗺️ Roadmap
-
-### Structured Pipeline (Planned)
-
-A deterministic workflow enforcing `clarify → spec → design → decompose → execute → review`. Each step bounded, with clear inputs and outputs, visible and interruptible. Combined with the knowledge graph, this will eliminate the black-box problem in AI coding.
 
 ---
 
