@@ -39,13 +39,13 @@ def api_post(url: str, headers: dict, body: dict, timeout: int = 15) -> dict:
 
 
 def search(api_url: str, repo_id: str, headers: dict, query: str) -> list:
-    url = f"{api_url}/api/v1/repos/{repo_id}/search?q={request.quote(query)}&top_k=10&depth=1"
+    url = f"{api_url}/api/v1/repos/{repo_id}/search?q={request.quote(query)}&top_k=15&depth=1"
     try:
         result = api_get(url, headers)
         entities = result.get("entities", [])
         return [{"name": e.get("name", ""), "type": e.get("type", ""),
                  "file": e.get("file_path", ""), "score": e.get("score", 0)}
-                for e in entities[:10]]
+                for e in entities[:15]]
     except Exception:
         return []
 
@@ -55,11 +55,17 @@ def graph_symbols(api_url: str, repo_id: str, headers: dict, symbols: list[str])
     for sym in symbols[:5]:
         url = f"{api_url}/api/v1/repos/{repo_id}/graph?symbol={request.quote(sym)}&direction=both&depth=1"
         try:
-            data = api_get(url, headers)
-            callers = [c.get("name", "") for c in data.get("callers", [])[:5]]
-            callees = [c.get("name", "") for c in data.get("callees", [])[:5]]
-            if callers or callees:
-                results.append({"symbol": sym, "callers": callers, "callees": callees})
+            data = api_get(url, headers, timeout=10)
+            relations = data.get("relations", [])
+            callers = list({r["src_id"] for r in relations if r.get("kind") == "calls" and r.get("tgt_id", "").endswith(sym)})[:5]
+            callees = list({r["tgt_id"] for r in relations if r.get("kind") == "calls" and r.get("src_id", "").endswith(sym)})[:5]
+            imports = list({r["tgt_id"] for r in relations if r.get("kind") == "imports" and r.get("src_id", "").endswith(sym)})[:5]
+            if callers or callees or imports:
+                entry = {"symbol": sym}
+                if callers: entry["callers"] = callers
+                if callees: entry["callees"] = callees
+                if imports: entry["imports"] = imports
+                results.append(entry)
         except Exception:
             continue
     return results
@@ -82,19 +88,25 @@ def health(api_url: str, repo_id: str, headers: dict) -> dict:
 
 def gh_research(query: str) -> list:
     """Search GitHub for similar implementations."""
-    try:
-        result = subprocess.run(
-            ["gh", "search", "repos", query, "--limit", "5", "--json",
-             "fullName,description,stargazersCount,url"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            repos = json.loads(result.stdout)
-            return [{"name": r.get("fullName", ""), "desc": r.get("description", ""),
-                     "stars": r.get("stargazersCount", 0), "url": r.get("url", "")}
-                    for r in repos if r.get("stargazersCount", 0) > 50]
-    except Exception:
-        pass
+    # Extract key technical terms for better search
+    search_terms = query.replace("给", "").replace("添加", "").replace("功能", "")
+    for cmd in [
+        ["gh", "search", "repos", search_terms, "--limit", "5",
+         "--sort", "stars", "--json", "fullName,description,stargazersCount,url"],
+        ["gh", "search", "repos", query, "--limit", "5",
+         "--sort", "stars", "--json", "fullName,description,stargazersCount,url"],
+    ]:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                repos = json.loads(result.stdout)
+                filtered = [{"name": r.get("fullName", ""), "desc": r.get("description", ""),
+                             "stars": r.get("stargazersCount", 0), "url": r.get("url", "")}
+                            for r in repos if r.get("stargazersCount", 0) > 10]
+                if filtered:
+                    return filtered
+        except Exception:
+            continue
     return []
 
 
@@ -113,8 +125,10 @@ def main():
     # 1. Search related modules
     modules = search(api_url, repo_id, headers, query)
 
-    # 2. Graph traversal for top symbols
-    top_symbols = [m["name"] for m in modules if m.get("name")]
+    # 2. Graph traversal for function/class level symbols (skip module-level)
+    top_symbols = [m["name"] for m in modules
+                   if m.get("name") and "." in m["name"]
+                   and m["name"] != m.get("file", "").replace("/", ".").replace(".py", "")]
     graph = graph_symbols(api_url, repo_id, headers, top_symbols)
 
     # 3. Health summary
