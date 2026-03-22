@@ -11,12 +11,13 @@ import re
 import sys
 from pathlib import Path
 
+_OPT_NUM = r"(?:\d+[\.\)]\s*)?"  # optional "1. " or "1) " prefix
 REQUIRED_SECTIONS = [
-    ("需求边界", r"##\s*需求边界|##\s*Requirements"),
-    ("技术方案", r"##\s*技术方案|##\s*Technical"),
-    ("改动文件", r"##\s*改动文件|##\s*Files|##\s*Changes"),
-    ("风险点", r"##\s*风险|##\s*Risk"),
-    ("验收标准", r"##\s*验收|##\s*Acceptance"),
+    ("需求边界", rf"##\s*{_OPT_NUM}需求边界|##\s*{_OPT_NUM}Requirements"),
+    ("技术方案", rf"##\s*{_OPT_NUM}技术方案|##\s*{_OPT_NUM}Technical"),
+    ("改动文件", rf"##\s*{_OPT_NUM}改动文件|##\s*{_OPT_NUM}Files|##\s*{_OPT_NUM}Changes"),
+    ("风险点", rf"##\s*{_OPT_NUM}风险|##\s*{_OPT_NUM}Risk"),
+    ("验收标准", rf"##\s*{_OPT_NUM}验收|##\s*{_OPT_NUM}Acceptance"),
 ]
 
 PLACEHOLDER_PATTERNS = [
@@ -72,7 +73,8 @@ def main():
 
     doc = doc_path.read_text(encoding="utf-8")
     result = check(doc)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    sys.stdout.buffer.write(json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
 
 
 if __name__ == "__main__":
