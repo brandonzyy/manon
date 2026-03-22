@@ -57,14 +57,17 @@ def graph_symbols(api_url: str, repo_id: str, headers: dict, symbols: list[str])
         try:
             data = api_get(url, headers, timeout=10)
             relations = data.get("relations", [])
-            callers = list({r["src_id"] for r in relations if r.get("kind") == "calls" and r.get("tgt_id", "").endswith(sym)})[:5]
-            callees = list({r["tgt_id"] for r in relations if r.get("kind") == "calls" and r.get("src_id", "").endswith(sym)})[:5]
-            imports = list({r["tgt_id"] for r in relations if r.get("kind") == "imports" and r.get("src_id", "").endswith(sym)})[:5]
-            if callers or callees or imports:
-                entry = {"symbol": sym}
-                if callers: entry["callers"] = callers
-                if callees: entry["callees"] = callees
-                if imports: entry["imports"] = imports
+            if not relations:
+                continue
+            # Match by sym appearing anywhere in src/tgt id
+            callers = list({r["src_id"] for r in relations if r.get("kind") == "calls" and sym in r.get("tgt_id", "")})[:5]
+            callees = list({r["tgt_id"] for r in relations if r.get("kind") == "calls" and sym in r.get("src_id", "")})[:5]
+            deps = list({r["tgt_id"] for r in relations if r.get("kind") == "imports"})[:8]
+            entry = {"symbol": sym}
+            if callers: entry["callers"] = callers
+            if callees: entry["callees"] = callees
+            if deps: entry["depends_on"] = deps
+            if len(entry) > 1:
                 results.append(entry)
         except Exception:
             continue
@@ -97,7 +100,7 @@ def gh_research(query: str) -> list:
          "--sort", "stars", "--json", "fullName,description,stargazersCount,url"],
     ]:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
             if result.returncode == 0:
                 repos = json.loads(result.stdout)
                 filtered = [{"name": r.get("fullName", ""), "desc": r.get("description", ""),
@@ -125,11 +128,13 @@ def main():
     # 1. Search related modules
     modules = search(api_url, repo_id, headers, query)
 
-    # 2. Graph traversal for function/class level symbols (skip module-level)
-    top_symbols = [m["name"] for m in modules
-                   if m.get("name") and "." in m["name"]
-                   and m["name"] != m.get("file", "").replace("/", ".").replace(".py", "")]
-    graph = graph_symbols(api_url, repo_id, headers, top_symbols)
+    # 2. Graph traversal — prefer function/class symbols, fall back to all with "."
+    func_symbols = [m["name"] for m in modules
+                    if m.get("name") and "." in m["name"]
+                    and m["name"] != m.get("file", "").replace("/", ".").replace(".py", "")]
+    if not func_symbols:
+        func_symbols = [m["name"] for m in modules if m.get("name") and "." in m["name"]]
+    graph = graph_symbols(api_url, repo_id, headers, func_symbols)
 
     # 3. Health summary
     h = health(api_url, repo_id, headers)
@@ -138,7 +143,8 @@ def main():
     research = gh_research(query)
 
     output = {"modules": modules, "graph": graph, "health": h, "research": research}
-    print(json.dumps(output, ensure_ascii=False, indent=2))
+    sys.stdout.buffer.write(json.dumps(output, ensure_ascii=False, indent=2).encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
 
 
 if __name__ == "__main__":
