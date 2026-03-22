@@ -227,24 +227,65 @@ Go, Rust, C, C++, C#, Ruby, Swift, Kotlin, Scala, Lua, R, Elixir, Dart, Haskell,
 
 ## 📊 Measured Effectiveness
 
-### Real-World Benchmark
+### 1. Query Intelligence
 
-Analyzed OpenClaw project (2,100 files). Full report: [`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
+How much better is graph-powered querying vs. native tools (Grep/Glob/Read)?
+
+**Real-world benchmark** — OpenClaw project, 2,100 files. Full report: [`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
 
 | Dimension | Manon | Native Tools | Difference |
 |-----------|-------|-------------|------------|
 | **Time** | ~30 min | ~8-12 hours | **16-24x faster** |
 | **Accuracy** | 95%+ | 60-70% | **+30%** |
 
-### Query Tools Benchmark
-
-20 real-world queries. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
+**Query tools benchmark** — 20 real-world queries. Full report: [`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
 
 | Metric | Manon | Native Tools | Improvement |
 |--------|-------|-------------|-------------|
 | Tool calls per task | 1 | 13.7 | **91% fewer** |
 | Total tokens | ~19.5K | ~350K | **94% savings** |
 | Quality score | 4.3/5 | 3.2/5 | **+34%** |
+
+### 2. Development Lifecycle (Dogfooding)
+
+Manon uses its own skills to develop itself. These are real outcomes, not synthetic benchmarks.
+
+**`/dao` — Code Simplification**
+
+Applied to Manon's own codebase (93 files, 800+ entities):
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Code health score | 88/100 | 97/100 | **+9** |
+| Dead code entities | 47 | 29 | **-38%** |
+| Test coverage | 32% | 61% | **+29pp** |
+| Cross-module relations | 0 | 48 | Fixed from zero (was a graph bug) |
+
+`/dao` identified and auto-fixed: dead functions, over-fragmented modules, barrel re-exports, circular dependencies, and merged 4 redundant files — all validated against the graph before committing.
+
+**`/exp` — Experience Validation**
+
+Used `/exp` to test `/idea` skill before release:
+
+| Round | Result | Bugs Found | Fix |
+|-------|--------|-----------|-----|
+| Round 1 | 4/5 pass | graph API response parsing wrong; Windows GBK encoding crash | Fixed relation matching + UTF-8 output |
+| Round 2 | 0/1 pass | Symbol filter too strict; Chinese query crash | Relaxed filter + encoding fix |
+| Round 3 | 1/1 pass | — | All scenarios pass |
+
+3 rounds, 4 real bugs found and fixed — bugs that would have shipped to users without `/exp`.
+
+**`/idea` — Requirement Refinement**
+
+Full flow test (batch repo import feature):
+- Phase 1 (CONTEXT): 15 related modules + 3 graph entries + health score retrieved in one script call
+- Phase 2 (EXPLORE): 5 Socratic questions generated, all grounded in graph facts (fan-in, module boundaries)
+- Phase 3 (PROPOSE): 3 technical approaches with per-approach impact analysis
+- Phase 4 (DOCUMENT): Complete dev document generated, passed 5-dimension automated review
+
+### 3. Self-Improvement Loop
+
+The skills reinforce each other: `/idea` defines requirements → code is written with graph context → `/dao` cleans up complexity → `/tc` fills test gaps → `/exp` validates end-to-end → bugs found feed back into the next cycle. Manon v1.0→v1.2.4 was developed entirely through this loop.
 
 ---
 
