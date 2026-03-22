@@ -137,7 +137,7 @@ install.bat
 
 The installer auto-detects your editor, installs dependencies, registers a free account, and configures the MCP server. On Windows, it tries Git Bash first and falls back to PowerShell — Python is installed automatically via `winget` if missing. Restart your editor and you're ready.
 
-> **Included:** Installation automatically includes the `/dao` and `/tc` skills — see [大道至简 (Dao)](#-大道至简-dao--graph-driven-code-simplification) and [Test Coverage (TC)](#-test-coverage-tc--graph-prioritized-test-loop) below.
+> **Included:** Installation automatically includes `/dao`, `/tc`, `/idea`, and `/exp` skills — see sections below. Playwright MCP is also auto-configured for `/exp` web testing.
 >
 > **First use:** Type `/manon` in Claude Code to activate. Manon will index your project and enter knowledge-graph mode. In Cursor/Windsurf, tools appear automatically.
 
@@ -205,6 +205,32 @@ Write code → git push → hook auto-updates knowledge graph (zero effort)
 
 ---
 
+## 🎯 Skill System — Graph-Powered Development Lifecycle
+
+Manon's skills form a closed-loop development workflow. Each skill is backed by the knowledge graph — not pure LLM reasoning — ensuring decisions are grounded in code facts.
+
+```
+  /idea                /dao               /tc               /exp
+  ┌──────┐           ┌──────┐           ┌──────┐          ┌──────┐
+  │Refine│  ──code──▶│Maintain│  ──code──▶│ Test │ ──code──▶│Verify│
+  │ Req  │           │Quality │           │Cover │          │ E2E  │
+  └──┬───┘           └──┬───┘           └──┬───┘          └──┬───┘
+     │                  │                  │                  │
+     └──── all query ───┴──── knowledge ───┴──── graph ──────┘
+```
+
+| Phase | Skill | What it does | Why not just chat with Claude? |
+|-------|-------|-------------|-------------------------------|
+| **Requirements** | `/idea` | Graph-aware Socratic questioning → dev document | Questions are based on code facts (fan-in, dependencies), not generic |
+| **Development** | Claude + graph | Write code with `manon_search` / `manon_graph` context | CLAUDE.md Pipeline enforces spec→design→decompose→execute |
+| **Maintenance** | `/dao` | Scan health → classify complexity → auto-simplify | Batch 3-layer analysis (Architecture/Module/Code) with graph validation |
+| **Testing** | `/tc` | Coverage scan → graph-prioritize → write tests | Ranks untested code by structural importance, not random |
+| **Validation** | `/exp` | AI agent operates the product like a real user | Uses Playwright/Bash to click, type, read logs — not imagination |
+
+**Key design principle:** Skills exist only when they provide capabilities that pure LLM conversation cannot — external tool integration (graph API, coverage data, Playwright), deterministic workflows (batch scanning, 3-round retry), or structured output (dev documents, health reports). If Claude can do it well in a normal chat, it doesn't need a skill.
+
+---
+
 ## 🌿 大道至简 (Dao) — Graph-Driven Code Simplification
 
 Bundled with Manon, `/dao` is a Claude Code skill that uses the knowledge graph to systematically find and remove unnecessary complexity — without guessing.
@@ -237,6 +263,35 @@ Type `/tc` in Claude Code. It scans existing coverage data, queries the graph fo
 
 ```
 /tc    — scan coverage → graph-prioritize → write tests → verify → commit → repeat
+```
+
+---
+
+## 💡 Idea — Graph-Aware Requirement Refinement
+
+Type `/idea` with a feature description. It queries the knowledge graph and GitHub for context, then asks Socratic questions grounded in code facts — not generic product-manager questions. After 3-7 rounds of refinement, it proposes 2-3 technical approaches with impact analysis, and outputs a reviewable dev document.
+
+```
+/idea   — graph context + research → Socratic questioning → dev document → review
+```
+
+**Why not just chat?** Claude without `/idea` can only ask questions based on your description. `/idea` first reads the graph (modules, call chains, health scores) and researches similar implementations on GitHub, then asks questions based on what it found — e.g., "Module X has high fan-in, should the new feature go there or in a new module?"
+
+---
+
+## 🧪 Experience — End-to-End Product Validation
+
+Type `/exp` after development. An AI agent operates the product like a real user — clicking buttons, typing inputs, reading logs — and reports what actually works vs. what doesn't. Supports 4 product types:
+
+| Type | Tools | Use Case |
+|------|-------|----------|
+| `web` | Playwright MCP | Frontend pages |
+| `cli` | Bash | Scripts, CLI tools |
+| `service` | curl + logs | Backend APIs |
+| `hybrid` | Playwright + Bash | Full-stack |
+
+```
+/exp    — define scenarios → agent operates product → report → fix → re-test (max 3 rounds)
 ```
 
 ---
@@ -443,6 +498,7 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.2.4** | 2026-03-22 | `/idea` + `/exp` skills; HANDLES edge type; Playwright MCP auto-config; complete skill ecosystem |
 | **v1.2.3** | 2026-03-22 | `/tc` skill; health dimensions MF/RE; `_resolve()` repo_id tolerance; dao code simplification; release tooling |
 | **v1.2.2** | 2026-03-21 | Bugfixes: install.sh unbound variable crash, Windows MANON_DIR syntax, phantom graph nodes; TS/JS coverage support; scan mtime fast path |
 | **v1.2.1** | 2026-03-20 | Knowledge graph quality overhaul: phantom node root-cause fix, cross-module edge recovery, instance method type inference; relations +74%; code health 97/100 |
@@ -459,6 +515,20 @@ Override via environment variables: `MANON_API_KEY`, `MANON_API_URL`.
 ---
 
 ## 📦 Changelog
+
+### v1.2.4 — 2026-03-22
+
+**Complete skill ecosystem: `/idea` + `/exp` + HANDLES edge type.**
+
+- **Added** — `/idea` skill: graph-aware requirement refinement — queries graph + GitHub, Socratic questioning, generates reviewable dev document
+- **Added** — `/exp` skill: experience-driven validation — AI agent operates the product (web/cli/service/hybrid) like a real user, 3-round fix loop
+- **Added** — HANDLES edge type: AST-extracted HTTP route registrations (Flask/FastAPI `@router.get`, Express `app.get`, NestJS `@Get`). Existing repos need re-index to populate
+- **Added** — Playwright MCP auto-configured by installer for `/exp` web testing
+- **Added** — Skill System section in README documenting the closed-loop development lifecycle
+- **Fixed** — `/idea` check script: tolerates numbered headings (`## 1. 需求边界`), UTF-8 output on Windows
+- **Fixed** — `/idea` context script: graph API relation parsing, symbol filter fallback, Windows encoding
+
+---
 
 ### v1.2.3 — 2026-03-22
 
