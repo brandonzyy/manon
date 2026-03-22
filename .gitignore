@@ -48,3 +48,4 @@ web/
 scripts/run-saas.py
 scripts/_*.py
 tests/_*.py
+.dao/
