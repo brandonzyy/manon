@@ -171,6 +171,30 @@ class Inheritance:
 
 
 @dataclass
+class Route:
+    """Represents an HTTP route registration (e.g., @app.route("/api/search")).
+
+    Only deterministic, AST-extractable route registrations — no string inference.
+
+    Attributes:
+        path: URL path (e.g., "/api/search")
+        method: HTTP method (e.g., "GET", "POST", "*" for all)
+        handler: Handler function/method name
+    """
+
+    path: str
+    method: str = "*"
+    handler: str = ""
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "method": self.method, "handler": self.handler}
+
+    @staticmethod
+    def from_dict(data: dict) -> "Route":
+        return Route(path=data["path"], method=data.get("method", "*"), handler=data.get("handler", ""))
+
+
+@dataclass
 class Annotation:
     """Represents a code annotation/decorator (e.g., Java @RestController).
 
@@ -210,6 +234,7 @@ class ParseResult:
     imports: list[Import] = field(default_factory=list)
     inheritances: list[Inheritance] = field(default_factory=list)  # Added in v0.9.0
     calls: list[Call] = field(default_factory=list)  # Added in v0.13.0 (Epic 11)
+    routes: list[Route] = field(default_factory=list)  # HTTP route registrations
     module_docstring: str = ""
     namespace: str = ""  # PHP namespace
     error: str | None = None
@@ -223,6 +248,7 @@ class ParseResult:
             "imports": [imp.to_dict() for imp in self.imports],
             "inheritances": [inh.to_dict() for inh in self.inheritances],
             "calls": [call.to_dict() for call in self.calls],  # Epic 11
+            "routes": [r.to_dict() for r in self.routes],
             "module_docstring": self.module_docstring,
             "namespace": self.namespace,
             "error": self.error,

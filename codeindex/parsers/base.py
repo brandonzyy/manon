@@ -87,6 +87,10 @@ class BaseLanguageParser(ABC):
         """
         pass
 
+    def extract_routes(self, tree: Tree, source_bytes: bytes) -> list:
+        """Extract HTTP route registrations (optional, override in subclass)."""
+        return []
+
     def _build_parse_result(self, tree, path: Path, source_bytes: bytes, file_lines: int):
         """Extract all parse content and return a ParseResult."""
         from ..parser import ParseResult
@@ -95,8 +99,9 @@ class BaseLanguageParser(ABC):
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
+            routes = self.extract_routes(tree, source_bytes)
             return ParseResult(path=path, symbols=symbols, imports=imports,
-                               inheritances=inheritances, calls=calls, file_lines=file_lines)
+                               inheritances=inheritances, calls=calls, routes=routes, file_lines=file_lines)
         except Exception as e:
             return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
 

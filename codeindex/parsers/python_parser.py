@@ -12,9 +12,13 @@ from tree_sitter import Node, Tree
 
 _log = logging.getLogger(__name__)
 
-from ..parser import Call, CallType, Import, Inheritance, Symbol
+from ..parser import Call, CallType, Import, Inheritance, Route, Symbol
 from .base import BaseLanguageParser
 from .utils import count_arguments, get_node_text
+
+# Route decorator patterns: obj.method where method indicates HTTP
+_ROUTE_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "route"}
+
 
 
 class PythonParser(BaseLanguageParser):
@@ -132,8 +136,9 @@ class PythonParser(BaseLanguageParser):
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
+            routes = self.extract_routes(tree, source_bytes)
             return ParseResult(path=path, symbols=symbols, imports=imports, inheritances=inheritances,
-                               calls=calls, file_lines=file_lines, module_docstring=module_docstring)
+                               calls=calls, routes=routes, file_lines=file_lines, module_docstring=module_docstring)
         except Exception as e:
             return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
 
@@ -842,3 +847,78 @@ class PythonParser(BaseLanguageParser):
                         calls.extend(self._extract_class_node_calls(dec_child, source_bytes, "<module>", alias_map, parent_map))
 
         return calls
+
+    # ── Route extraction ──────────────────────────────────────────────
+
+    def extract_routes(self, tree: Tree, source_bytes: bytes) -> list[Route]:
+        """Extract HTTP route registrations from decorators.
+
+        Detects Flask/FastAPI patterns:
+            @app.route("/path")
+            @app.get("/path")
+            @router.post("/path", ...)
+        """
+        routes: list[Route] = []
+        for node in self._iter_nodes(tree.root_node):
+            if node.type != "decorated_definition":
+                continue
+            # Find the function name from the inner function_definition
+            func_def = next((c for c in node.children if c.type == "function_definition"), None)
+            if func_def is None:
+                continue
+            func_name = next(
+                (get_node_text(n, source_bytes) for n in func_def.children if n.type == "identifier"), ""
+            )
+            for child in node.children:
+                if child.type != "decorator":
+                    continue
+                route = self._try_extract_route(child, source_bytes, func_name)
+                if route:
+                    routes.append(route)
+        return routes
+
+    def _try_extract_route(self, decorator_node: Node, source_bytes: bytes, handler: str) -> Route | None:
+        """Try to extract a Route from a single decorator node."""
+        call_node = None
+        for child in decorator_node.children:
+            if child.type == "call":
+                call_node = child
+                break
+        if call_node is None:
+            return None
+
+        func_node = call_node.children[0] if call_node.children else None
+        if func_node is None or func_node.type != "attribute":
+            return None
+        dec_name = get_node_text(func_node, source_bytes)
+        parts = dec_name.rsplit(".", 1)
+        if len(parts) != 2:
+            return None
+        method_name = parts[1].lower()
+        if method_name not in _ROUTE_METHODS:
+            return None
+
+        args_node = next((c for c in call_node.children if c.type == "argument_list"), None)
+        if args_node is None:
+            return None
+        path = self._extract_first_string_arg(args_node, source_bytes)
+        if not path:
+            return None
+
+        method = method_name.upper() if method_name != "route" else "*"
+        return Route(path=path, method=method, handler=handler)
+
+    def _extract_first_string_arg(self, args_node: Node, source_bytes: bytes) -> str:
+        """Extract the first string literal from an argument list."""
+        for child in args_node.children:
+            if child.type == "string":
+                raw = get_node_text(child, source_bytes)
+                return raw.strip("\"'")
+        return ""
+
+    @staticmethod
+    def _iter_nodes(node: Node):
+        """Yield all nodes in the tree."""
+        yield node
+        for child in node.children:
+            yield from PythonParser._iter_nodes(child)

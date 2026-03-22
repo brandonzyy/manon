@@ -14,9 +14,11 @@ from pathlib import Path
 
 from tree_sitter import Node, Parser, Tree
 
-from ..parser import Call, CallType, Import, Inheritance, Symbol
+from ..parser import Call, CallType, Import, Inheritance, Route, Symbol
 from .base import BaseLanguageParser
 from .utils import get_node_text
+
+_TS_ROUTE_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "all", "route"}
 
 _log = logging.getLogger(__name__)
 
@@ -54,9 +56,10 @@ class TypeScriptParser(BaseLanguageParser):
             imports = self.extract_imports(tree, source_bytes)
             inheritances = self.extract_inheritances(tree, source_bytes)
             calls = self.extract_calls(tree, source_bytes, symbols, imports)
+            routes = self.extract_routes(tree, source_bytes)
             module_docstring = self._extract_module_docstring(tree, source_bytes)
             return ParseResult(path=path, symbols=symbols, imports=imports, inheritances=inheritances,
-                               calls=calls, file_lines=file_lines, module_docstring=module_docstring)
+                               calls=calls, routes=routes, file_lines=file_lines, module_docstring=module_docstring)
         except Exception as e:
             return ParseResult(path=path, error=f"Parse error: {str(e)}", file_lines=file_lines)
 
@@ -1025,6 +1028,82 @@ class TypeScriptParser(BaseLanguageParser):
                 if text.startswith("/**"):
                     return text[3:-2].strip()
         return ""
+
+    # ── Route extraction ──────────────────────────────────────────────
+
+    def extract_routes(self, tree: Tree, source_bytes: bytes) -> list[Route]:
+        """Extract HTTP route registrations.
+
+        Detects Express patterns: app.get("/path", handler)
+        Detects NestJS patterns: @Get("/path") on method
+        """
+        routes: list[Route] = []
+        self._extract_express_routes(tree.root_node, source_bytes, routes)
+        self._extract_nestjs_routes(tree.root_node, source_bytes, routes)
+        return routes
+
+    def _extract_express_routes(self, node: Node, source_bytes: bytes, routes: list[Route]) -> None:
+        """Extract Express-style: app.get("/path", handler) or router.post("/path", ...)."""
+        if node.type == "call_expression":
+            func = node.children[0] if node.children else None
+            if func and func.type == "member_expression":
+                prop = next((c for c in func.children if c.type == "property_identifier"), None)
+                if prop:
+                    method_name = get_node_text(prop, source_bytes).lower()
+                    if method_name in _TS_ROUTE_METHODS:
+                        args = next((c for c in node.children if c.type == "arguments"), None)
+                        if args:
+                            path = self._first_string_arg(args, source_bytes)
+                            if path:
+                                handler = self._second_identifier_arg(args, source_bytes)
+                                method = method_name.upper() if method_name not in ("route", "all") else "*"
+                                routes.append(Route(path=path, method=method, handler=handler))
+        for child in node.children:
+            self._extract_express_routes(child, source_bytes, routes)
+
+    def _extract_nestjs_routes(self, node: Node, source_bytes: bytes, routes: list[Route]) -> None:
+        """Extract NestJS-style: @Get("/path") on method_definition."""
+        if node.type == "method_definition":
+            handler = next(
+                (get_node_text(c, source_bytes) for c in node.children if c.type == "property_identifier"), ""
+            )
+            for child in node.children:
+                if child.type == "decorator":
+                    route = self._try_nestjs_decorator(child, source_bytes, handler)
+                    if route:
+                        routes.append(route)
+        for child in node.children:
+            self._extract_nestjs_routes(child, source_bytes, routes)
+
+    def _try_nestjs_decorator(self, dec_node: Node, source_bytes: bytes, handler: str) -> Route | None:
+        """Try to parse @Get("/path"), @Post("/path"), etc."""
+        call = next((c for c in dec_node.children if c.type == "call_expression"), None)
+        if call is None:
+            return None
+        func = call.children[0] if call.children else None
+        if func is None or func.type != "identifier":
+            return None
+        name = get_node_text(func, source_bytes).lower()
+        if name not in _TS_ROUTE_METHODS:
+            return None
+        args = next((c for c in call.children if c.type == "arguments"), None)
+        path = self._first_string_arg(args, source_bytes) if args else "/"
+        method = name.upper() if name not in ("route", "all") else "*"
+        return Route(path=path or "/", method=method, handler=handler)
+
+    @staticmethod
+    def _first_string_arg(args_node: Node, source_bytes: bytes) -> str:
+        for child in args_node.children:
+            if child.type == "string":
+                raw = get_node_text(child, source_bytes)
+                return raw.strip("\"'`")
+        return ""
+
+    @staticmethod
+    def _second_identifier_arg(args_node: Node, source_bytes: bytes) -> str:
+        """Get second argument as handler name (for app.get("/path", handler))."""
+        identifiers = [c for c in args_node.children if c.type == "identifier"]
+        return get_node_text(identifiers[0], source_bytes) if identifiers else ""
 
 
 # ==================== Backward Compatibility Functions ====================

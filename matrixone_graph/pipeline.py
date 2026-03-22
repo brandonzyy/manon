@@ -212,6 +212,15 @@ def _map_parse_result(
         relations.append(Relation(src_id=_make_entity_id(module, inh.child), tgt_id=parent_id,
                                   kind="inherits", description=f"{inh.child} extends {inh.parent}", file_path=fp, weight=1.0))
     relations.extend(_map_import_relations(pr, module, fp, local_packages))
+    # Route registrations → handles relations
+    for route in getattr(pr, "routes", []):
+        handler_id = _make_entity_id(module, route.handler) if route.handler in local_names else module
+        route_label = f"{route.method} {route.path}"
+        relations.append(Relation(
+            src_id=route_label, tgt_id=handler_id,
+            kind="handles", description=f"{route_label} → {route.handler}",
+            file_path=fp, weight=1.0,
+        ))
     return entities, relations
 
 
