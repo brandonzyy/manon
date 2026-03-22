@@ -48,6 +48,27 @@ node scripts/manon-test-base.mjs --live '<操作序列 JSON>'
 
 无报错 → 告知用户检查浏览器；有错 → 修复后重跑。等用户反馈再改。
 
+## /experience 体验驱动验证
+
+开发完成后，执行 `/experience` 让 AI 像真实用户一样操作产品验证功能：
+
+```
+/experience
+> 测试 Manon Web 的基础聊天功能
+> 测试 manon-scan.py 的增量扫描
+> 测试 SaaS API 的 /search 端点
+```
+
+流程：DEFINE（生成 spec）→ EXPERIENCE（Agent 操作产品）→ FIX（修复问题）→ RE-EXPERIENCE（重测，最多 3 轮）
+
+支持 4 种产品类型：
+| type | 工具 | 适用场景 |
+|------|------|---------|
+| `web` | Playwright MCP | 前端页面 |
+| `cli` | Bash | 命令行工具、脚本 |
+| `service` | Bash (curl + 日志) | 后端 API、服务 |
+| `hybrid` | Playwright + Bash | 前后端联动 |
+
 ## 页面关键选择器
 
 - Header: `#projectSelect`, `#modelIndicator`, `#wsDot`, `.settings-btn`
