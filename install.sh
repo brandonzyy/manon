@@ -399,14 +399,26 @@ echo "  ────────────────────────
 echo ""
 
 # ── Python check / auto-install ───────────────────────
-if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+find_python() {
+    # Check PATH first
+    command -v python3 2>/dev/null && return 0
+    command -v python 2>/dev/null && return 0
+    # Check well-known locations (brew, system)
+    for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+        [ -x "$p" ] && echo "$p" && return 0
+    done
+    return 1
+}
+
+if ! find_python >/dev/null 2>&1; then
     warn "Python not found, attempting to install..."
     case "$(uname -s)" in
         Darwin)
             if command -v brew >/dev/null 2>&1; then
                 brew install python@3.12 || err "Failed to install Python. Install manually: https://python.org/downloads"
+                hash -r 2>/dev/null || true
             else
-                err "Python 3.10+ required. Install via: https://python.org/downloads"
+                err "Python 3.10+ required. Install Homebrew first (https://brew.sh) or download from https://python.org/downloads"
             fi
             ;;
         Linux)
@@ -425,7 +437,7 @@ if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; 
             ;;
     esac
 fi
-PYTHON=$(command -v python3 || command -v python)
+PYTHON=$(find_python) || err "Python still not found after install. Please install Python 3.10+ manually: https://python.org/downloads"
 PY_MAJOR=$($PYTHON -c "import sys; print(sys.version_info.major)")
 PY_MINOR=$($PYTHON -c "import sys; print(sys.version_info.minor)")
 [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 10 ] || err "Python 3.10+ required (found $PY_MAJOR.$PY_MINOR)"
