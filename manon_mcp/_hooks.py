@@ -179,16 +179,23 @@ def _build_claude_hook_entries(
     search_path: str, agent_path: str, commit_path: str,
     enter_plan_path: str, stop_dao_path: str,
 ) -> tuple[list, list, list]:
+    # Use the venv python so hooks work even when "python" is not on PATH
+    venv_python = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python"
+    if not venv_python.exists():
+        # Windows fallback
+        venv_python = Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe"
+    py = str(venv_python).replace("\\", "/") if venv_python.exists() else "python3"
+
     desired_pre = [
-        {"matcher": "Grep|Glob",      "hooks": [{"type": "command", "command": f"python {search_path}"}]},
-        {"matcher": "Agent",          "hooks": [{"type": "command", "command": f"python {agent_path}"}]},
-        {"matcher": "EnterPlanMode",  "hooks": [{"type": "command", "command": f"python {enter_plan_path}"}]},
+        {"matcher": "Grep|Glob",      "hooks": [{"type": "command", "command": f"{py} {search_path}"}]},
+        {"matcher": "Agent",          "hooks": [{"type": "command", "command": f"{py} {agent_path}"}]},
+        {"matcher": "EnterPlanMode",  "hooks": [{"type": "command", "command": f"{py} {enter_plan_path}"}]},
     ]
     desired_post = [
-        {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python {commit_path}"}]},
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": f"{py} {commit_path}"}]},
     ]
     desired_stop = [
-        {"hooks": [{"type": "command", "command": f"python {stop_dao_path}"}]},
+        {"hooks": [{"type": "command", "command": f"{py} {stop_dao_path}"}]},
     ]
     return desired_pre, desired_post, desired_stop
 
