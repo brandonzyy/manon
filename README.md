@@ -8,7 +8,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1)](https://modelcontextprotocol.io)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![License: BSL-1.1](https://img.shields.io/badge/license-BSL--1.1-orange)](LICENSE)
 
 [Quick Start](#-quick-start) · [Skill System](#-skill-system) · [Knowledge Graph](#-knowledge-graph) · [Query Tools](#-query-tools) · [MCP Tools](#-mcp-tools)
 

@@ -8,7 +8,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1)](https://modelcontextprotocol.io)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![License: BSL-1.1](https://img.shields.io/badge/license-BSL--1.1-orange)](LICENSE)
 
 [快速开始](#-快速开始) · [技能体系](#-技能体系) · [知识图谱](#-知识图谱) · [查询工具](#-查询工具) · [MCP 工具](#-mcp-工具)
 
