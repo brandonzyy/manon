@@ -107,9 +107,10 @@ if [ "$LLM" != "$EXPECTED_LLM" ]; then
 fi
 
 # 4. Embedding check — log only, embedding is a separate service
-EMB=$(curl -sfS --max-time 5 "$EMBEDDING_URL/health" 2>/dev/null || true)
-if [ -z "$EMB" ]; then
-    log "WARN: embedding server unreachable at $EMBEDDING_URL"
+# /health returns 200 with empty body, check status code not body
+EMB_CODE=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$EMBEDDING_URL/health" 2>/dev/null || echo 000)
+if [ "$EMB_CODE" != "200" ]; then
+    log "WARN: embedding server HTTP $EMB_CODE at $EMBEDDING_URL"
 else
     log "OK: llm=$LLM embedding=ok"
 fi
@@ -326,11 +327,12 @@ def verify(c):
         print(f"  version: {version}")
 
     # 5. Embedding reachability (warn only — separate service)
-    emb = run(c, "curl -sfS --max-time 5 http://172.16.15.21:9624/health 2>/dev/null || true")
-    if emb:
-        print(f"  embedding: ok ({emb[:60]})")
+    # /health returns 200 with empty body, so check HTTP status code not body
+    emb_code = run(c, "curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://172.16.15.21:9624/health 2>/dev/null || echo 000")
+    if emb_code == "200":
+        print(f"  embedding: ok (HTTP {emb_code})")
     else:
-        print("  embedding: WARN — unreachable at 172.16.15.21:9624 (separate service, not blocking)")
+        print(f"  embedding: WARN — HTTP {emb_code} at 172.16.15.21:9624 (separate service, not blocking)")
 
     return True
 
