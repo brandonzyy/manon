@@ -122,6 +122,7 @@ exit /b %errorlevel%
 ::PS             $dao_sd = "$HOME_DIR\.claude\skills\dao"; New-Item -ItemType Directory -Path "$dao_sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\dao\SKILL.md" "$dao_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\dao\scripts\*.py" "$dao_sd\scripts\"; info "Claude Code /dao Skill installed (code simplification with Manon)"
 ::PS             $exp_sd = "$HOME_DIR\.claude\skills\experience"; New-Item -ItemType Directory -Path "$exp_sd" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\experience\SKILL.md" "$exp_sd\SKILL.md"; info "Claude Code /experience Skill installed (experience-driven dev loop)"
 ::PS             $tc_sd = "$HOME_DIR\.claude\skills\tc"; New-Item -ItemType Directory -Path "$tc_sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\tc\SKILL.md" "$tc_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\tc\scripts\*.py" "$tc_sd\scripts\"; info "Claude Code /tc Skill installed (test coverage loop with Manon)"
+::PS             $idea_sd = "$HOME_DIR\.claude\skills\idea"; New-Item -ItemType Directory -Path "$idea_sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\idea\SKILL.md" "$idea_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\idea\scripts\*.py" "$idea_sd\scripts\"; info "Claude Code /idea Skill installed (idea refinement with Manon)"
 ::PS         }
 ::PS         "cursor" {
 ::PS             Write-McpJson "$HOME_DIR\.cursor\mcp.json"; info "Cursor MCP registered"

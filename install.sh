@@ -162,6 +162,13 @@ PYEOF
     cp "$SCRIPT_DIR/skills/tc/SKILL.md" "$tc_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/tc/scripts/"*.py "$tc_skill_dir/scripts/"
     info "Claude Code /tc Skill installed (test coverage loop with Manon)"
+
+    # Install idea skill (需求精化循环)
+    local idea_skill_dir="$HOME/.claude/skills/idea"
+    mkdir -p "$idea_skill_dir/scripts"
+    cp "$SCRIPT_DIR/skills/idea/SKILL.md" "$idea_skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/idea/scripts/"*.py "$idea_skill_dir/scripts/"
+    info "Claude Code /idea Skill installed (idea refinement with Manon)"
 }
 
 # --- Cursor ---
