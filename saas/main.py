@@ -96,8 +96,9 @@ async def register(body: RegisterRequest):
     api_key = f"msk_{uuid.uuid4().hex}"
 
     await db.execute(
-        "INSERT INTO tenants (id, name, tier) VALUES (?, ?, ?)",
-        (tenant_id, body.name, "free"),
+        "INSERT INTO tenants (id, name, tier, subscription_expires) "
+        "VALUES (?, ?, 'free', datetime('now', '+30 days'))",
+        (tenant_id, body.name),
     )
     await db.execute(
         "INSERT INTO api_keys (key, tenant_id, label) VALUES (?, ?, ?)",

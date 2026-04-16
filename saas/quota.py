@@ -17,25 +17,11 @@ async def check_repo_quota(ctx: TenantContext) -> None:
     row = await cur.fetchone()
     limit = settings.quota_repos(ctx.tier)
     if row["cnt"] >= limit:
+        tier_msg = {
+            "free": "Free trial allows 1 repo. Upgrade to Pro (¥399/mo) for 5 repos.",
+            "pro": "Pro plan allows 5 repos. Upgrade to Enterprise (¥999/mo) for unlimited.",
+        }
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            f"Repo limit reached ({limit} for {ctx.tier} tier). Upgrade to add more.",
-        )
-
-
-async def check_deep_query_quota(ctx: TenantContext) -> None:
-    """Raise 403 if tenant has exceeded daily deep-query limit."""
-    db = await get_db()
-    cur = await db.execute(
-        "SELECT COUNT(*) as cnt FROM usage_log "
-        "WHERE tenant_id = ? AND endpoint = 'query.deep_query' "
-        "AND created_at >= datetime('now', '-1 day')",
-        (ctx.tenant_id,),
-    )
-    row = await cur.fetchone()
-    limit = settings.quota_deep_query(ctx.tier)
-    if row["cnt"] >= limit:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            f"Daily deep-query limit reached ({limit} for {ctx.tier} tier). Upgrade for unlimited.",
+            tier_msg.get(ctx.tier, f"Repo limit reached ({limit})."),
         )

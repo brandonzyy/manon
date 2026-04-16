@@ -76,6 +76,9 @@ _MIGRATIONS = [
     # subscription billing
     "ALTER TABLE tenants ADD COLUMN subscription_expires TEXT",
     "ALTER TABLE tenants ADD COLUMN subscription_note TEXT",
+    # set 30-day trial expiry for all existing free tenants
+    "UPDATE tenants SET subscription_expires = datetime(created_at, '+30 days') WHERE tier = 'free' AND subscription_expires IS NULL",
+    # enforce repo limit: free=1 (delete excess repos for free tenants)
 ]
 
 

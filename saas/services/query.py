@@ -13,7 +13,6 @@ from ..config import settings
 from ..db import get_db
 from ..metering import record_query, record_usage
 from ..models import ImpactResult, SearchResult
-from ..quota import check_deep_query_quota
 from .llm import llm_chat, parse_json
 from .query_log import save_deep_query_log
 
@@ -352,7 +351,6 @@ async def deep_query_repo(
     if not settings.llm_api_key:
         raise HTTPException(status_code=503, detail="LLM API key not configured (set SAAS_LLM_API_KEY)")
 
-    await check_deep_query_quota(ctx)
     row = await require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
 

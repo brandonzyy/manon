@@ -48,27 +48,16 @@ class SaasSettings(BaseSettings):
     # admin
     admin_secret: str = ""  # set SAAS_ADMIN_SECRET env var
 
-    # rate limits (requests / minute)
-    rate_free: int = 30
-    rate_pro: int = 300
-    rate_enterprise: int = 3000
+    # free trial duration (days from registration)
+    free_trial_days: int = 30
 
     # quotas per tier
-    quota_repos_free: int = 2
-    quota_repos_pro: int = 20
+    quota_repos_free: int = 1
+    quota_repos_pro: int = 5
     quota_repos_enterprise: int = 9999
-    quota_deep_query_free: int = 10       # per day
-    quota_deep_query_pro: int = 9999
-    quota_deep_query_enterprise: int = 9999
-
-    def rate_for(self, tier: str) -> int:
-        return {"free": self.rate_free, "pro": self.rate_pro, "enterprise": self.rate_enterprise}.get(tier, self.rate_free)
 
     def quota_repos(self, tier: str) -> int:
         return {"free": self.quota_repos_free, "pro": self.quota_repos_pro, "enterprise": self.quota_repos_enterprise}.get(tier, self.quota_repos_free)
-
-    def quota_deep_query(self, tier: str) -> int:
-        return {"free": self.quota_deep_query_free, "pro": self.quota_deep_query_pro, "enterprise": self.quota_deep_query_enterprise}.get(tier, self.quota_deep_query_free)
 
     def ensure_dirs(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)

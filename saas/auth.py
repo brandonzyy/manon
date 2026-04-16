@@ -1,37 +1,13 @@
-"""Bearer token → TenantContext with rate-limit enforcement."""
+"""Bearer token → TenantContext with subscription enforcement."""
 from __future__ import annotations
 
-import time
-from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .db import get_db
-from .config import settings
-
-
-# ── Sliding-window rate limiter (per tenant, 60s window) ──
-
-
-class SlidingWindowLimiter:
-    def __init__(self, window: int = 60):
-        self._window = window
-        self._hits: dict[str, list[float]] = defaultdict(list)
-
-    def check(self, tenant_id: str, limit: int) -> bool:
-        now = time.monotonic()
-        cutoff = now - self._window
-        bucket = self._hits[tenant_id]
-        self._hits[tenant_id] = bucket = [t for t in bucket if t > cutoff]
-        if len(bucket) >= limit:
-            return False
-        bucket.append(now)
-        return True
-
-
-limiter = SlidingWindowLimiter()
 
 _bearer = HTTPBearer()
 
@@ -40,7 +16,6 @@ _bearer = HTTPBearer()
 class TenantContext:
     tenant_id: str
     tier: str
-    rate_limit: int
 
 
 async def require_tenant(
@@ -49,7 +24,8 @@ async def require_tenant(
     token = cred.credentials
     db = await get_db()
     row = await db.execute(
-        "SELECT k.tenant_id, t.tier FROM api_keys k "
+        "SELECT k.tenant_id, t.tier, t.subscription_expires "
+        "FROM api_keys k "
         "JOIN tenants t ON t.id = k.tenant_id "
         "WHERE k.key = ? AND k.active = 1",
         (token,),
@@ -59,9 +35,25 @@ async def require_tenant(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or inactive api key")
 
     tenant_id, tier = row["tenant_id"], row["tier"]
-    limit = settings.rate_for(tier)
+    expires = row["subscription_expires"]
 
-    if not limiter.check(tenant_id, limit):
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "rate limit exceeded")
+    # Check subscription/trial expiry for all tiers
+    if expires:
+        try:
+            expires_dt = datetime.fromisoformat(expires).replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            if now > expires_dt:
+                if tier == "free":
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        "Free trial expired. Upgrade to Pro (¥399/mo) or Enterprise (¥999/mo) to continue.",
+                    )
+                else:
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        f"Subscription expired on {expires}. Please renew to continue.",
+                    )
+        except ValueError:
+            pass  # malformed date — don't block
 
-    return TenantContext(tenant_id=tenant_id, tier=tier, rate_limit=limit)
+    return TenantContext(tenant_id=tenant_id, tier=tier)
