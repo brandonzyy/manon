@@ -20,7 +20,7 @@ import time
 
 import paramiko
 
-HOST = "117.131.45.179"
+HOST = "114.94.190.2"
 PORT = 2212
 USER = "root"
 KEY_PATH = os.path.expanduser("~/.ssh/id_ed25519")
