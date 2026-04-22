@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI):
     await init_db(settings.db_path)
     MatrixoneGraph.configure(
         embedding_url=settings.embedding_url,
+        embedding_model=settings.embedding_model,
+        embedding_api_key=settings.embedding_api_key,
         data_dir=settings.index_dir,
     )
     yield

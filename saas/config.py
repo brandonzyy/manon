@@ -26,18 +26,27 @@ class SaasSettings(BaseSettings):
     repos_dir: str = str(RUNTIME_ROOT / "repos")
     index_dir: str = str(RUNTIME_ROOT / "indexes")
     data_dir: str = str(RUNTIME_ROOT / "data")  # JSONL training logs
-    embedding_url: str = "http://127.0.0.1:3002"
+    # Embedding (OpenAI-compatible, e.g. GLM embedding-3)
+    embedding_url: str = Field(
+        default="https://open.bigmodel.cn/api/paas/v4",
+        validation_alias=AliasChoices("SAAS_EMBEDDING_URL", "MANON_EMBEDDING_URL"),
+    )
+    embedding_model: str = Field(
+        default="embedding-3",
+        validation_alias=AliasChoices("SAAS_EMBEDDING_MODEL", "MANON_EMBEDDING_MODEL"),
+    )
+    embedding_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SAAS_EMBEDDING_API_KEY", "MANON_EMBEDDING_API_KEY"),
+    )
 
-    # LLM (OpenAI-compatible)
-    # Default: local Ollama. For production, set SAAS_LLM_API_URL env var
-    # Examples: http://localhost:11434/v1/chat/completions (Ollama)
-    #           https://api.openai.com/v1/chat/completions (OpenAI)
+    # LLM (OpenAI-compatible, e.g. GLM glm-4.5-air)
     llm_api_url: str = Field(
-        default="http://localhost:11434/v1/chat/completions",
+        default="https://open.bigmodel.cn/api/paas/v4/chat/completions",
         validation_alias=AliasChoices("SAAS_LLM_API_URL", "MANON_LLM_API_URL"),
     )
     llm_model: str = Field(
-        default="qwen2.5-coder:7b",
+        default="glm-4.5-air",
         validation_alias=AliasChoices("SAAS_LLM_MODEL", "MANON_LLM_MODEL"),
     )
     llm_api_key: str = Field(

@@ -1,4 +1,4 @@
-"""Embedding HTTP client for TEI / OpenAI-compatible endpoints."""
+"""Embedding HTTP client for OpenAI-compatible / TEI endpoints."""
 
 from __future__ import annotations
 
@@ -8,17 +8,23 @@ import httpx
 class EmbeddingClient:
     """Async HTTP client that calls a text-embedding endpoint.
 
-    Supports both Jina TEI format (returns list[list[float]]) and
-    OpenAI-compatible format (returns {data: [{embedding: [...]}]}).
+    Supports two modes:
+    - OpenAI-compatible (default): POST /embeddings with model + input
+    - Legacy TEI: POST /embed with inputs (when model is not set)
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8080",
+        base_url: str = "https://open.bigmodel.cn/api/paas/v4",
+        *,
+        model: str = "",
+        api_key: str = "",
         batch_size: int = 32,
         timeout: float = 30.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
         self.batch_size = batch_size
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
@@ -42,6 +48,27 @@ class EmbeddingClient:
 
     async def _post_batch(self, texts: list[str]) -> list[list[float]]:
         client = await self._get_client()
+        if self.model:
+            return await self._post_openai(client, texts)
+        return await self._post_tei(client, texts)
+
+    async def _post_openai(self, client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
+        """OpenAI-compatible /embeddings endpoint (GLM, OpenAI, etc.)."""
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        resp = await client.post(
+            f"{self.base_url}/embeddings",
+            headers=headers,
+            json={"model": self.model, "input": texts},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        items = sorted(body["data"], key=lambda x: x["index"])
+        return [item["embedding"] for item in items]
+
+    async def _post_tei(self, client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
+        """Legacy TEI /embed endpoint."""
         resp = await client.post(
             f"{self.base_url}/embed",
             json={"inputs": texts},

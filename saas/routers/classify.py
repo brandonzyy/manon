@@ -81,8 +81,8 @@ async def classify_scripts(
                 {"role": "system", "content": _CLASSIFY_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=1024,
-            timeout=30.0,
+            max_tokens=4096,
+            timeout=60.0,
         )
         result = parse_json(response)
     except Exception as e:

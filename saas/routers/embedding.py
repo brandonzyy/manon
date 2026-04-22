@@ -1,4 +1,4 @@
-"""Embedding gateway — proxy to H200 TEI service, hiding the direct IP."""
+"""Embedding gateway — proxy to cloud embedding service (GLM / OpenAI-compatible)."""
 from __future__ import annotations
 
 import httpx
@@ -35,17 +35,22 @@ async def embed_texts(
     body: EmbedRequest,
     ctx: TenantContext = Depends(require_tenant),
 ):
-    """Proxy embedding request to H200 TEI service."""
+    """Proxy embedding request to cloud embedding service."""
     if not body.inputs:
         raise HTTPException(400, "inputs must not be empty")
     if len(body.inputs) > 128:
         raise HTTPException(400, "max 128 texts per request")
 
     client = _get_client()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if settings.embedding_api_key:
+        headers["Authorization"] = f"Bearer {settings.embedding_api_key}"
+
     try:
         resp = await client.post(
-            f"{settings.embedding_url}/embed",
-            json={"inputs": body.inputs},
+            f"{settings.embedding_url.rstrip('/')}/embeddings",
+            headers=headers,
+            json={"model": settings.embedding_model, "input": body.inputs},
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
@@ -54,13 +59,8 @@ async def embed_texts(
         raise HTTPException(502, f"embedding service unreachable: {e}")
 
     data = resp.json()
-    # handle both TEI (list) and OpenAI (dict with data) formats
-    if isinstance(data, list):
-        vectors = data
-    elif isinstance(data, dict) and "data" in data:
-        vectors = [item["embedding"] for item in data["data"]]
-    else:
-        raise HTTPException(502, "unexpected embedding response format")
+    items = sorted(data["data"], key=lambda x: x["index"])
+    vectors = [item["embedding"] for item in items]
 
     await record_usage(ctx.tenant_id, "embedding", tokens=len(body.inputs))
     return EmbedResponse(embeddings=vectors, count=len(vectors))

@@ -155,9 +155,9 @@ def _process_ast_files(body, graph, all_chunks, vec_index):
     return all_entities, all_relations, new_chunks, new_hashes, new_reexports
 
 
-async def _embed_and_index_vectors(all_entities, new_chunks, vec_index, embedding_url: str) -> None:
+async def _embed_and_index_vectors(all_entities, new_chunks, vec_index, embedding_url: str, *, embedding_model: str = "", embedding_api_key: str = "") -> None:
     """Embed entities and chunks, add vectors to index."""
-    embedder = EmbeddingClient(base_url=embedding_url)
+    embedder = EmbeddingClient(base_url=embedding_url, model=embedding_model, api_key=embedding_api_key)
     try:
         if all_entities:
             ent_vecs = await embedder.embed([e.description for e in all_entities])
@@ -283,7 +283,7 @@ async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: Sync
                 if redirected:
                     logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
 
-        await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url)
+        await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url, embedding_model=settings.embedding_model, embedding_api_key=settings.embedding_api_key)
         _persist_kg_state(kg_path, graph, vec_index, all_chunks, new_hashes, meta)
 
         phantom_ratio = graph.phantom_count / max(graph.entity_count, 1)

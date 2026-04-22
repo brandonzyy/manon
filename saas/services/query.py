@@ -23,7 +23,11 @@ if _project_root not in sys.path:
 
 from matrixone_graph import MatrixoneGraph  # noqa: E402
 
-MatrixoneGraph.configure(embedding_url=settings.embedding_url)
+MatrixoneGraph.configure(
+    embedding_url=settings.embedding_url,
+    embedding_model=settings.embedding_model,
+    embedding_api_key=settings.embedding_api_key,
+)
 
 
 def get_graph(tenant_id: str, repo_path: str | None, *, repo_name: str = "") -> MatrixoneGraph:
@@ -284,7 +288,7 @@ async def _run_query_rounds(
             analysis = await llm_chat([
                 {"role": "system", "content": _DEEPQUERY_SYSTEM},
                 {"role": "user", "content": f"Question:\n{question}\n\nContext:\n{accumulated[:12000]}"},
-            ], max_tokens=2048)
+            ], max_tokens=4096)
             parsed = parse_json(analysis)
         except Exception as exc:
             log.warning(

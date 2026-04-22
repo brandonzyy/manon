@@ -47,6 +47,8 @@ class MatrixoneGraph:
     # Class-level instance pool
     _pool: dict[str, "MatrixoneGraph"] = {}
     _embedding_url: str = "http://localhost:8080"
+    _embedding_model: str = ""
+    _embedding_api_key: str = ""
     _data_dir: Path | None = None  # centralized index storage root
 
     @staticmethod
@@ -56,9 +58,13 @@ class MatrixoneGraph:
         return f"{repo_path.name}-{h}"
 
     @classmethod
-    def configure(cls, *, embedding_url: str = "", data_dir: str | Path = "") -> None:
+    def configure(cls, *, embedding_url: str = "", embedding_model: str = "", embedding_api_key: str = "", data_dir: str | Path = "") -> None:
         if embedding_url:
             cls._embedding_url = embedding_url
+        if embedding_model:
+            cls._embedding_model = embedding_model
+        if embedding_api_key:
+            cls._embedding_api_key = embedding_api_key
         if data_dir:
             cls._data_dir = Path(data_dir).resolve()
             cls._data_dir.mkdir(parents=True, exist_ok=True)
@@ -86,11 +92,16 @@ class MatrixoneGraph:
         repo_path: str | Path,
         *,
         embedding_url: str = "http://localhost:8080",
+        embedding_model: str = "",
+        embedding_api_key: str = "",
         batch_size: int = 32,
     ) -> None:
         self.repo_path = Path(repo_path).resolve()
         self._embedder = EmbeddingClient(
-            base_url=embedding_url, batch_size=batch_size
+            base_url=embedding_url,
+            model=embedding_model or self._embedding_model,
+            api_key=embedding_api_key or self._embedding_api_key,
+            batch_size=batch_size,
         )
         # Compute kg_path: centralized if data_dir is set, else in-repo fallback
         if self._data_dir:

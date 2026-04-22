@@ -90,7 +90,7 @@ async def analyze_structure(
         analysis = await llm_chat([
             {"role": "system", "content": _ANALYZE_SYSTEM},
             {"role": "user", "content": user_prompt},
-        ], max_tokens=2048, timeout=30.0)
+        ], max_tokens=4096, timeout=60.0)
         result = parse_json(analysis)
     except Exception as e:
         log.warning("analyze-structure LLM failed: %s", e)

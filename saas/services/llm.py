@@ -39,7 +39,7 @@ async def llm_chat(
     resp = await client.post(
         settings.llm_api_url,
         headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
-        json={"model": settings.llm_model, "max_tokens": max_tokens, "messages": messages, "chat_template_kwargs": {"enable_thinking": False}},
+        json={"model": settings.llm_model, "max_tokens": max_tokens, "messages": messages},
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -51,7 +51,23 @@ async def llm_chat(
 
 
 def parse_json(text: str) -> dict | list:
-    """Extract JSON from LLM output, stripping markdown fences."""
+    """Extract JSON from LLM output, stripping markdown fences and surrounding text."""
+    # Strip markdown fences first
     cleaned = re.sub(r"```(?:json)?\s*", "", text)
     cleaned = re.sub(r"```", "", cleaned).strip()
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: find the first { ... } or [ ... ] block in the text
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = cleaned.find(start_char)
+        if start == -1:
+            continue
+        end = cleaned.rfind(end_char)
+        if end > start:
+            try:
+                return json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+    raise ValueError(f"No valid JSON found in LLM output: {text[:200]}")
