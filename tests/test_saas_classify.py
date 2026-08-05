@@ -86,7 +86,7 @@ class TestFileSummary:
 # ── classify_scripts endpoint ─────────────────────────────────────────────────
 
 def _make_ctx():
-    return TenantContext(tenant_id="t1", tier="pro", rate_limit=300)
+    return TenantContext(tenant_id="t1", tier="pro")
 
 
 class TestClassifyScriptsEndpoint:

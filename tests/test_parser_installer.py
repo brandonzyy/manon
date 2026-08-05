@@ -5,11 +5,13 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 import subprocess
+from codeindex.parser import get_all_extensions
 from codeindex.parser_installer import (
     check_parser_installed,
     install_parsers,
     _try_pip_install,
     LANG_TO_PACKAGE,
+    PIP_MIRRORS,
 )
 
 
@@ -112,3 +114,98 @@ class TestLangToPackage:
         for lang in ("python", "javascript", "typescript", "tsx", "php", "java"):
             assert lang in LANG_TO_PACKAGE
             assert isinstance(LANG_TO_PACKAGE[lang], str)
+
+    def test_every_parsed_language_has_a_package(self):
+        """A language parser.py detects but the installer cannot install gets
+        collected and then silently never parsed — no grammar is installed."""
+        assert set(get_all_extensions().values()) - set(LANG_TO_PACKAGE) == set()
+
+    def test_no_orphan_package_entries(self):
+        """Entries for languages parser.py never yields are dead weight."""
+        assert set(LANG_TO_PACKAGE) - set(get_all_extensions().values()) == set()
+
+    def test_typescript_and_tsx_share_one_package(self):
+        assert LANG_TO_PACKAGE["typescript"] == LANG_TO_PACKAGE["tsx"]
+
+
+class TestCheckParserInstalledIsGeneric:
+    """check_parser_installed derives the module from LANG_TO_PACKAGE, so a new
+    language needs one entry rather than a matching if/elif branch."""
+
+    def test_generic_language_resolves(self):
+        assert check_parser_installed("go") is True
+
+    def test_dashes_become_underscores(self):
+        with patch("builtins.__import__") as imp:
+            assert check_parser_installed("c_sharp") is True
+        imp.assert_called_once_with("tree_sitter_c_sharp")
+
+    def test_import_error_is_false(self):
+        with patch("builtins.__import__", side_effect=ImportError):
+            assert check_parser_installed("go") is False
+
+
+class TestProxyFallback:
+    def test_retries_direct_when_proxy_is_set(self):
+        """A CONNECT-only corporate proxy rejects PyPI outright."""
+        with patch.dict("os.environ", {"HTTPS_PROXY": "https://corp:8443"}, clear=False):
+            with patch("subprocess.check_call",
+                       side_effect=[subprocess.CalledProcessError(1, "pip"), 0]) as call:
+                assert _try_pip_install(["tree-sitter-go"], 30) is True
+        assert call.call_count == 2
+        assert "HTTPS_PROXY" not in call.call_args_list[1].kwargs["env"]
+
+    def test_no_retry_without_proxy(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("subprocess.check_call",
+                       side_effect=subprocess.CalledProcessError(1, "pip")) as call:
+                assert _try_pip_install(["tree-sitter-go"], 30) is False
+        assert call.call_count == 1
+
+    def test_timeout_is_failure(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("subprocess.check_call",
+                       side_effect=subprocess.TimeoutExpired("pip", 30)):
+                assert _try_pip_install(["tree-sitter-go"], 30) is False
+
+
+class TestPerPackageFallback:
+    def test_one_missing_package_does_not_sink_the_batch(self):
+        """tree-sitter-r is not published to PyPI. Under all-or-nothing batching
+        it failed every grammar sharing its pip command."""
+        def fake_install(packages, timeout, mirror=None):
+            return "tree-sitter-r" not in packages
+
+        with patch("codeindex.parser_installer.check_parser_installed", return_value=False):
+            with patch("codeindex.parser_installer._try_pip_install", side_effect=fake_install):
+                results = install_parsers({"go", "r"})
+
+        assert results["go"] == "installed"
+        assert results["r"] == "failed"
+
+    def test_batch_success_skips_the_singles_pass(self):
+        with patch("codeindex.parser_installer.check_parser_installed", return_value=False):
+            with patch("codeindex.parser_installer._try_pip_install", return_value=True) as pip:
+                results = install_parsers({"go", "rust"})
+        assert results == {"go": "installed", "rust": "installed"}
+        assert pip.call_count == 1  # single batch on the first mirror
+
+    def test_total_failure_marks_all_failed(self):
+        with patch("codeindex.parser_installer.check_parser_installed", return_value=False):
+            with patch("codeindex.parser_installer._try_pip_install", return_value=False):
+                results = install_parsers({"go", "rust"})
+        assert results == {"go": "failed", "rust": "failed"}
+
+    def test_single_package_not_retried_individually(self):
+        """One package already saw every mirror during the batch pass."""
+        with patch("codeindex.parser_installer.check_parser_installed", return_value=False):
+            with patch("codeindex.parser_installer._try_pip_install", return_value=False) as pip:
+                install_parsers({"go"})
+        assert pip.call_count == len(PIP_MIRRORS)
+
+    def test_shared_package_installed_once(self):
+        with patch("codeindex.parser_installer.check_parser_installed", return_value=False):
+            with patch("codeindex.parser_installer._try_pip_install", return_value=True) as pip:
+                results = install_parsers({"typescript", "tsx"})
+        assert results == {"typescript": "installed", "tsx": "installed"}
+        assert pip.call_args[0][0] == ["tree-sitter-typescript"]

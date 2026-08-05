@@ -29,37 +29,18 @@ class TestSaasSettings:
     def test_default_llm_settings(self):
         """Should have default LLM settings."""
         s = SaasSettings()
-        assert s.llm_model == "qwen2.5-coder:7b"
+        assert s.llm_model == "glm-4.5-air"
         assert s.llm_api_url != ""
 
-    def test_default_rate_limits(self):
-        """Should have tiered rate limits."""
-        s = SaasSettings()
-        assert s.rate_free == 30
-        assert s.rate_pro == 300
-        assert s.rate_enterprise == 3000
-        # Enterprise should be highest
-        assert s.rate_enterprise > s.rate_pro > s.rate_free
 
     def test_default_quotas(self):
         """Should have tiered quotas."""
         s = SaasSettings()
-        assert s.quota_repos_free == 2
-        assert s.quota_repos_pro == 20
+        assert s.quota_repos_free == 1
+        assert s.quota_repos_pro == 5
         assert s.quota_repos_enterprise == 9999
 
-    def test_rate_for_tiers(self):
-        """rate_for should return correct limits."""
-        s = SaasSettings()
-        assert s.rate_for("free") == s.rate_free
-        assert s.rate_for("pro") == s.rate_pro
-        assert s.rate_for("enterprise") == s.rate_enterprise
 
-    def test_rate_for_unknown_tier(self):
-        """Unknown tier should default to free."""
-        s = SaasSettings()
-        assert s.rate_for("unknown") == s.rate_free
-        assert s.rate_for("premium") == s.rate_free
 
     def test_quota_repos_for_tiers(self):
         """quota_repos should return correct limits."""
@@ -73,17 +54,7 @@ class TestSaasSettings:
         s = SaasSettings()
         assert s.quota_repos("unknown") == s.quota_repos_free
 
-    def test_quota_deep_query_for_tiers(self):
-        """quota_deep_query should return correct limits."""
-        s = SaasSettings()
-        assert s.quota_deep_query("free") == s.quota_deep_query_free
-        assert s.quota_deep_query("pro") == s.quota_deep_query_pro
-        assert s.quota_deep_query("enterprise") == s.quota_deep_query_enterprise
 
-    def test_quota_deep_query_unknown_tier(self):
-        """Unknown tier should default to free quota."""
-        s = SaasSettings()
-        assert s.quota_deep_query("unknown") == s.quota_deep_query_free
 
     def test_ensure_dirs(self, tmp_path):
         """Should create directories."""
@@ -155,11 +126,11 @@ class TestSaasSettings:
         s = SaasSettings(
             port=9999,
             db_path="/custom/db.db",
-            rate_free=100,
+            quota_repos_free=100,
         )
         assert s.port == 9999
         assert s.db_path == "/custom/db.db"
-        assert s.rate_free == 100
+        assert s.quota_repos_free == 100
 
 
 class TestGlobalSettings:
@@ -181,19 +152,14 @@ class TestGlobalSettings:
     def test_global_settings_tier_methods(self):
         """Global settings should have working tier methods."""
         # These should not raise
-        settings.rate_for("free")
+        settings.quota_repos("free")
         settings.quota_repos("pro")
-        settings.quota_deep_query("enterprise")
+        settings.quota_repos("enterprise")
 
 
 class TestTierHierarchy:
     """Tests for tier hierarchy."""
 
-    def test_rate_limit_hierarchy(self):
-        """Enterprise > Pro > Free for rate limits."""
-        s = SaasSettings()
-        assert s.rate_enterprise > s.rate_pro
-        assert s.rate_pro > s.rate_free
 
     def test_repo_quota_hierarchy(self):
         """Enterprise > Pro > Free for repo quotas."""
@@ -201,15 +167,8 @@ class TestTierHierarchy:
         assert s.quota_repos_enterprise > s.quota_repos_pro
         assert s.quota_repos_pro > s.quota_repos_free
 
-    def test_deep_query_quota_hierarchy(self):
-        """Enterprise >= Pro > Free for deep query quotas."""
-        s = SaasSettings()
-        assert s.quota_deep_query_pro >= s.quota_deep_query_free
-        assert s.quota_deep_query_enterprise >= s.quota_deep_query_pro
 
     def test_enterprise_effectively_unlimited(self):
         """Enterprise should have very high limits."""
         s = SaasSettings()
         assert s.quota_repos_enterprise >= 9999
-        assert s.quota_deep_query_enterprise >= 9999
-        assert s.rate_enterprise >= 3000

@@ -499,7 +499,8 @@ class Config:
             Config instance ready for scanning
         """
         from codeindex.detector import quick_detect_languages
-        from codeindex.parser import FILE_EXTENSIONS
+        from codeindex.parser import get_all_extensions
+        FILE_EXTENSIONS = get_all_extensions()
         from codeindex.parser_installer import install_parsers
 
         # Phase 1: Detect languages

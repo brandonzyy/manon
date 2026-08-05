@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -48,21 +49,30 @@ def check_version_update(manon_dir: str) -> dict | None:
         return None
 
 
+def venv_python(manon_dir: Path | str) -> Path:
+    """Path of the interpreter inside <manon_dir>/.venv."""
+    if os.name == "nt":
+        return Path(manon_dir) / ".venv" / "Scripts" / "python.exe"
+    return Path(manon_dir) / ".venv" / "bin" / "python"
+
+
 def resolve_scan_python() -> str:
-    """Return a stable Python entrypoint for external scan scripts."""
+    """Return the Python entrypoint for external scan scripts.
+
+    Prefer an interpreter that owns Manon's dependencies — the running venv
+    first, then <manon_dir>/.venv. The base interpreter comes last: it rarely
+    has the tree-sitter grammars, and when it is PEP 668 managed the scan
+    script cannot pip-install them either, so scans silently parse zero files.
+    """
     candidates: list[str] = []
+    executable = Path(sys.executable)
+    if (executable.parent.parent / "pyvenv.cfg").exists():
+        candidates.append(str(executable))
+    candidates.append(str(venv_python(Path(__file__).resolve().parent.parent.parent)))
+    candidates.append(str(executable))
     base_executable = getattr(sys, "_base_executable", "")
     if base_executable:
         candidates.append(base_executable)
-    executable = Path(sys.executable)
-    cfg_path = executable.parent.parent / "pyvenv.cfg"
-    if cfg_path.exists():
-        cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
-        for line in cfg_text.splitlines():
-            if line.startswith("executable = "):
-                candidates.append(line.split("=", 1)[1].strip())
-                break
-    candidates.append(sys.executable)
     seen: set[str] = set()
     for candidate in candidates:
         if not candidate or candidate in seen:

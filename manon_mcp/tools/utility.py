@@ -23,7 +23,6 @@ def register_utility_tools(mcp, deps: ToolDependencies):
         log.info("manon_config called")
         lines = [f"=== Manon Config {'=' * 28}"]
         lines.append(f"  Version  {config.CLIENT_VERSION}")
-        lines.append(f"  Region   {config.REGION}")
         lines.append(f"  API      {config.API_URL}")
         import time as _time
         t0 = _time.monotonic()
@@ -32,7 +31,6 @@ def register_utility_tools(mcp, deps: ToolDependencies):
             elapsed = _time.monotonic() - t0
             log.info("manon_config /api/v1/config OK in %.1fs", elapsed)
             lines.append(f"  Tier     {cfg['tier']}")
-            lines.append(f"  Limit    {cfg['rate_limit']} req/min")
         except Exception as exc:
             elapsed = _time.monotonic() - t0
             log.warning("manon_config /api/v1/config failed in %.1fs: %s", elapsed, exc)
@@ -53,9 +51,8 @@ def register_utility_tools(mcp, deps: ToolDependencies):
         quotas = acc["quotas"]
         lines = [
             f"Tier: {acc['tier']}",
-            f"Rate limit: {acc['rate_limit']} req/min",
             f"Repos: {quotas['repos']['used']}/{quotas['repos']['limit']}",
-            f"Deep query today: {quotas['deep_query_daily']['used']}/{quotas['deep_query_daily']['limit']}",
+            f"Deep query today: {acc.get('deep_query_today', 0)}",
             f"Usage 30d: {acc['usage_30d']}",
         ]
         return "\n".join(lines)

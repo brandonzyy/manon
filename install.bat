@@ -21,7 +21,6 @@ exit /b %errorlevel%
 ::PS $SERVER_PY  = "$SCRIPT_DIR\run_mcp.py"
 ::PS $VENV_DIR   = "$SCRIPT_DIR\.venv"
 ::PS $API_URL_CN = "http://saas.matrixone.online:3700"
-::PS $API_URL_INTL = "http://203.208.134.27:3700"
 ::PS $ErrorActionPreference = "Stop"
 ::PS function info($m)  { Write-Host "[+] $m" -ForegroundColor Green }
 ::PS function warn($m)  { Write-Host "[!] $m" -ForegroundColor Yellow }
@@ -84,7 +83,7 @@ exit /b %errorlevel%
 ::PS & $VENV_PYTHON -m pip install -q -r "$SCRIPT_DIR\manon_mcp\requirements.txt"
 ::PS info "Dependencies installed"
 ::PS # ── Check for existing API key ────────────────────────
-::PS $API_KEY = ""; $API_URL = $DEFAULT_API_URL
+::PS $API_KEY = ""; $API_URL = $API_URL_CN
 ::PS foreach ($cfg in @("$HOME_DIR\.claude.json","$HOME_DIR\.claude\settings.json","$HOME_DIR\.cursor\mcp.json","$HOME_DIR\.codeium\windsurf\mcp_config.json","$HOME_DIR\.windsurf\mcp_config.json","$HOME_DIR\.config\opencode\opencode.json","$HOME_DIR\.codex\config.toml")) {
 ::PS     if (Test-Path $cfg) {
 ::PS         $key = & $VENV_PYTHON -c "import json,re,sys`nf=sys.argv[1]`ntry:`n    if f.endswith('.toml'):`n        text=open(f,encoding='utf-8').read()`n        m=re.search(r'MANON_API_KEY\s*=\s*\x22(msk_[^\x22]+)\x22',text)`n        if m: print(m.group(1))`n    else:`n        d=json.load(open(f,encoding='utf-8'))`n        k=d.get('mcpServers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n        if not k: k=d.get('mcp',{}).get('manon',{}).get('environment',{}).get('MANON_API_KEY','')`n        if k.startswith('msk_'): print(k)`nexcept: pass" "$cfg" 2>`$null

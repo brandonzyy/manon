@@ -13,7 +13,6 @@ SERVER_PY="$SCRIPT_DIR/run_mcp.py"
 LAUNCHER="$SCRIPT_DIR/launch_mcp.sh"
 VENV_DIR="$SCRIPT_DIR/.venv"
 API_URL_CN="http://saas.matrixone.online:3700"
-API_URL_INTL="http://203.208.134.27:3700"
 
 # ── Colors ────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'

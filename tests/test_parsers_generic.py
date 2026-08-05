@@ -280,6 +280,22 @@ class TestCSharpParser:
         names = [s.name for s in r.symbols]
         assert len(names) > 0
 
+    def test_namespace_nested_declarations_found(self):
+        """C# wraps everything in namespace_declaration → declaration_list.
+        The walk used to stop there and return zero symbols."""
+        r = _try_parse(CSHARP_SRC, ".cs")
+        names = {s.name for s in r.symbols}
+        assert {"IEntity", "BaseEntity", "User"} <= names
+
+    def test_methods_are_qualified_by_class(self):
+        r = _try_parse(CSHARP_SRC, ".cs")
+        names = {s.name for s in r.symbols}
+        assert any(n.startswith("User.") for n in names)
+
+    def test_using_directives_extracted(self):
+        r = _try_parse(CSHARP_SRC, ".cs")
+        assert "System" in {i.module for i in r.imports}
+
 
 class TestParserExtensions:
     def test_get_all_extensions(self):

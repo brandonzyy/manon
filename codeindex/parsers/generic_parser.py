@@ -66,6 +66,21 @@ _IMPORT_TYPES = {
 # Nodes whose child may contain a name identifier
 _NAME_FIELDS = {"name", "identifier", "declarator"}
 
+# Nodes that only nest other declarations — walk through them without emitting
+# a symbol. Languages that wrap everything in a namespace (C#, C++) yield zero
+# symbols without this: the walk stops at the namespace node.
+_CONTAINER_TYPES = {
+    "program",                   # Java, JS
+    "source_file",               # Go, Rust
+    "compilation_unit",          # C#
+    "namespace_declaration",     # C#
+    "declaration_list",          # C#
+    "namespace_definition",      # C++
+    "linkage_specification",     # C++ extern "C" { ... }
+    "decorated_definition",      # Python
+    "annotation",                # Kotlin
+}
+
 
 class GenericParser(BaseLanguageParser):
     """Universal parser for any tree-sitter supported language.
@@ -108,10 +123,7 @@ class GenericParser(BaseLanguageParser):
                     if body:
                         new_prefix = f"{prefix}{sym.name}." if prefix else f"{sym.name}."
                         self._walk_for_symbols(body, source_bytes, symbols, new_prefix)
-            elif child.type in ("decorated_definition", "annotation"):
-                # Python/Kotlin decorated definitions — look inside
-                self._walk_for_symbols(child, source_bytes, symbols, prefix)
-            elif child.type == "program" or child.type == "source_file":
+            elif child.type in _CONTAINER_TYPES:
                 self._walk_for_symbols(child, source_bytes, symbols, prefix)
 
     def _parse_func_symbol(self, node: Node, source_bytes: bytes,
@@ -168,6 +180,9 @@ class GenericParser(BaseLanguageParser):
                 if module:
                     is_from = "from" in child.type or text.startswith("from ")
                     imports.append(Import(module=module, is_from=is_from))
+            elif child.type in _CONTAINER_TYPES:
+                # e.g. a C# `using` nested inside a namespace block
+                self._walk_for_imports(child, source_bytes, imports)
 
     def _extract_import_module(self, node: Node, source_bytes: bytes,
                                text: str) -> str:

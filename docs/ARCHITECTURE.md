@@ -136,14 +136,16 @@ Manon is an AI-powered code intelligence tool with three main components:
 - Only parse changed files
 - Upload batches of 50 files
 
-### 3. Geo-Aware Routing
+### 3. API Endpoint
 
-**Problem**: China users need different endpoints
+**Problem**: Clients need to reach the SaaS service, and self-hosters need to
+point elsewhere.
 
 **Solution**:
-- Detect region via locale/timezone/IP
-- Cache in `~/.manon/region.json`
-- Route to CN or INTL endpoints
+- Single endpoint, `MANON_API_URL` overrides it
+- Geo-routing (CN vs INTL) was removed: no INTL deployment ever existed, so
+  locale/timezone/IP detection could only mis-route. A stale
+  `~/.manon/region.json` silently sent clients to a dead host.
 
 ### 4. Embedding-Free Search (Optional)
 

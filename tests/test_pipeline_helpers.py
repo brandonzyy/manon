@@ -62,20 +62,36 @@ class TestResolveImport:
 
 class TestResolveCallee:
     def test_local(self):
-        result = _resolve_callee("foo", {"foo"}, {}, "mod", "mod.py")
+        result = _resolve_callee("foo", {"foo"}, {}, set(), "mod", "mod.py")
         assert result == "mod.foo"
 
     def test_imported(self):
-        result = _resolve_callee("bar", set(), {"bar": "ext.bar"}, "mod", "mod.py")
+        result = _resolve_callee("bar", set(), {"bar": "ext.bar"}, set(), "mod", "mod.py")
         assert result == "ext.bar"
 
     def test_dotted_imported_prefix(self):
-        result = _resolve_callee("client.get", set(), {"client": "http.client"}, "mod", "mod.py")
+        result = _resolve_callee("client.get", set(), {"client": "http.client"}, set(), "mod", "mod.py")
         assert result == "http.client.get"
 
     def test_unknown(self):
-        result = _resolve_callee("unknown", set(), {}, "mod", "mod.py")
-        assert result == "unknown"
+        """Unresolvable callees are skipped rather than turned into phantom nodes."""
+        result = _resolve_callee("unknown", set(), {}, set(), "mod", "mod.py")
+        assert result is None
+
+    def test_external_skipped(self):
+        """Externals (React, fs, lodash) must not become graph nodes."""
+        result = _resolve_callee("React", set(), {}, {"React"}, "mod", "mod.py")
+        assert result is None
+
+    def test_dotted_external_prefix_skipped(self):
+        """React.useState / fs.readFile resolve through the prefix, not the full name."""
+        result = _resolve_callee("React.useState", set(), {}, {"React"}, "mod", "mod.py")
+        assert result is None
+
+    def test_local_wins_over_external(self):
+        """A locally defined name shadows a same-named external import."""
+        result = _resolve_callee("foo", {"foo"}, {}, {"foo"}, "mod", "mod.py")
+        assert result == "mod.foo"
 
 
 class TestFormatQueryContext:

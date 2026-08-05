@@ -260,10 +260,18 @@ class TestClassifyBatch:
         assert len(uncertain) == 0
 
     def test_uncertain_returned(self):
-        files = [self._file("scripts/mystery.py", imports=["requests"])]
+        # Not under a known source or tool dir, no project imports → needs the LLM.
+        files = [self._file("misc/mystery.py", imports=["requests"])]
         keep, uncertain = self.clf.classify_batch(files, set())
         assert len(keep) == 0
         assert len(uncertain) == 1
+
+    def test_tool_dir_is_certain(self):
+        """The scripts/ heuristic decides on its own — never escalate to the LLM."""
+        files = [self._file("scripts/mystery.py", imports=["requests"])]
+        keep, uncertain = self.clf.classify_batch(files, set())
+        assert len(keep) == 0
+        assert len(uncertain) == 0
 
     def test_imported_paths_override(self):
         files = [self._file("scripts/deploy_prod.py", has_main=True, exports=["main"])]
@@ -274,8 +282,8 @@ class TestClassifyBatch:
     def test_mixed_batch(self):
         files = [
             self._file("core/parser.py", imports=["mypkg.base"]),          # source
-            self._file("scripts/deploy_prod.py", has_main=True),            # tool (stem matches)
-            self._file("scripts/helper.py", imports=["requests"]),          # uncertain
+            self._file("scripts/deploy_prod.py", has_main=True),            # tool (tool dir)
+            self._file("misc/helper.py", imports=["requests"]),             # uncertain
         ]
         keep, uncertain = self.clf.classify_batch(files, set())
         assert len(keep) == 1

@@ -16,5 +16,4 @@ async def get_config(ctx: TenantContext = Depends(require_tenant)):
         "llm_api_url": settings.llm_api_url,
         "tenant_id": ctx.tenant_id,
         "tier": ctx.tier,
-        "rate_limit": ctx.rate_limit,
     }

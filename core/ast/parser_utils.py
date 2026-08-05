@@ -23,7 +23,7 @@ def ensure_parsers(local_path: str, use_cache: bool = True) -> dict[str, str]:
     Returns dict mapping language → status ("already_installed" | "installed" | "failed").
     """
     from codeindex.detector import quick_detect_languages
-    from codeindex.parser import FILE_EXTENSIONS
+    from codeindex.parser import get_all_extensions
     from codeindex.parser_installer import install_parsers
 
     root = Path(local_path).resolve()
@@ -34,7 +34,7 @@ def ensure_parsers(local_path: str, use_cache: bool = True) -> dict[str, str]:
         langs = _LANG_CACHE[root_str]
         log.debug("Using cached language detection for %s: %s", local_path, langs)
     else:
-        langs = quick_detect_languages(root, FILE_EXTENSIONS, max_files=500)
+        langs = quick_detect_languages(root, get_all_extensions(), max_files=500)
         _LANG_CACHE[root_str] = langs
 
     if not langs:

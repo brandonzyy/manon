@@ -1,13 +1,9 @@
-"""Tests for manon_mcp/_config.py — version, geo-routing, version check."""
-import json
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+"""Tests for manon_mcp/_config.py — version, API endpoint, version check."""
+import importlib
 
 from manon_mcp._config import (
-    _get_client_version, _detect_region, _get_cached_region,
-    _resolve_api_url, _git_branch, _check_version,
-    CLIENT_VERSION, API_URL_CN, API_URL_INTL, REGION,
+    _get_client_version, _git_branch, _check_version,
+    API_URL, CLIENT_VERSION, API_URL_CN,
     GIT_REMOTE, GIT_BRANCH,
 )
 
@@ -23,35 +19,10 @@ class TestGetClientVersion:
         assert len(parts) >= 2
 
 
-class TestDetectRegion:
-    def test_returns_cn_or_intl(self):
-        region = _detect_region()
-        assert region in ("CN", "INTL")
 
 
-class TestGetCachedRegion:
-    def test_with_cache_file(self, tmp_path, monkeypatch):
-        cache = tmp_path / "region.json"
-        cache.write_text('{"region": "INTL"}', encoding="utf-8")
-        monkeypatch.setattr("manon_mcp._config._REGION_CACHE", cache)
-        assert _get_cached_region() == "INTL"
-
-    def test_without_cache_defaults_cn(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("manon_mcp._config._REGION_CACHE", tmp_path / "nope.json")
-        result = _get_cached_region()
-        assert result == "CN"
 
 
-class TestResolveApiUrl:
-    def test_explicit_url(self, monkeypatch):
-        monkeypatch.setattr("manon_mcp._config._explicit_url", "http://custom:3700")
-        assert _resolve_api_url() == "http://custom:3700"
-
-    def test_cn_region(self, monkeypatch):
-        monkeypatch.setattr("manon_mcp._config._explicit_url", "")
-        monkeypatch.setattr("manon_mcp._config._get_cached_region", lambda: "CN")
-        url = _resolve_api_url()
-        assert url == API_URL_CN
 
 
 class TestGitBranch:
@@ -68,6 +39,33 @@ class TestConstants:
 
     def test_api_url_cn_set(self):
         assert API_URL_CN != ""
+
+
+class TestApiUrl:
+    """Geo-routing was removed — one endpoint, overridable by env."""
+
+    def test_defaults_to_cn_endpoint(self, monkeypatch):
+        monkeypatch.delenv("MANON_API_URL", raising=False)
+        monkeypatch.delenv("MANON_API_URL_CN", raising=False)
+        import manon_mcp._config as cfg
+        assert importlib.reload(cfg).API_URL == "http://saas.matrixone.online:3700"
+
+    def test_explicit_override_wins(self, monkeypatch):
+        monkeypatch.setenv("MANON_API_URL", "http://localhost:3700")
+        import manon_mcp._config as cfg
+        assert importlib.reload(cfg).API_URL == "http://localhost:3700"
+
+    def test_empty_override_falls_back(self, monkeypatch):
+        """Windows installer used to write an empty MANON_API_URL."""
+        monkeypatch.setenv("MANON_API_URL", "")
+        monkeypatch.delenv("MANON_API_URL_CN", raising=False)
+        import manon_mcp._config as cfg
+        assert importlib.reload(cfg).API_URL == "http://saas.matrixone.online:3700"
+
+    def test_no_intl_symbols_remain(self):
+        import manon_mcp._config as cfg
+        leftovers = [n for n in dir(cfg) if "INTL" in n or "REGION" in n.upper()]
+        assert leftovers == []
 
 
 class TestCheckVersion:

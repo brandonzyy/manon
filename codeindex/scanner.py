@@ -16,14 +16,29 @@ class ScanResult:
     subdirs: list[Path]
 
 
-LANGUAGE_EXTENSIONS = {
-    "python": [".py"],
-    "php": [".php", ".phtml"],
-    "java": [".java"],
-    "typescript": [".ts", ".tsx"],
-    "tsx": [".tsx"],
-    "javascript": [".js", ".jsx"],
-}
+def _build_language_extensions() -> dict[str, list[str]]:
+    """Invert parser.py's extension→language maps into language→extensions.
+
+    Derived rather than hand-maintained: a parallel list drifts. It already had
+    — ".mjs" mapped to javascript in parser.py but was missing here, so .mjs
+    files were detected as javascript and then never collected.
+    """
+    from codeindex.parser import get_all_extensions
+
+    mapping: dict[str, list[str]] = {}
+    for ext, lang in get_all_extensions().items():
+        mapping.setdefault(lang, []).append(ext)
+
+    # Detection samples at most 500 files, so a large repo can report
+    # "typescript" without the sample ever hitting a .tsx file. Keep .tsx
+    # reachable from either language so those files are still collected.
+    for ext in mapping.get("tsx", []):
+        if ext not in mapping.setdefault("typescript", []):
+            mapping["typescript"].append(ext)
+    return mapping
+
+
+LANGUAGE_EXTENSIONS = _build_language_extensions()
 
 
 def get_language_extensions(languages: list[str]) -> set[str]:

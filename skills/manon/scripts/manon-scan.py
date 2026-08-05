@@ -142,11 +142,15 @@ def _classify_uncertain_via_api(
     url = api_url.rstrip("/") + "/api/v1/classify-scripts"
 
     try:
+        # trust_env=False: the Manon API is plain HTTP, and a CONNECT-only
+        # proxy rejects it with 405. run_mcp.py clears the proxy vars for the
+        # same reason; this script runs standalone, so scope it to this call.
         resp = httpx.post(
             url,
             json=payload,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
+            trust_env=False,
         )
         resp.raise_for_status()
         return resp.json().get("results", {})

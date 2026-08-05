@@ -40,14 +40,15 @@ async def get_account(ctx: TenantContext = Depends(require_tenant)):
     )
     total_calls_30d = (await cur.fetchone())["cnt"]
 
+    # Subscription billing dropped per-tier rate limits and the daily
+    # deep-query cap, so report deep-query volume without a limit.
     return {
         "tenant_id": ctx.tenant_id,
         "tier": ctx.tier,
-        "rate_limit": ctx.rate_limit,
         "quotas": {
             "repos": {"used": repo_count, "limit": settings.quota_repos(ctx.tier)},
-            "deep_query_daily": {"used": deep_query_today, "limit": settings.quota_deep_query(ctx.tier)},
         },
+        "deep_query_today": deep_query_today,
         "usage_30d": total_calls_30d,
     }
 

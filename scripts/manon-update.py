@@ -4,8 +4,7 @@
 Usage:
     python <MANON_DIR>/scripts/manon-update.py
 
-Reads region from ~/.manon/region.json to determine git branch,
-executes git pull + pip install, writes result to
+Executes git pull + pip install, writes result to
 ~/.manon/update_status.json, prints JSON summary to stdout.
 """
 from __future__ import annotations
@@ -18,19 +17,11 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INSTALL_DIR = SCRIPT_DIR.parent
-REGION_CACHE = Path.home() / ".manon" / "region.json"
 UPDATE_STATUS_FILE = Path.home() / ".manon" / "update_status.json"
 
-
-def _read_region() -> str:
-    """Read cached region. Defaults to CN."""
-    try:
-        if REGION_CACHE.exists():
-            data = json.loads(REGION_CACHE.read_text(encoding="utf-8"))
-            return data.get("region", "CN")
-    except Exception:
-        pass
-    return "CN"
+# The repo has master and dev; there is no main. Region-based branch selection
+# sent anyone with a stale INTL region cache to `git pull origin main`.
+GIT_BRANCH = "master"
 
 
 def _write_status(ok: bool, message: str):
@@ -47,8 +38,7 @@ def _write_status(ok: bool, message: str):
 
 
 def main():
-    region = _read_region()
-    branch = "master" if region == "CN" else "main"
+    branch = GIT_BRANCH
     lines: list[str] = []
     ok = False
 

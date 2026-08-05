@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+from unittest.mock import patch
+
+from core.ast import parser_utils
 from core.ast.parser_utils import (
     _enrich_annotations,
     _enrich_python_decorators,
@@ -10,7 +13,57 @@ from core.ast.parser_utils import (
     _enrich_php_attributes,
     _enrich_java_annotations,
     _resolve_relative_callees,
+    ensure_parsers,
 )
+
+
+# ── ensure_parsers ───────────────────────────────────────────────────────────
+
+class TestEnsureParsers:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        parser_utils._LANG_CACHE.clear()
+        yield
+        parser_utils._LANG_CACHE.clear()
+
+    def test_detects_with_the_full_extension_set(self, tmp_path):
+        """Must use get_all_extensions(), not the specialized-only map — with
+        the narrow set, a Go project detects nothing and installs no grammar."""
+        with patch("codeindex.detector.quick_detect_languages",
+                   return_value={"go"}) as detect:
+            with patch("codeindex.parser_installer.install_parsers",
+                       return_value={"go": "installed"}) as install:
+                result = ensure_parsers(str(tmp_path))
+
+        assert result == {"go": "installed"}
+        extensions = detect.call_args[0][1]
+        assert ".go" in extensions and ".rs" in extensions  # generic languages
+        assert ".py" in extensions and ".ts" in extensions  # specialized too
+        install.assert_called_once()
+
+    def test_no_languages_skips_install(self, tmp_path):
+        with patch("codeindex.detector.quick_detect_languages", return_value=set()):
+            with patch("codeindex.parser_installer.install_parsers") as install:
+                assert ensure_parsers(str(tmp_path)) == {}
+        install.assert_not_called()
+
+    def test_second_call_uses_cache(self, tmp_path):
+        with patch("codeindex.detector.quick_detect_languages",
+                   return_value={"python"}) as detect:
+            with patch("codeindex.parser_installer.install_parsers",
+                       return_value={"python": "already_installed"}):
+                ensure_parsers(str(tmp_path))
+                ensure_parsers(str(tmp_path))
+        assert detect.call_count == 1
+
+    def test_use_cache_false_redetects(self, tmp_path):
+        with patch("codeindex.detector.quick_detect_languages",
+                   return_value={"python"}) as detect:
+            with patch("codeindex.parser_installer.install_parsers",
+                       return_value={"python": "already_installed"}):
+                ensure_parsers(str(tmp_path))
+                ensure_parsers(str(tmp_path), use_cache=False)
+        assert detect.call_count == 2
 
 
 # ── _resolve_relative_callees ────────────────────────────────────────────────

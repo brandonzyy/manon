@@ -8,7 +8,7 @@ from matrixone_graph.embed import EmbeddingClient
 class TestEmbeddingClientInit:
     def test_defaults(self):
         ec = EmbeddingClient()
-        assert ec.base_url == "http://localhost:8080"
+        assert ec.base_url == "https://open.bigmodel.cn/api/paas/v4"
         assert ec.batch_size == 32
         assert ec.timeout == 30.0
 

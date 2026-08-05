@@ -1,11 +1,9 @@
-"""Manon MCP — configuration, version detection, geo-routing."""
+"""Manon MCP — configuration and version detection."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
-import threading
 from pathlib import Path
 
 import httpx
@@ -39,116 +37,19 @@ def _get_client_version() -> str:
 
 CLIENT_VERSION = _get_client_version()
 
-# ── Geo-routing ──────────────────────────────────────
-# Default: official SaaS service. Override with MANON_API_URL env var.
-# For self-hosted deployment, set MANON_API_URL=http://localhost:3700
+# ── API endpoint ─────────────────────────────────────
+# Single service. Override with MANON_API_URL env var; for self-hosted
+# deployment set MANON_API_URL=http://localhost:3700.
+#
+# Geo-routing (CN vs INTL) was removed: no INTL deployment ever existed, so
+# detection could only mis-route. The INTL endpoint it pointed at is dead, and
+# a stale region cache silently sent clients there.
 API_URL_CN = os.environ.get("MANON_API_URL_CN", "http://saas.matrixone.online:3700")
-API_URL_INTL = os.environ.get("MANON_API_URL_INTL", "http://203.208.134.27:3700")
 API_KEY = os.environ.get("MANON_API_KEY", "")
-_explicit_url = os.environ.get("MANON_API_URL", "")
-_REGION_CACHE = Path.home() / ".manon" / "region.json"
 GIT_REMOTE = "https://github.com/brandonzyy/manon.git"
 GIT_BRANCH = "master"
 
-
-_CN_TZ_KEYWORDS = ("China", "Beijing", "Shanghai", "Asia/Shanghai",
-                   "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi", "CST-8", "UTC+8", "UTC+08")
-
-
-def _detect_cn_timezone() -> bool:
-    """Check if system timezone suggests CN region."""
-    import platform
-    import subprocess as _sp
-    sys_platform = platform.system()
-    if sys_platform == "Windows":
-        try:
-            tz = _sp.run(["powershell", "-c", "(Get-TimeZone).Id"],
-                         capture_output=True, text=True, stdin=_sp.DEVNULL, timeout=3).stdout.strip()
-            return any(k in tz for k in _CN_TZ_KEYWORDS)
-        except Exception:
-            return False
-    # macOS / Linux
-    tz = os.environ.get("TZ", "")
-    if not tz:
-        try:
-            tz = Path("/etc/timezone").read_text().strip()
-        except Exception:
-            pass
-    if not tz:
-        try:
-            link = os.readlink("/etc/localtime")
-            tz = link.split("zoneinfo/")[-1] if "zoneinfo/" in link else ""
-        except Exception:
-            pass
-    return any(k in tz for k in _CN_TZ_KEYWORDS)
-
-
-def _detect_region_via_ip() -> str | None:
-    """Try IP-based region detection. Returns 'CN', 'INTL', or None on failure."""
-    for endpoint, country_key in [("https://api.country.is/", "country"), ("https://ipinfo.io/json", "country")]:
-        try:
-            country = httpx.get(endpoint, timeout=3).json().get(country_key, "")
-            if country.upper() == "CN":
-                return "CN"
-            if country:
-                return "INTL"
-        except Exception as e:
-            log.debug("Region detect via %s failed: %s", endpoint, e)
-    return None
-
-
-def _detect_region() -> str:
-    """Detect user region. Returns 'CN' or 'INTL'."""
-    import locale
-    try:
-        loc = locale.getdefaultlocale()[0] or ""
-        if loc.startswith("zh_CN") or loc.startswith("zh_Hans"):
-            return "CN"
-    except Exception:
-        pass
-
-    if _detect_cn_timezone():
-        return "CN"
-
-    return _detect_region_via_ip() or "CN"
-
-
-def _get_cached_region() -> str:
-    """Read cached region, or default to CN and detect in background."""
-    try:
-        if _REGION_CACHE.exists():
-            data = json.loads(_REGION_CACHE.read_text(encoding="utf-8"))
-            return data.get("region", "CN")
-    except Exception:
-        pass
-    def _bg_detect():
-        try:
-            region = _detect_region()
-            _REGION_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            _REGION_CACHE.write_text(
-                json.dumps({"region": region}), encoding="utf-8",
-            )
-            log.info("Region detected and cached: %s", region)
-        except Exception:
-            pass
-    threading.Thread(target=_bg_detect, daemon=True).start()
-    return "CN"
-
-
-def _resolve_api_url() -> str:
-    if _explicit_url:
-        return _explicit_url
-    region = _get_cached_region()
-    if region == "CN":
-        url = API_URL_CN
-    else:
-        url = API_URL_INTL or API_URL_CN
-    log.info("Geo-routing: region=%s, api_url=%s", region, url)
-    return url
-
-
-REGION = _get_cached_region()
-API_URL = _resolve_api_url()
+API_URL = os.environ.get("MANON_API_URL", "") or API_URL_CN
 
 # ── Version check ────────────────────────────────────
 _version_checked = False
