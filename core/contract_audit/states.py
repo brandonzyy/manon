@@ -47,6 +47,19 @@ _MIN_VALUE_LEN = 3
 _NOISE_VALUES = frozenset({"yes", "no", "true", "false", "null", "none", "n/a"})
 
 
+def _is_state_like(value: str) -> bool:
+    """Reject values that are data rather than states.
+
+    ``state_columns`` matches on fragments, so ``type`` pulls in ``media_type``
+    and ``content_type`` — whose values are MIME types. A MIME type has no
+    writer and no reader in the state-machine sense, and pairing them produces
+    rows that are always noise.
+    """
+    if len(value) < _MIN_VALUE_LEN or value.lower() in _NOISE_VALUES:
+        return False
+    return "/" not in value and " " not in value
+
+
 def _table_at(text: str, position: int) -> str:
     """Nearest preceding CREATE/ALTER TABLE — the owner of this constraint."""
     head = text[:position]
@@ -69,7 +82,7 @@ def collect_domains(files: list[SourceFile], state_columns: tuple[str, ...]) -> 
         entry = domains.setdefault(
             key, {"values": set(), "defaults": set(), "where": f"{rel}:{line}"}
         )
-        entry["values"].update(v for v in values if len(v) >= _MIN_VALUE_LEN and v.lower() not in _NOISE_VALUES)
+        entry["values"].update(v for v in values if _is_state_like(v))
         if default:
             entry["defaults"].add(default)
 
@@ -143,11 +156,21 @@ def audit_states(files: list[SourceFile], policy: Policy) -> TableResult:
             reason = policy.exemption_for("states", finding_id)
             uses = index.get(value, [])
             if not uses:
-                table.findings.append(Finding(
-                    table="states", id=finding_id, verdict=DEAD,
-                    summary="死状态值：schema 允许，代码零引用",
-                    where=entry["where"], evidence={}, exempt_reason=reason,
-                ))
+                # A column DEFAULT has a writer — the database. Zero code
+                # references then means nothing *reads* it, which is a different
+                # defect from nothing producing it, and a different fix.
+                if value in entry["defaults"]:
+                    table.findings.append(Finding(
+                        table="states", id=finding_id, verdict=SUSPECT,
+                        summary="只写不读：DB 默认值写入，代码无任何读取分支",
+                        where=entry["where"], evidence={}, exempt_reason=reason,
+                    ))
+                else:
+                    table.findings.append(Finding(
+                        table="states", id=finding_id, verdict=DEAD,
+                        summary="死状态值：schema 允许，代码零引用",
+                        where=entry["where"], evidence={}, exempt_reason=reason,
+                    ))
                 continue
 
             production = [

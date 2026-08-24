@@ -63,16 +63,23 @@ def _collect_env_declarations(files: list[SourceFile]) -> dict[str, str]:
     return declared
 
 
-def _collect_constants(files: list[SourceFile]) -> dict[str, tuple[str, int]]:
-    """CONSTANT defined in a config module -> (file, line)."""
-    constants: dict[str, tuple[str, int]] = {}
+def _collect_constants(files: list[SourceFile]) -> dict[str, tuple[str, int, bool]]:
+    """CONSTANT defined in a config module -> (file, line, used_in_its_own_file).
+
+    A module-private constant is alive when its own module uses it — a logger
+    the config module logs through, a default the same file substitutes in.
+    Only counting references from *other* files calls all of those dead.
+    """
+    constants: dict[str, tuple[str, int, bool]] = {}
     for source in files:
         if source.is_test or not _CONFIG_MODULE.search(source.rel):
             continue
         pattern = _PY_CONST if source.rel.endswith(".py") else _TS_CONST
         for match in pattern.finditer(source.text):
+            name = match.group(1)
             line_no = source.text.count("\n", 0, match.start()) + 1
-            constants.setdefault(match.group(1), (source.rel, line_no))
+            uses = len(re.findall(rf"""\b{re.escape(name)}\b""", source.text))
+            constants.setdefault(name, (source.rel, line_no, uses > 1))
     return constants
 
 
@@ -150,11 +157,11 @@ def audit_configs(files: list[SourceFile], policy: Policy) -> TableResult:
         )
 
     for name in sorted(constants):
-        rel, line = constants[name]
+        rel, line, self_used = constants[name]
         readers = {other for other in index.get(name, set()) if other != rel}
         finding_id = f"const:{rel}:{name}"
         reason = policy.exemption_for("configs", finding_id)
-        if readers:
+        if readers or self_used:
             table.ok += 1
             continue
         table.findings.append(

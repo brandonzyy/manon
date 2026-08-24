@@ -205,13 +205,20 @@ def collect_routes(files: list[SourceFile]) -> list[RouteDef]:
 
 
 def _definition_spans(source: SourceFile) -> set[int]:
-    """Line numbers holding a route registration, so they don't count as calls."""
+    """Every line a route registration covers, so it cannot count as its own call.
+
+    All the lines, not just the first: a decorator split across lines would
+    otherwise leave its path on line two looking like a caller, and every
+    multi-line route would keep itself alive.
+    """
     spans: set[int] = set()
     for pattern in _DEFINITION_RE:
         for match in pattern.finditer(source.text):
             if pattern is _JS_ROUTE and match.group("var").lower() not in _JS_ROUTER_VARS:
                 continue
-            spans.add(source.text.count("\n", 0, match.start()) + 1)
+            first = source.text.count("\n", 0, match.start()) + 1
+            last = source.text.count("\n", 0, match.end()) + 1
+            spans.update(range(first, last + 1))
     return spans
 
 
@@ -256,8 +263,6 @@ def _match_map(
         if not route_lits:
             continue
         for caller_lits, source in site_lits:
-            if source.rel == route.rel:
-                continue
             if _matches(route_lits, caller_lits):
                 kind = "test" if source.is_test else source.kind
                 matches[key].add((kind, source.rel))

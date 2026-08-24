@@ -283,3 +283,65 @@ class TestPolicyDefaults:
 @pytest.mark.parametrize("table", ["endpoints", "configs", "states", "envelope"])
 def test_empty_tree_produces_no_findings(tmp_path, table):
     assert audit_project(str(tmp_path), tables=(table,))["findings"] == []
+
+
+class TestSelfUse:
+    def test_constant_used_only_inside_its_own_module_is_alive(self, tmp_path):
+        _write(tmp_path, "config.py",
+               'LOGGER = get_logger("x")\nDEAD = 1\n\ndef setup():\n    LOGGER.info("hi")\n')
+        found = _findings(tmp_path, "configs")
+        assert "const:config.py:LOGGER" not in found
+        assert found["const:config.py:DEAD"]["verdict"] == "dead"
+
+    def test_exported_constant_nothing_uses_is_still_dead(self, tmp_path):
+        _write(tmp_path, "config.ts",
+               "export const ENV_VARS = ['A', 'B']\n"
+               "export const TIMEOUT_MS = 120\n"
+               "export function build() { return { t: TIMEOUT_MS } }\n")
+        found = _findings(tmp_path, "configs")
+        assert found["const:config.ts:ENV_VARS"]["verdict"] == "dead"
+        assert "const:config.ts:TIMEOUT_MS" not in found
+
+    def test_mime_types_are_not_state_values(self, tmp_path):
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE files (\n"
+               "  media_type text NOT NULL DEFAULT 'application/octet-stream',\n"
+               "  status text CHECK (status IN ('ready', 'archived'))\n);\n")
+        _write(tmp_path, "app.py", "def ok(f):\n    return f['status'] == 'ready'\n")
+        found = _findings(tmp_path, "states")
+        assert not [k for k in found if "media_type" in k]
+        assert found["state:files.status='archived'"]["verdict"] == "dead"
+
+    def test_unreferenced_default_is_write_only_not_dead(self, tmp_path):
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE entries (\n"
+               "  status text NOT NULL DEFAULT 'posted' CHECK (status IN ('draft','posted'))\n);\n")
+        _write(tmp_path, "app.py", "def draft(e):\n    return e['status'] == 'draft'\n")
+        found = _findings(tmp_path, "states")
+        assert found["state:entries.status='posted'"]["verdict"] == "suspect"
+        assert "只写不读" in found["state:entries.status='posted'"]["summary"]
+
+
+class TestSameFileCaller:
+    def test_route_called_from_its_own_module_is_alive(self, tmp_path):
+        """A sibling handler that hands the URL to the client is a real caller."""
+        _write(tmp_path, "sharing.py",
+               'router = APIRouter(prefix="/api/v1/employee")\n'
+               '@router.post("/artifact-links")\n'
+               'def mint(token):\n'
+               '    return {"url": f"/api/v1/employee/artifact-links/{token}"}\n'
+               '@router.get("/artifact-links/{raw_token}")\n'
+               'def consume(raw_token): ...\n')
+        found = _findings(tmp_path, "endpoints")
+        assert "GET /api/v1/employee/artifact-links/{raw_token}" not in found
+
+    def test_a_routes_own_registration_never_counts_as_its_caller(self, tmp_path):
+        _write(tmp_path, "api.py",
+               'router = APIRouter(prefix="/admin")\n'
+               '@router.post(\n'
+               '    "/pilot-access",\n'
+               '    status_code=201,\n'
+               ')\n'
+               'def grant(): ...\n')
+        found = _findings(tmp_path, "endpoints")
+        assert found["POST /admin/pilot-access"]["verdict"] == "dead"
