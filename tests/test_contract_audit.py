@@ -345,3 +345,21 @@ class TestSameFileCaller:
                'def grant(): ...\n')
         found = _findings(tmp_path, "endpoints")
         assert found["POST /admin/pilot-access"]["verdict"] == "dead"
+
+
+class TestPolicyIsNotEvidence:
+    def test_policy_file_does_not_keep_surfaces_alive(self, tmp_path):
+        """The exemption list names every id it exempts — and every id it doesn't."""
+        _write(tmp_path, ".env.example", "DEAD_KNOB=1\n")
+        _write(tmp_path, "api.py", 'router = APIRouter(prefix="/admin")\n'
+                                   '@router.post("/pilot-access")\n'
+                                   'def grant(): ...\n')
+        _write(tmp_path, ".manon-contract.yaml",
+               "# triage checklist, nothing active yet\n"
+               "# - id: 'env:DEAD_KNOB'\n"
+               "# - id: 'POST /admin/pilot-access'\n"
+               "exempt:\n  configs: []\n")
+        result = audit_project(str(tmp_path), tables=("configs", "endpoints"))
+        ids = {f["id"] for f in result["findings"]}
+        assert "env:DEAD_KNOB" in ids
+        assert "POST /admin/pilot-access" in ids

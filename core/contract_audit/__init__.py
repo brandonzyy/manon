@@ -30,7 +30,7 @@ from .endpoints import audit_endpoints
 from .envelope import audit_envelope
 from .files import enumerate_files, project_excludes
 from .model import DEAD, SUSPECT, Finding, TableResult
-from .policy import Policy, load_policy
+from .policy import POLICY_FILENAMES, Policy, load_policy
 from .states import audit_states
 
 TABLES = ("endpoints", "configs", "states", "envelope")
@@ -48,7 +48,13 @@ def audit_project(local_path: str, tables: tuple[str, ...] = TABLES) -> dict:
     root = Path(local_path).resolve()
     started = time.monotonic()
     policy = load_policy(root)
-    files = enumerate_files(root, project_excludes(str(root)))
+    files = [
+        source for source in enumerate_files(root, project_excludes(str(root)))
+        if source.rel not in POLICY_FILENAMES
+    ]
+    # The policy file names every finding it exempts. Left in the corpus it
+    # reads as a consumer of every surface it mentions, and the whole table
+    # silently goes to zero the moment someone writes one.
 
     results: list[TableResult] = []
     for name in tables:
