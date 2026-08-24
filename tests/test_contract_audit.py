@@ -502,3 +502,71 @@ class TestSettingsPrefix:
                "class Settings(BaseSettings):\n    outbox_worker_enabled: bool = True\n")
         found = _findings(tmp_path, "configs")
         assert found["env:CASEOS_OUTBOX_WORKER_ENABLED"]["verdict"] == "dead"
+
+
+class TestAddColumnDefault:
+    def test_add_column_default_is_bound_to_the_column(self, tmp_path):
+        """Unanchored, `ADD COLUMN x ... DEFAULT 'v'` binds the default to "ADD"."""
+        _write(tmp_path, "migrations/035_artifacts.sql",
+               "ALTER TABLE artifacts\n"
+               "    ADD COLUMN source_type text NOT NULL DEFAULT 'legacy'\n"
+               "        CHECK (source_type IN ('legacy', 'web_upload'));\n")
+        found = _findings(tmp_path, "states")
+        assert found["state:artifacts.source_type='legacy'"]["verdict"] == "suspect"
+        assert found["state:artifacts.source_type='web_upload'"]["verdict"] == "dead"
+
+
+class TestConstraintRedefinition:
+    """`DROP CONSTRAINT, ADD CONSTRAINT` replaces the domain — it does not add to it."""
+
+    def test_a_narrowing_migration_removes_the_old_value(self, tmp_path):
+        _write(tmp_path, "migrations/020_beats.sql",
+               "CREATE TABLE beats (\n"
+               "  status text CHECK (status IN ('ready', 'degraded', 'stopped'))\n);\n")
+        _write(tmp_path, "migrations/101_narrow.sql",
+               "ALTER TABLE beats\n"
+               "    DROP CONSTRAINT IF EXISTS beats_status_check,\n"
+               "    ADD CONSTRAINT beats_status_check CHECK (status IN ('ready', 'error'));\n")
+        _write(tmp_path, "app.py",
+               "async def beat(c):\n"
+               "    await c.execute(\"INSERT INTO beats(status) VALUES ('error')\")\n"
+               "    await c.execute(\"INSERT INTO beats(status) VALUES ('ready')\")\n")
+        found = _findings(tmp_path, "states")
+        assert "state:beats.status='stopped'" not in found
+        assert not [k for k in found if k.startswith("write:")]
+
+    def test_a_redefinition_still_flags_a_value_nothing_uses(self, tmp_path):
+        _write(tmp_path, "migrations/020_beats.sql",
+               "CREATE TABLE beats (\n  status text CHECK (status IN ('ready'))\n);\n")
+        _write(tmp_path, "migrations/101_narrow.sql",
+               "ALTER TABLE beats\n"
+               "    DROP CONSTRAINT IF EXISTS beats_status_check,\n"
+               "    ADD CONSTRAINT beats_status_check CHECK (status IN ('ready', 'halted'));\n")
+        found = _findings(tmp_path, "states")
+        assert found["state:beats.status='halted'"]["verdict"] == "dead"
+
+
+class TestScopePredicateIsNotADeclaration:
+    def test_a_scope_check_branch_does_not_shrink_the_vocabulary(self, tmp_path):
+        """One ALTER, two CHECKs: the domain, and a rule that mentions two of its values."""
+        _write(tmp_path, "migrations/052_kinds.sql",
+               "ALTER TABLE conversations\n"
+               "    ADD CONSTRAINT conversations_kind_check\n"
+               "        CHECK (kind IN ('main', 'chat', 'case'));\n")
+        _write(tmp_path, "migrations/076_widen.sql",
+               "ALTER TABLE conversations\n"
+               "    DROP CONSTRAINT IF EXISTS conversations_kind_check,\n"
+               "    DROP CONSTRAINT IF EXISTS conversations_scope_check,\n"
+               "    ADD CONSTRAINT conversations_kind_check\n"
+               "        CHECK (kind IN ('main', 'chat', 'case', 'task')),\n"
+               "    ADD CONSTRAINT conversations_scope_check\n"
+               "        CHECK (\n"
+               "            (kind = 'task' AND case_id IS NOT NULL)\n"
+               "            OR (kind IN ('main', 'chat') AND case_id IS NULL)\n"
+               "        );\n")
+        _write(tmp_path, "app.py",
+               "async def open_task(c):\n"
+               "    await c.execute(\"INSERT INTO conversations(kind) VALUES ('task')\")\n"
+               "    await c.execute(\"INSERT INTO conversations(kind) VALUES ('case')\")\n")
+        found = _findings(tmp_path, "states")
+        assert not [k for k in found if k.startswith("write:")]
