@@ -1,0 +1,43 @@
+# .manon-contract.yaml — 契约对账的本地判据
+#
+# 复制到仓库根目录并改名为 .manon-contract.yaml。
+#
+# 对账表算的是「事实」：谁定义、谁消费。某个死面是不是**可以接受**，是本仓的决定，
+# 只有你知道。这个文件就是记录那些决定的地方。
+#
+# 没有这个文件，每轮对账都会重报同样一批已知且刻意保留的条目；重报几次之后
+# 这张表就没人看了，而没人看的门禁等于没有门禁。
+
+exempt:
+  # 端点：id 是 "METHOD 完整路径"，与报告里显示的一字不差
+  endpoints:
+    - id: "GET /admin/orgs/{org_id}/pilot-access"
+      reason: "试点白名单运维 API，只走 curl；服务层有回归测试"
+
+  # 配置：环境变量用 env:KEY，配置模块常量用 const:<文件>:<常量名>
+  configs:
+    - id: "env:PYTHONUNBUFFERED"
+      reason: "Python 运行时自己读，不经过应用代码"
+    - id: "env:POSTGRES_PASSWORD"
+      reason: "postgres 容器读，应用侧走 DATABASE_URL"
+
+  # 状态值：id 是 state:<表>.<列>='<值>'
+  states:
+    - id: "state:tickets.status='closed'"
+      reason: "墓碑值，仅历史数据持有；客户工单事实终态是 resolved"
+
+  # 守卫包络：id 是 envelope:<文件>:<处理器名>
+  envelope:
+    - id: "envelope:backend/routers/health.py:liveness"
+      reason: "存活探针，被负载均衡器无凭证调用"
+
+# 可选：覆盖判定口径。不写就用内置默认值。
+envelope:
+  # 什么算「门」——装饰器名、依赖名的片段，大小写不敏感
+  gate_patterns: [auth, admin, require, permission, guard, verify, current_user]
+  # 什么算「敏感汇点」——按方法名的完整单词匹配，不是子串
+  # 列得越宽这张表越吵，吵到一定程度就没人看了
+  sink_patterns: [delete, drop, pay, transfer, refund, grant, revoke, impersonate]
+
+# 可选：哪些列名算状态机。其它列的值是数据不是状态，配对它们的读写没有意义。
+state_columns: [status, state, stage, phase, outcome, kind, type, mode]
