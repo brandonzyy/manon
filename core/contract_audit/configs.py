@@ -83,6 +83,33 @@ def _collect_constants(files: list[SourceFile]) -> dict[str, tuple[str, int, boo
     return constants
 
 
+_ENV_PREFIX = re.compile(r"""env_prefix\s*[=:]\s*['"]([A-Za-z][A-Za-z0-9_]*)['"]""")
+_SETTINGS_FIELD = re.compile(r"""^[ \t]{2,8}([a-z][a-z0-9_]*)\s*:\s*[^=\n]""", re.M)
+
+
+def _prefixed_settings_keys(files: list[SourceFile]) -> dict[str, str]:
+    """``PREFIX`` + field name (upper-cased) -> the module declaring the field.
+
+    A settings library binds ``CASEOS_OUTBOX_WORKER_ENABLED`` to the field
+    ``outbox_worker_enabled`` at runtime, from a prefix declared once. The env
+    name itself appears nowhere in the source, so a text search finds no reader
+    and calls a knob that controls a background worker a decoy — the worst kind
+    of wrong answer this table can give, because acting on it deletes the knob.
+    """
+    keys: dict[str, str] = {}
+    for source in files:
+        if not source.rel.endswith(".py") or source.is_test:
+            continue
+        prefixes = _ENV_PREFIX.findall(source.text)
+        if not prefixes:
+            continue
+        fields = {match.group(1) for match in _SETTINGS_FIELD.finditer(source.text)}
+        for prefix in prefixes:
+            for field in fields:
+                keys.setdefault((prefix + field).upper(), source.rel)
+    return keys
+
+
 _INTERPOLATION = re.compile(r"""\$\{?([A-Z][A-Z0-9_]{2,})\}?""")
 
 
@@ -115,6 +142,7 @@ def audit_configs(files: list[SourceFile], policy: Policy) -> TableResult:
     table = TableResult(name="configs", title="配置表：声明 ↔ 谁在读")
     declared = _collect_env_declarations(files)
     constants = _collect_constants(files)
+    settings_keys = _prefixed_settings_keys(files)
     index = _reader_index(files)
     interpolated = _interpolated_in(files)
     kind_by_rel = {source.rel: ("test" if source.is_test else source.kind) for source in files}
@@ -125,6 +153,9 @@ def audit_configs(files: list[SourceFile], policy: Policy) -> TableResult:
 
     for key in sorted(declared):
         where = declared[key]
+        if key in settings_keys:
+            table.ok += 1  # bound by env_prefix to a settings field
+            continue
         interp = interpolated.get(key, set())
         if where in interp:
             table.ok += 1  # declared and consumed in the same file

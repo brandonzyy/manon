@@ -363,3 +363,142 @@ class TestPolicyIsNotEvidence:
         ids = {f["id"] for f in result["findings"]}
         assert "env:DEAD_KNOB" in ids
         assert "POST /admin/pilot-access" in ids
+
+
+# ── schema lifecycle ─────────────────────────────────────────────────────────
+
+class TestSchemaLifecycle:
+    """A schema is a sequence of migrations, not a snapshot of the first one."""
+
+    def test_values_of_a_dropped_table_are_not_reported(self, tmp_path):
+        _write(tmp_path, "migrations/003_ai.sql",
+               "CREATE TABLE tool_action_requests (\n"
+               "  status text CHECK (status IN ('pending', 'executed'))\n);\n")
+        _write(tmp_path, "migrations/058_retire.sql",
+               "DROP TABLE IF EXISTS tool_action_requests;\n")
+        assert _findings(tmp_path, "states") == {}
+
+    def test_a_table_recreated_after_the_drop_is_live_again(self, tmp_path):
+        _write(tmp_path, "migrations/003_ai.sql",
+               "CREATE TABLE jobs (\n  status text CHECK (status IN ('queued'))\n);\n")
+        _write(tmp_path, "migrations/058_retire.sql", "DROP TABLE IF EXISTS jobs;\n")
+        _write(tmp_path, "migrations/070_revive.sql",
+               "CREATE TABLE jobs (\n  status text CHECK (status IN ('queued'))\n);\n")
+        found = _findings(tmp_path, "states")
+        assert found["state:jobs.status='queued'"]["verdict"] == "dead"
+
+    def test_values_of_a_dropped_column_are_not_reported(self, tmp_path):
+        _write(tmp_path, "migrations/003_prefs.sql",
+               "CREATE TABLE prefs (\n  status text CHECK (status IN ('on', 'muted'))\n);\n")
+        _write(tmp_path, "migrations/058_retire.sql",
+               "ALTER TABLE prefs\n    DROP COLUMN IF EXISTS status;\n")
+        assert _findings(tmp_path, "states") == {}
+
+    def test_a_widening_migration_keeps_the_value_alive(self, tmp_path):
+        _write(tmp_path, "migrations/003_req.sql",
+               "CREATE TABLE requests (\n  status text CHECK (status IN ('new'))\n);\n")
+        _write(tmp_path, "migrations/058_widen.sql",
+               "ALTER TABLE requests\n"
+               "    ADD CONSTRAINT requests_status_check CHECK (status IN ('new', 'held'));\n")
+        _write(tmp_path, "app.py", "def hold(r):\n    r['status'] = 'held'\n")
+        found = _findings(tmp_path, "states")
+        assert "state:requests.status='held'" not in found
+
+
+class TestSeedDataIsAWriter:
+    def test_a_value_written_only_by_seed_sql_is_not_dead(self, tmp_path):
+        """Schema lines declare; every other SQL line is a real reader or writer."""
+        _write(tmp_path, "migrations/001_meetings.sql",
+               "CREATE TABLE meetings (\n"
+               "  preparation_status text CHECK (preparation_status IN ('ready', 'needs_input'))\n);\n")
+        _write(tmp_path, "scripts/seed_demo.sql",
+               "INSERT INTO meetings(preparation_status) VALUES ('needs_input');\n")
+        found = _findings(tmp_path, "states")
+        assert "state:meetings.preparation_status='needs_input'" not in found
+
+    def test_the_declaration_itself_is_still_not_a_use(self, tmp_path):
+        _write(tmp_path, "migrations/001_meetings.sql",
+               "CREATE TABLE meetings (\n"
+               "  preparation_status text CHECK (preparation_status IN ('ready', 'needs_input'))\n);\n")
+        found = _findings(tmp_path, "states")
+        assert found["state:meetings.preparation_status='needs_input'"]["verdict"] == "dead"
+
+
+class TestWriteViolatesCheck:
+    """The one verdict here that is a certainty: this statement cannot succeed."""
+
+    def test_literal_outside_the_check_set_is_reported(self, tmp_path):
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE service_heartbeats (\n"
+               "  status text NOT NULL CHECK (status IN ('ready', 'degraded', 'stopped'))\n);\n")
+        _write(tmp_path, "worker.py",
+               "async def beat(c):\n"
+               "    await c.execute('''\n"
+               "        INSERT INTO service_heartbeats(service_name, status)\n"
+               "        VALUES ($1, 'error')\n"
+               "    ''', name)\n")
+        found = _findings(tmp_path, "states")
+        finding = found["write:service_heartbeats.status='error'"]
+        assert finding["verdict"] == "dead"
+        assert finding["where"].startswith("worker.py:")
+
+    def test_a_declared_value_is_not_reported(self, tmp_path):
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE service_heartbeats (\n"
+               "  status text NOT NULL CHECK (status IN ('ready', 'degraded'))\n);\n")
+        _write(tmp_path, "worker.py",
+               "async def beat(c):\n"
+               "    await c.execute('''\n"
+               "        INSERT INTO service_heartbeats(service_name, status)\n"
+               "        VALUES ($1, 'ready')\n"
+               "    ''', name)\n")
+        assert not [k for k in _findings(tmp_path, "states") if k.startswith("write:")]
+
+    def test_a_later_update_is_not_attributed_to_an_earlier_table(self, tmp_path):
+        """A statement inside a host string has no `;`. Unbounded, it swallows the file."""
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE links (\n  status text CHECK (status IN ('active'))\n);\n"
+               "CREATE TABLE contracts (\n  status text CHECK (status IN ('active','satisfied'))\n);\n")
+        _write(tmp_path, "app.py",
+               "async def advance(c):\n"
+               "    await c.execute('''UPDATE links SET status=$1 WHERE id=$2''', s, i)\n"
+               "    await c.execute('''UPDATE contracts SET status='satisfied' WHERE id=$1''', i)\n")
+        assert not [k for k in _findings(tmp_path, "states") if k.startswith("write:")]
+
+    def test_a_column_with_only_a_default_is_not_a_closed_set(self, tmp_path):
+        """No CHECK means no allowed set, so no write can be proven wrong."""
+        _write(tmp_path, "schema.sql",
+               "CREATE TABLE jobs (\n  status text NOT NULL DEFAULT 'pending'\n);\n")
+        _write(tmp_path, "app.py",
+               "async def go(c):\n"
+               "    await c.execute(\"INSERT INTO jobs(status) VALUES ('anything')\")\n")
+        assert not [k for k in _findings(tmp_path, "states") if k.startswith("write:")]
+
+
+class TestSettingsPrefix:
+    """`env_prefix` binds an env name that appears nowhere in the source."""
+
+    def test_prefixed_env_key_bound_to_a_field_is_alive(self, tmp_path):
+        _write(tmp_path, ".env.example", "CASEOS_OUTBOX_WORKER_ENABLED=true\n")
+        _write(tmp_path, "config.py",
+               "class Settings(BaseSettings):\n"
+               '    model_config = SettingsConfigDict(env_prefix="CASEOS_")\n'
+               "    outbox_worker_enabled: bool = True\n")
+        assert "env:CASEOS_OUTBOX_WORKER_ENABLED" not in _findings(tmp_path, "configs")
+
+    def test_prefixed_key_with_no_matching_field_is_still_dead(self, tmp_path):
+        """`CASEOS_PUBLIC_URL` next to a field named `public_app_url` is a decoy."""
+        _write(tmp_path, ".env.example", "CASEOS_PUBLIC_URL=http://localhost\n")
+        _write(tmp_path, "config.py",
+               "class Settings(BaseSettings):\n"
+               '    model_config = SettingsConfigDict(env_prefix="CASEOS_")\n'
+               "    public_app_url: str = ''\n")
+        found = _findings(tmp_path, "configs")
+        assert found["env:CASEOS_PUBLIC_URL"]["verdict"] == "dead"
+
+    def test_the_prefix_must_be_declared_to_apply(self, tmp_path):
+        _write(tmp_path, ".env.example", "CASEOS_OUTBOX_WORKER_ENABLED=true\n")
+        _write(tmp_path, "config.py",
+               "class Settings(BaseSettings):\n    outbox_worker_enabled: bool = True\n")
+        found = _findings(tmp_path, "configs")
+        assert found["env:CASEOS_OUTBOX_WORKER_ENABLED"]["verdict"] == "dead"
