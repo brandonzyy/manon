@@ -50,16 +50,16 @@ Manon provides two layers:
 Indexes every function, class, call relationship, import chain, and module boundary. Vector + graph hybrid search. When the model needs context, it gets precisely the relevant code — not too much, not too little.
 
 **Layer 2 — Development Skills** (the workflow)
-Five skills that cover the full development lifecycle — requirements, code quality, testing, and validation. Each skill is backed by the graph, ensuring decisions are grounded in code facts, not LLM imagination.
+Six skills that cover the full development lifecycle — requirements, code quality, testing, auditing, and validation. Each skill is backed by the graph, ensuring decisions are grounded in code facts, not LLM imagination.
 
 ```
-  /idea        write code       /dao          /tc           /exp
-  ┌─────┐      ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐
-  │Refine│ ──▶ │Build│  ──▶  │Clean│  ──▶  │Test │  ──▶  │Verify│
-  │ Req  │     │     │       │     │       │     │       │ E2E  │
-  └──┬──┘      └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘
-     │            │              │              │              │
-     └──────────  all grounded in knowledge graph  ───────────┘
+  /idea        write code       /dao          /tc         /audit          /exp
+  ┌─────┐      ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐
+  │Refine│ ──▶ │Build│  ──▶  │Clean│  ──▶  │Test │  ──▶  │Audit│  ──▶  │Verify│
+  │ Req  │     │     │       │     │       │     │       │Behav│       │ E2E  │
+  └──┬──┘      └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘
+     │            │              │              │              │              │
+     └──────────  all grounded in knowledge graph  ──────────────────────────┘
 ```
 
 ---
@@ -129,6 +129,7 @@ Skills exist only when they provide capabilities that pure LLM conversation cann
 | **Development** | Claude + graph | Write code with `manon_search` / `manon_graph` | Hooks enforce graph-first; `manon_impact` after every commit |
 | **Maintenance** | `/dao` | Health scan → 3-layer classification → auto-simplify | Batch Architecture/Module/Code analysis with graph validation |
 | **Testing** | `/tc` | Coverage scan → graph-prioritize → write tests → verify | Ranks by structural importance, not random |
+| **Audit** | `/audit` | Contract tables scope it → semantic audit by defect taxonomy | Finds what survives a green test suite and a high health score |
 | **Validation** | `/exp` | AI agent operates the product like a real user | Playwright/Bash to click, type, read logs — not imagination |
 
 ### `/idea` — Requirement Refinement
@@ -154,6 +155,31 @@ Scans coverage data, queries the graph for entity importance (fan-in, complexity
 ```
 /tc     — coverage scan → graph-prioritize → write tests → verify → commit
 ```
+
+### `/audit` — Behaviour-Layer Audit
+
+A health score answers "is the shape right"; tests answer "does the happy path work". Both can be green while a class of defects lives on — all of it on **negative paths**.
+
+`/audit` runs four deterministic contract tables first (no model, sub-second, CI-ready) to narrow the surface, then audits only the suspect areas against five defect taxonomies.
+
+```
+/audit  — contract tables scope it → parallel taxonomy audit → negative test as the done-criterion → ratchet
+```
+
+| Table | What it reconciles |
+|---|---|
+| endpoints | routes the backend declares ↔ URLs anything calls (the cross-language edge carried by strings) |
+| configs | knobs declared ↔ knobs actually read (decoy knobs, keys only forwarded downstream) |
+| states | state values a schema allows ↔ values code writes and reads (dead states, phantom states) |
+| envelope | routed entry points → sensitive sinks, with no gate in between |
+
+The tables also run standalone, for CI and git hooks:
+
+```bash
+python scripts/manon-contract-audit.py <project_path> --fail-on new --baseline <repo_id>
+```
+
+`--fail-on new` fails only on surfaces that were not already there, so turning it on does not block every push on day one.
 
 ### `/exp` — Experience Validation
 

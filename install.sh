@@ -168,6 +168,12 @@ PYEOF
     cp "$SCRIPT_DIR/skills/idea/SKILL.md" "$idea_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/idea/scripts/"*.py "$idea_skill_dir/scripts/"
     info "Claude Code /idea Skill installed (idea refinement with Manon)"
+
+    # Install audit skill (行为层体检)
+    local audit_skill_dir="$HOME/.claude/skills/audit"
+    mkdir -p "$audit_skill_dir"
+    cp "$SCRIPT_DIR/skills/audit/SKILL.md" "$audit_skill_dir/SKILL.md"
+    info "Claude Code /audit Skill installed (behaviour-layer audit with contract tables)"
 }
 
 # --- Cursor ---

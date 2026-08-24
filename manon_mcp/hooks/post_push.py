@@ -203,6 +203,40 @@ def _fetch_health_score(repo_id, api_url, headers) -> str | None:
         return None
 
 
+def _contract_delta(repo_id: str, project_path: str) -> str:
+    """Print only what the push added.
+
+    A gate that reprints every known dead surface on every push is a gate people
+    learn to scroll past, so the baseline is what makes this usable: the first
+    run records the existing debt silently, and later runs speak only when the
+    push made it worse.
+    """
+    try:
+        from core.contract_audit import audit_project
+        from core.contract_audit.report import (
+            diff_baseline,
+            load_baseline,
+            render_delta,
+            save_baseline,
+        )
+
+        result = audit_project(project_path)
+        baseline = load_baseline(repo_id)
+        message = render_delta(result, baseline)
+        new_findings, fixed = diff_baseline(result, baseline) if baseline else ([], [])
+        save_baseline(repo_id, result)
+        if message:
+            print(message)
+        if new_findings:
+            return f"契约对账: 本次新增 {len(new_findings)} 个死面/待确认"
+        if fixed:
+            return f"契约对账: {len(fixed)} 个旧死面已消失"
+        return ""
+    except Exception as exc:
+        print(f"[manon] 契约对账跳过: {exc}")
+        return ""
+
+
 def main():
     for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         os.environ.pop(_k, None)
@@ -243,6 +277,10 @@ def main():
     health_msg = _fetch_health_score(repo_id, api_url, headers)
     if health_msg:
         summary_parts.append(health_msg)
+
+    contract_msg = _contract_delta(repo_id, project_path)
+    if contract_msg:
+        summary_parts.append(contract_msg)
 
     _write_status(sync_ok, " | ".join(summary_parts))
 
