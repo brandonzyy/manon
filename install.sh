@@ -174,6 +174,16 @@ PYEOF
     mkdir -p "$audit_skill_dir"
     cp "$SCRIPT_DIR/skills/audit/SKILL.md" "$audit_skill_dir/SKILL.md"
     info "Claude Code /audit Skill installed (behaviour-layer audit with contract tables)"
+
+    # Install assurance skill (工程保障体系体检与补齐 —— 体系的入口，按读数分诊到 /audit /dao /retire)
+    # 注意：这个 skill 有 references/ 与 scripts/，两者都必须装。
+    # 只装 SKILL.md 会留下一个链向不存在文件的入口，而且**没有任何报错**。
+    local assurance_skill_dir="$HOME/.claude/skills/assurance"
+    mkdir -p "$assurance_skill_dir/references" "$assurance_skill_dir/scripts"
+    cp "$SCRIPT_DIR/skills/assurance/SKILL.md" "$assurance_skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/assurance/references/"*.md "$assurance_skill_dir/references/"
+    cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_skill_dir/scripts/"
+    info "Claude Code /assurance Skill installed (four-layer assurance stack: audit, gap-fill, coverage loop)"
 }
 
 # --- Cursor ---
