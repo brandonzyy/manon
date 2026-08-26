@@ -47,6 +47,32 @@ _NEST_CONTROLLER = re.compile(r"""@Controller\(\s*['"`]([^'"`]*)['"`]""")
 # route alive.
 _JS_ROUTER_VARS = frozenset({"app", "router", "server", "fastify", "api", "r"})
 
+# The name alone cannot separate the two: `api.get('/x')` is a registration in
+# Express and a call in axios. The *binding* can, so a var bound to an HTTP
+# client is struck off the router list — repo-wide, because the instance is
+# created in one helper module and imported by every caller. Getting this wrong
+# is the destructive direction: the call sites become "definitions", the route
+# loses every consumer, and a live endpoint is reported as dead.
+_CLIENT_BINDING = re.compile(
+    r"""\b(?P<var>\w+)\s*=\s*(?:await\s+)?"""
+    r"""(?:axios|ky|got|superagent|wretch|ofetch|\$fetch|request|apisauce)\b"""
+    r"""(?:\.\w+)?\s*[\(<]""",
+    re.I,
+)
+
+# Gin / Echo / Chi register with an upper-case method name; Go's own
+# `http.Client` uses mixed-case `Get`/`Post`. That casing is the only reliable
+# regex-level separator between a registration and a call in Go, so it is the
+# rule. Without this branch a Go backend contributes zero routes and the table
+# silently reports on whatever else happens to look like a router.
+_GO_ROUTE = re.compile(
+    r'\b(?P<var>\w+)\.(?P<method>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any)\('
+    r'\s*"(?P<path>/[^"]*)"'
+)
+_GO_GROUP = re.compile(
+    r'\b(?P<var>\w+)\s*:?=\s*(?P<base>\w+)\.Group\(\s*"(?P<path>[^"]*)"'
+)
+
 # Call sites are found by scanning for path-shaped runs anywhere in the text,
 # not by requiring a whole quoted string to be a URL. Real clients interpolate:
 #   `/api/v1/employee/cases/${encodeURIComponent(id)}/tasks${x ? `/${x}` : ''}`
@@ -56,7 +82,11 @@ _PATH_RUN = re.compile(r"""(?:/[A-Za-z0-9_\-.{}$%*][A-Za-z0-9_\-.{}$%*()]*){2,}"
 # A one-segment tail glued onto an interpolated or concatenated base.
 _TAIL_RUN = re.compile(r"""[}\)+]\s*['"`]?(/[A-Za-z0-9_\-.{}$%*]+)""")
 # A whole quoted string that is a single-segment path: client.get(`/pilot-access`).
-_SOLO_PATH = re.compile(r"""['"`](/[A-Za-z0-9_\-.{}$%*]+)['"`]""")
+# The query string has to be tolerated here, not just in _PATH_RUN: a client with
+# a baseURL sends `/init?days=${days}`, which is one segment plus a query and
+# closes as neither a clean literal nor a multi-segment run — so without this the
+# only caller of a top-level route is invisible and the route reads as dead.
+_SOLO_PATH = re.compile(r"""['"`](/[A-Za-z0-9_\-.{}$%*]+)(?:[?#][^'"`]*)?['"`]""")
 
 _PARAM_SEG = re.compile(r"""^(\{.*\}|<.*>|:.+|\$.+|%[sd]|\*|\d+|\[.*\])$""")
 
@@ -68,8 +98,10 @@ _GENERIC_SEGMENTS = frozenset({
 })
 
 # Route definitions live in these; a route path echoed inside another route
-# definition is not a caller.
-_DEFINITION_RE = (_PY_ROUTE, _JS_ROUTE, _NEST_ROUTE)
+# definition is not a caller. The Go pair belongs here for the same reason the
+# others do — without it a Gin registration is its own call site and every Go
+# route reports clean, which is the one failure mode a gate cannot show.
+_DEFINITION_RE = (_PY_ROUTE, _JS_ROUTE, _NEST_ROUTE, _GO_ROUTE, _GO_GROUP)
 
 
 @dataclass
@@ -165,12 +197,47 @@ def _py_methods(line: str, default: str) -> list[str]:
     return [m.upper() for m in found] or [default]
 
 
-def collect_routes(files: list[SourceFile]) -> list[RouteDef]:
-    """Extract backend route registrations across Python and TS/JS frameworks."""
+def client_vars(files: list[SourceFile]) -> frozenset[str]:
+    """Lower-cased names bound to an HTTP client anywhere in the repo."""
+    names: set[str] = set()
+    for source in files:
+        if source.rel.endswith((".ts", ".js", ".mjs", ".cjs", ".tsx", ".mts", ".cts")):
+            for match in _CLIENT_BINDING.finditer(source.text):
+                names.add(match.group("var").lower())
+    return frozenset(names)
+
+
+def _join(base: str, path: str) -> str:
+    joined = "/" + "/".join(part for part in (base + "/" + path).split("/") if part)
+    return joined
+
+
+def _go_prefixes(text: str) -> dict[str, str]:
+    """Router-group variables resolved in declaration order.
+
+    A group whose own base is a function parameter stays unresolved, and that is
+    fine: matching is prefix-agnostic, so a route recorded as
+    ``/super-admin/suppliers`` is still reached by a caller holding
+    ``/api/super-admin/suppliers``.
+    """
+    prefixes: dict[str, str] = {}
+    for match in _GO_GROUP.finditer(text):
+        base = prefixes.get(match.group("base"), "")
+        prefixes[match.group("var")] = _join(base, match.group("path"))
+    return prefixes
+
+
+def collect_routes(
+    files: list[SourceFile], clients: frozenset[str] = frozenset()
+) -> list[RouteDef]:
+    """Extract backend route registrations across Python, TS/JS and Go frameworks."""
     routes: list[RouteDef] = []
     for source in files:
-        if source.kind not in ("code", "web"):
+        if source.kind not in ("code", "web") or source.is_test:
             continue
+        # A gin/express engine assembled inside a test harness is not a backend
+        # declaration. Left in, it is dead by construction — nothing outside the
+        # harness may call it — so it can only ever be noise no exemption fixes.
         text = source.text
         if source.rel.endswith(".py"):
             prefixes = _py_prefixes(text)
@@ -193,7 +260,7 @@ def collect_routes(files: list[SourceFile]) -> list[RouteDef]:
                 routes.append(RouteDef(match.group("method").upper(), full, "", source.rel, line_no))
             for match in _JS_ROUTE.finditer(text):
                 var = match.group("var").lower()
-                if var not in _JS_ROUTER_VARS:
+                if var not in _JS_ROUTER_VARS or var in clients:
                     continue
                 line_no = text.count("\n", 0, match.start()) + 1
                 method = match.group("method").upper()
@@ -201,10 +268,20 @@ def collect_routes(files: list[SourceFile]) -> list[RouteDef]:
                     RouteDef("*" if method == "ALL" else method, match.group("path"),
                              match.group("var"), source.rel, line_no)
                 )
+        elif source.rel.endswith(".go"):
+            prefixes = _go_prefixes(text)
+            for match in _GO_ROUTE.finditer(text):
+                line_no = text.count("\n", 0, match.start()) + 1
+                full = _join(prefixes.get(match.group("var"), ""), match.group("path"))
+                method = match.group("method").upper()
+                routes.append(
+                    RouteDef("*" if method == "ANY" else method, full,
+                             match.group("var"), source.rel, line_no)
+                )
     return routes
 
 
-def _definition_spans(source: SourceFile) -> set[int]:
+def _definition_spans(source: SourceFile, clients: frozenset[str]) -> set[int]:
     """Every line a route registration covers, so it cannot count as its own call.
 
     All the lines, not just the first: a decorator split across lines would
@@ -214,19 +291,23 @@ def _definition_spans(source: SourceFile) -> set[int]:
     spans: set[int] = set()
     for pattern in _DEFINITION_RE:
         for match in pattern.finditer(source.text):
-            if pattern is _JS_ROUTE and match.group("var").lower() not in _JS_ROUTER_VARS:
-                continue
+            if pattern is _JS_ROUTE:
+                var = match.group("var").lower()
+                if var not in _JS_ROUTER_VARS or var in clients:
+                    continue
             first = source.text.count("\n", 0, match.start()) + 1
             last = source.text.count("\n", 0, match.end()) + 1
             spans.update(range(first, last + 1))
     return spans
 
 
-def collect_call_sites(files: list[SourceFile]) -> list[tuple[list[str], SourceFile]]:
+def collect_call_sites(
+    files: list[SourceFile], clients: frozenset[str] = frozenset()
+) -> list[tuple[list[str], SourceFile]]:
     """Every URL-looking literal that is not itself a route registration."""
     sites: list[tuple[list[str], SourceFile]] = []
     for source in files:
-        skip_lines = _definition_spans(source)
+        skip_lines = _definition_spans(source, clients)
         for pattern, group in ((_PATH_RUN, 0), (_TAIL_RUN, 1), (_SOLO_PATH, 1)):
             for match in pattern.finditer(source.text):
                 line_no = source.text.count("\n", 0, match.start()) + 1
@@ -291,13 +372,14 @@ def _inventory_files(matches: dict[str, set[tuple[str, str]]], total: int) -> se
 
 def audit_endpoints(files: list[SourceFile], policy: Policy) -> TableResult:
     """Pair every declared route with whatever calls it."""
-    routes = collect_routes(files)
+    clients = client_vars(files)
+    routes = collect_routes(files, clients)
     table = TableResult(name="endpoints", title="端点表：后端声明 ↔ 谁在调")
     if not routes:
         table.note = "未发现路由声明（框架不支持或此仓无 HTTP 面）"
         return table
 
-    sites = collect_call_sites(files)
+    sites = collect_call_sites(files, clients)
     seen: dict[str, RouteDef] = {}
     for route in routes:
         seen.setdefault(route.key, route)

@@ -10,6 +10,7 @@ than reusing ``codeindex.scanner``.
 from __future__ import annotations
 
 import fnmatch
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,7 +43,16 @@ _KIND_BY_EXT = {
     ".md": "doc", ".mdx": "doc", ".rst": "doc", ".txt": "doc",
 }
 
-_TEST_MARKERS = ("test", "spec", "__tests__", "e2e", "fixtures", "cypress")
+# Matched against path *tokens*, never as substrings. `new-api-latest` splits to
+# {new, api, latest} and holds no test token, while a substring search finds
+# "test" inside "latest" and classifies every file under that directory as a
+# test — which silently drops a whole repo to the weakest evidence tier, so every
+# table reports "only mentioned in tests" for code that is plainly production.
+_TEST_TOKENS = frozenset({
+    "test", "tests", "testdata", "testutil", "testutils", "testing",
+    "conftest", "spec", "specs", "e2e", "fixture", "fixtures", "cypress",
+})
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
@@ -58,8 +68,8 @@ class SourceFile:
 
     @property
     def is_test(self) -> bool:
-        lowered = self.rel.lower()
-        return any(marker in lowered for marker in _TEST_MARKERS)
+        tokens = _TOKEN_SPLIT.split(self.rel.lower())
+        return any(token in _TEST_TOKENS for token in tokens)
 
     def lines(self) -> list[str]:
         return self.text.splitlines()

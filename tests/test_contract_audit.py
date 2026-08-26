@@ -570,3 +570,176 @@ class TestScopePredicateIsNotADeclaration:
                "    await c.execute(\"INSERT INTO conversations(kind) VALUES ('case')\")\n")
         found = _findings(tmp_path, "states")
         assert not [k for k in found if k.startswith("write:")]
+
+
+class TestPathTokensNotSubstrings:
+    """`new-api-latest` holds "test" as a substring and no test token.
+
+    Substring matching drops every file under such a directory to the test tier,
+    and each table then reports live production code as "only mentioned in
+    tests". It is silent: the run is green, the verdicts are wrong, and the
+    wrongness always points the same way — toward deleting something alive.
+    """
+
+    def test_a_directory_merely_containing_test_is_not_a_test(self, tmp_path):
+        _write(tmp_path, "new-api-latest/.env.example", "PROXY_ENCRYPTION_KEY=x\n")
+        _write(tmp_path, "new-api-latest/crypto.go",
+               'var key = os.Getenv("PROXY_ENCRYPTION_KEY")\n')
+        assert _findings(tmp_path, "configs") == {}
+
+    def test_a_real_test_file_is_still_weak_evidence(self, tmp_path):
+        _write(tmp_path, "new-api-latest/.env.example", "PROXY_ENCRYPTION_KEY=x\n")
+        _write(tmp_path, "new-api-latest/crypto_test.go",
+               'var key = os.Getenv("PROXY_ENCRYPTION_KEY")\n')
+        found = _findings(tmp_path, "configs")
+        assert found["env:PROXY_ENCRYPTION_KEY"]["verdict"] == "suspect"
+
+
+class TestHttpClientIsNotARouter:
+    """An axios instance named `API` is a caller, not a route table."""
+
+    def test_axios_instance_call_sites_stay_callers(self, tmp_path):
+        _write(tmp_path, "router.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tapi := r.Group("/api")\n'
+               '\tapi.GET("/user/logout", controller.Logout)\n'
+               '}\n')
+        _write(tmp_path, "web/helpers/api.js", "export let API = axios.create({})\n")
+        _write(tmp_path, "web/header.js", "await API.get('/api/user/logout')\n")
+        assert _findings(tmp_path, "endpoints") == {}
+
+    def test_an_express_router_named_api_still_declares(self, tmp_path):
+        _write(tmp_path, "server.js",
+               "const api = express.Router()\n"
+               "api.post('/pilot-access', grant)\n")
+        found = _findings(tmp_path, "endpoints")
+        assert found["POST /pilot-access"]["verdict"] == "dead"
+
+
+class TestGoRoutes:
+    """Without a Go branch a Gin backend contributes zero routes to the table."""
+
+    def test_gin_route_with_no_caller_is_dead(self, tmp_path):
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tapiRouter := r.Group("/api")\n'
+               '\tadmin := apiRouter.Group("/super-admin")\n'
+               '\tadmin.POST("/pilot-access", controller.Grant)\n'
+               '}\n')
+        found = _findings(tmp_path, "endpoints")
+        assert found["POST /api/super-admin/pilot-access"]["verdict"] == "dead"
+
+    def test_gin_route_called_from_the_frontend_is_clean(self, tmp_path):
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tapiRouter := r.Group("/api")\n'
+               '\tadmin := apiRouter.Group("/super-admin")\n'
+               '\tadmin.POST("/pilot-access", controller.Grant)\n'
+               '}\n')
+        _write(tmp_path, "web/ui.jsx", "await post('/api/super-admin/pilot-access')\n")
+        assert _findings(tmp_path, "endpoints") == {}
+
+    def test_go_http_client_call_is_not_a_registration(self, tmp_path):
+        """`client.Get(...)` is mixed case; only an upper-case verb registers."""
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tapiRouter := r.Group("/api")\n'
+               '\tapiRouter.POST("/pilot-access", controller.Grant)\n'
+               '}\n')
+        _write(tmp_path, "probe/check.go",
+               'resp, _ := client.Get("/api/pilot-access")\n')
+        assert _findings(tmp_path, "endpoints") == {}
+
+
+class TestPatternExemptions:
+    def test_a_glob_exempts_the_family(self, tmp_path):
+        _write(tmp_path, "router/relay.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tv1 := r.Group("/v1")\n'
+               '\tv1.POST("/messages", relay.Messages)\n'
+               '\tv1.POST("/embeddings", relay.Embeddings)\n'
+               '}\n')
+        _write(tmp_path, ".manon-contract.yaml",
+               'exempt:\n'
+               '  endpoints:\n'
+               '    "POST /v1/*": "relay 公共 API，消费者是客户不是本仓"\n')
+        found = _findings(tmp_path, "endpoints")
+        assert set(found) == {"POST /v1/messages", "POST /v1/embeddings"}
+        assert all(f["exempt_reason"] for f in found.values())
+
+    def test_an_exact_id_wins_over_a_glob(self, tmp_path):
+        _write(tmp_path, "router/relay.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tv1 := r.Group("/v1")\n'
+               '\tv1.POST("/messages", relay.Messages)\n'
+               '}\n')
+        _write(tmp_path, ".manon-contract.yaml",
+               'exempt:\n'
+               '  endpoints:\n'
+               '    "POST /v1/messages": "逐条判定过"\n'
+               '    "POST /v1/*": "兜底"\n')
+        found = _findings(tmp_path, "endpoints")
+        assert found["POST /v1/messages"]["exempt_reason"] == "逐条判定过"
+
+    def test_a_glob_matching_nothing_is_reported_stale(self, tmp_path):
+        _write(tmp_path, "router/relay.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tv1 := r.Group("/v1")\n'
+               '\tv1.POST("/messages", relay.Messages)\n'
+               '}\n')
+        _write(tmp_path, ".manon-contract.yaml",
+               'exempt:\n'
+               '  endpoints:\n'
+               '    "POST /v9/*": "早就删干净了"\n')
+        result = audit_project(str(tmp_path), tables=("endpoints",))
+        assert {"table": "endpoints", "id": "POST /v9/*", "reason": "早就删干净了"} \
+            in result["stale_exemptions"]
+
+
+class TestRoutesDeclaredInTestsAreNotSurfaces:
+    def test_a_harness_route_is_not_collected(self, tmp_path):
+        _write(tmp_path, "middleware/auth_harness_test.go",
+               'func harness() *gin.Engine {\n'
+               '\tr := gin.New()\n'
+               '\tr.GET("/probe", handler)\n'
+               '\treturn r\n'
+               '}\n')
+        assert _findings(tmp_path, "endpoints") == {}
+
+    def test_the_product_route_it_exercises_is_still_collected(self, tmp_path):
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tr.GET("/pilot-access", controller.Show)\n'
+               '}\n')
+        _write(tmp_path, "middleware/auth_harness_test.go",
+               'func harness() *gin.Engine {\n'
+               '\tr := gin.New()\n'
+               '\tr.GET("/probe", handler)\n'
+               '\treturn r\n'
+               '}\n')
+        found = _findings(tmp_path, "endpoints")
+        assert set(found) == {"GET /pilot-access"}
+
+
+class TestSingleSegmentPathWithQuery:
+    def test_a_baseurl_client_sending_one_segment_plus_query_is_a_caller(self, tmp_path):
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tg := r.Group("/insights/api")\n'
+               '\tg.GET("/init", controller.Init)\n'
+               '}\n')
+        _write(tmp_path, "web/panel.jsx",
+               "const r = await API.get(`${INSIGHTS_API}/init?days=${days}`)\n")
+        assert _findings(tmp_path, "endpoints") == {}
+
+    def test_a_different_route_with_a_query_is_still_dead(self, tmp_path):
+        _write(tmp_path, "router/api.go",
+               'func Set(r *gin.Engine) {\n'
+               '\tg := r.Group("/insights/api")\n'
+               '\tg.GET("/init", controller.Init)\n'
+               '\tg.GET("/prompts", controller.Prompts)\n'
+               '}\n')
+        _write(tmp_path, "web/panel.jsx",
+               "const r = await API.get(`${INSIGHTS_API}/init?days=${days}`)\n")
+        found = _findings(tmp_path, "endpoints")
+        assert found["GET /insights/api/prompts"]["verdict"] == "dead"

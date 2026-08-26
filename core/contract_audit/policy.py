@@ -11,6 +11,7 @@ the report gets ignored, and an ignored gate is the same as no gate.
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,11 +54,26 @@ class Policy:
     _hit: set[str] = field(default_factory=set, repr=False)
 
     def exemption_for(self, table: str, finding_id: str) -> str | None:
-        """Return the recorded reason if this finding is exempted, else None."""
-        reason = self.exempt.get(table, {}).get(finding_id)
+        """Return the recorded reason if this finding is exempted, else None.
+
+        An exact id always wins over a pattern, so a specific decision is never
+        shadowed by a blanket one. Patterns exist because some surfaces are only
+        honestly describable in bulk: a gateway's public relay API has no
+        in-repo caller *by construction*, and forty-odd hand-copied identical
+        reasons is a list nobody reads — which is the same failure as no list.
+        Among patterns the first declared one wins, so file order is the tie
+        break and stays reproducible.
+        """
+        entries = self.exempt.get(table, {})
+        reason = entries.get(finding_id)
         if reason is not None:
             self._hit.add(f"{table} {finding_id}")
-        return reason
+            return reason
+        for pattern, pattern_reason in entries.items():
+            if _is_pattern(pattern) and fnmatch.fnmatchcase(finding_id, pattern):
+                self._hit.add(f"{table} {pattern}")
+                return pattern_reason
+        return None
 
     def stale_exemptions(self) -> list[tuple[str, str, str]]:
         """Exemptions that matched nothing this run — the list has rotted."""
@@ -67,6 +83,11 @@ class Policy:
                 if f"{table} {finding_id}" not in self._hit:
                     stale.append((table, finding_id, reason))
         return sorted(stale)
+
+
+def _is_pattern(entry: str) -> bool:
+    """A glob, as opposed to a literal finding id."""
+    return any(ch in entry for ch in "*?[")
 
 
 def _normalize_entries(raw) -> dict[str, str]:
