@@ -144,9 +144,10 @@ PYEOF
 
     # Install dao skill (大道至简 - code simplification)
     local dao_skill_dir="$HOME/.claude/skills/dao"
-    mkdir -p "$dao_skill_dir/scripts"
+    mkdir -p "$dao_skill_dir/scripts" "$dao_skill_dir/references"
     cp "$SCRIPT_DIR/skills/dao/SKILL.md" "$dao_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/dao/scripts/"*.py "$dao_skill_dir/scripts/"
+    cp "$SCRIPT_DIR/skills/dao/references/"*.md "$dao_skill_dir/references/"
     info "Claude Code /dao Skill installed (code simplification with Manon)"
 
     # Install experience skill (体验驱动开发循环)
@@ -155,12 +156,10 @@ PYEOF
     cp "$SCRIPT_DIR/skills/experience/SKILL.md" "$exp_skill_dir/SKILL.md"
     info "Claude Code /experience Skill installed (experience-driven dev loop)"
 
-    # Install tc skill (测试覆盖循环)
-    local tc_skill_dir="$HOME/.claude/skills/tc"
-    mkdir -p "$tc_skill_dir/scripts"
-    cp "$SCRIPT_DIR/skills/tc/SKILL.md" "$tc_skill_dir/SKILL.md"
-    cp "$SCRIPT_DIR/skills/tc/scripts/"*.py "$tc_skill_dir/scripts/"
-    info "Claude Code /tc Skill installed (test coverage loop with Manon)"
+    # /tc 已退役（1.5.0）：覆盖循环并进 /assurance 的 P5。
+    # 装过老版本的机器上 ~/.claude/skills/tc 还留着，这里主动摘掉——
+    # 留一个不再被任何文档指向的壳，下一个人会以为它还在维护。
+    rm -rf "$HOME/.claude/skills/tc"
 
     # Install idea skill (需求精化循环)
     local idea_skill_dir="$HOME/.claude/skills/idea"
@@ -171,8 +170,9 @@ PYEOF
 
     # Install audit skill (行为层体检)
     local audit_skill_dir="$HOME/.claude/skills/audit"
-    mkdir -p "$audit_skill_dir"
+    mkdir -p "$audit_skill_dir/references"
     cp "$SCRIPT_DIR/skills/audit/SKILL.md" "$audit_skill_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/audit/references/"*.md "$audit_skill_dir/references/"
     info "Claude Code /audit Skill installed (behaviour-layer audit with contract tables)"
 
     # Install assurance skill (工程保障体系体检与补齐 —— 体系的入口，按读数分诊到 /audit /dao /retire)
