@@ -59,9 +59,9 @@ EXECUTOR_GLOBS = [
 # 代码：它们拼出 `pytest --cov`、`bun test --coverage`、`mutmut` 去驱动**被扫描的那个
 # 项目**，而不是驱动自己所在的这个仓。
 #
-# 判例（`~/.claude` 本身，2026-08-26）：`skills/manon/scripts/manon-scan-tests.py` 拼
-# `pytest --cov --cov-report=xml`、`skills/tc/scripts/tc-commit.py` 跑
-# `bun test --coverage`——于是「覆盖率 (Python)」报绿，而这个仓自己**一行覆盖率都没测过**。
+# 判例（`~/.claude` 本身，2026-08-26）：某个 skill 的脚本里拼着
+# `pytest --cov --cov-report=xml`、另一个跑 `bun test --coverage`——那是给**被驱动的项目**用的，
+# 于是「覆盖率」报绿，而这个仓自己**一行覆盖率都没测过**。
 # 一个把「这个仓有工具去测别人」读成「这个仓被测过」的格子，正是本工具要防的那类假绿，
 # 只是换了个方向：不是散文当执行，是**别人的执行当自己的**。
 #
