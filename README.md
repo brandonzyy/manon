@@ -64,7 +64,7 @@ Two skills. `/manon` activates the knowledge graph for your project. `/assurance
 
 ## ⚡ Quick Start
 
-### Installation (Claude Code / Cursor / Windsurf)
+### Installation (Claude Code / Codex / ZCode / Kimi Code)
 
 **macOS / Linux**
 ```bash
@@ -99,7 +99,7 @@ The installer auto-detects your editor, installs dependencies, registers a free 
 <details>
 <summary>Manual MCP config</summary>
 
-Add to `~/.claude/settings.json` (Claude Code) or `~/.cursor/mcp.json` (Cursor):
+Add to `~/.claude.json` (Claude Code) or `~/.kimi-code/mcp.json` (Kimi Code) — same `mcpServers` shape as below. ZCode: `~/.zcode/cli/config.json`, same entry nested under `mcp.servers`. Codex: `[mcp_servers.manon]` in `~/.codex/config.toml`.
 
 ```json
 {
@@ -167,7 +167,7 @@ python scripts/manon-contract-audit.py <project_path> --fail-on new --baseline <
 ```
 ┌─ Local (manon_mcp) ──────────────────┐     ┌─ Cloud (saas) ──────────────────────┐
 │                                      │     │                                      │
-│  IDE (Claude Code / Cursor / ...)    │     │  FastAPI application (saas/main.py)  │
+│  IDE (Claude Code / ZCode / ...)     │     │  FastAPI application (saas/main.py)  │
 │       ↕ MCP protocol                 │     │       ↕                              │
 │  manon_mcp/server.py                 │     │  Routers                             │
 │    ├─ tools/   (MCP tool handlers)   │     │    query / indexing / repos / ...    │
@@ -392,6 +392,8 @@ Override via `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.6.2** | 2026-08-27 | Installer: ZCode + Kimi Code support added; platforms narrowed to Claude Code / Codex / ZCode / Kimi Code (Cursor / Windsurf / Zed / Continue / CodeBuddy / OpenCode removed); fix installer crash when `~/.codex` is missing |
+| **v1.6.1** | 2026-08-27 | `/assurance` gap-fill item #6: dependency audit + secret scanning; checker parity fixes |
 | **v1.6.0** | 2026-08-27 | Skill consolidation: `/dao` `/audit` `/retire-checks` merged into `/assurance`; `/experience` `/idea` retired; two skills remain (`/manon` + `/assurance`) |
 | **v1.5.1** | 2026-08-26 | `/retire-checks` added (missed in 1.5.0); `check_skills.py` gate (install coverage + cross-reference invariants) |
 | **v1.5.0** | 2026-08-26 | `/assurance` skill (3-state checkup, triage entry); `/tc` retired into the P5 coverage loop; dao/audit SKILL.md compressed ≤100 lines with `references/` |
@@ -463,7 +465,7 @@ Override via `MANON_API_KEY`, `MANON_API_URL`.
 ## 📋 Requirements
 
 - Python 3.10+ (auto-installed on Windows via `winget` if missing)
-- MCP: Claude Code, Cursor, Windsurf, Zed, Continue, or CodeBuddy
+- MCP: Claude Code, Codex, ZCode, or Kimi Code
 - Network connection
 
 ## 🏗️ Self-Hosting

@@ -62,14 +62,10 @@ exit /b %errorlevel%
 ::PS head1 "Platform Detection"
 ::PS $PLATFORMS = @(); $HOME_DIR = $env:USERPROFILE
 ::PS if ((Test-Path "$HOME_DIR\.claude") -or (Get-Command claude -ErrorAction SilentlyContinue)) { $PLATFORMS += "claude-code" }
-::PS if (Test-Path "$HOME_DIR\.cursor") { $PLATFORMS += "cursor" }
-::PS if ((Test-Path "$HOME_DIR\.codeium\windsurf") -or (Test-Path "$HOME_DIR\.windsurf")) { $PLATFORMS += "windsurf" }
-::PS if ((Test-Path "$HOME_DIR\.config\zed") -or (Get-Command zed -ErrorAction SilentlyContinue)) { $PLATFORMS += "zed" }
-::PS if (Test-Path "$HOME_DIR\.continue") { $PLATFORMS += "continue" }
-::PS if ((Test-Path "$HOME_DIR\.codebuddy") -or (Test-Path "$HOME_DIR\.tencent\codebuddy")) { $PLATFORMS += "codebuddy" }
-::PS if ((Test-Path "$HOME_DIR\.config\opencode") -or (Get-Command opencode -ErrorAction SilentlyContinue)) { $PLATFORMS += "opencode" }
 ::PS if ((Test-Path "$HOME_DIR\.codex") -or (Get-Command codex -ErrorAction SilentlyContinue)) { $PLATFORMS += "codex" }
-::PS if ($PLATFORMS.Count -eq 0) { err "No supported platform detected (Claude Code / Cursor / Windsurf / Zed / Continue / CodeBuddy / OpenCode / Codex)" }
+::PS if ((Test-Path "$HOME_DIR\.zcode") -or (Get-Command zcode -ErrorAction SilentlyContinue)) { $PLATFORMS += "zcode" }
+::PS if ((Test-Path "$HOME_DIR\.kimi-code") -or (Get-Command kimi -ErrorAction SilentlyContinue)) { $PLATFORMS += "kimi-code" }
+::PS if ($PLATFORMS.Count -eq 0) { err "No supported platform detected (Claude Code / Codex / ZCode / Kimi Code)" }
 ::PS info "Detected: $($PLATFORMS -join ', ')"
 ::PS # ── Git remote ────────────────────────────────────────
 ::PS $GIT_REMOTE = "https://github.com/brandonzyy/manon.git"
@@ -84,9 +80,9 @@ exit /b %errorlevel%
 ::PS info "Dependencies installed"
 ::PS # ── Check for existing API key ────────────────────────
 ::PS $API_KEY = ""; $API_URL = $API_URL_CN
-::PS foreach ($cfg in @("$HOME_DIR\.claude.json","$HOME_DIR\.claude\settings.json","$HOME_DIR\.cursor\mcp.json","$HOME_DIR\.codeium\windsurf\mcp_config.json","$HOME_DIR\.windsurf\mcp_config.json","$HOME_DIR\.config\opencode\opencode.json","$HOME_DIR\.codex\config.toml")) {
+::PS foreach ($cfg in @("$HOME_DIR\.claude.json","$HOME_DIR\.claude\settings.json","$HOME_DIR\.codex\config.toml","$HOME_DIR\.zcode\cli\config.json","$HOME_DIR\.kimi-code\mcp.json")) {
 ::PS     if (Test-Path $cfg) {
-::PS         $key = & $VENV_PYTHON -c "import json,re,sys`nf=sys.argv[1]`ntry:`n    if f.endswith('.toml'):`n        text=open(f,encoding='utf-8').read()`n        m=re.search(r'MANON_API_KEY\s*=\s*\x22(msk_[^\x22]+)\x22',text)`n        if m: print(m.group(1))`n    else:`n        d=json.load(open(f,encoding='utf-8'))`n        k=d.get('mcpServers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n        if not k: k=d.get('mcp',{}).get('manon',{}).get('environment',{}).get('MANON_API_KEY','')`n        if k.startswith('msk_'): print(k)`nexcept: pass" "$cfg" 2>`$null
+::PS         $key = & $VENV_PYTHON -c "import json,re,sys`nf=sys.argv[1]`ntry:`n    if f.endswith('.toml'):`n        text=open(f,encoding='utf-8').read()`n        m=re.search(r'MANON_API_KEY\s*=\s*\x22(msk_[^\x22]+)\x22',text)`n        if m: print(m.group(1))`n    else:`n        d=json.load(open(f,encoding='utf-8'))`n        k=d.get('mcpServers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n        if not k: k=d.get('mcp',{}).get('manon',{}).get('environment',{}).get('MANON_API_KEY','')`n        if not k: k=d.get('mcp',{}).get('servers',{}).get('manon',{}).get('env',{}).get('MANON_API_KEY','')`n        if k.startswith('msk_'): print(k)`nexcept: pass" "$cfg" 2>`$null
 ::PS         if ($key -and $key.Trim().StartsWith("msk_")) { $API_KEY = $key.Trim(); info "Existing API key found, skipping registration"; break }
 ::PS     }
 ::PS }
@@ -104,11 +100,22 @@ exit /b %errorlevel%
 ::PS     $d = Split-Path -Parent $t; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 ::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcpServers',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcpServers']['manon']={'command':vp,'args':[sv],'env':env}`nif 'playwright' not in cfg['mcpServers']: cfg['mcpServers']['playwright']={'command':'npx','args':['@playwright/mcp@latest']}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
 ::PS }
-::PS function Write-OpenCodeMcpJson($t) {
+::PS function Write-ZcodeMcpJson($t) {
 ::PS     $d = Split-Path -Parent $t; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcp',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcp']['manon']={'type':'local','command':[vp,sv],'environment':env}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
+::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcp',{}).setdefault('servers',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcp']['servers']['manon']={'type':'stdio','command':vp,'args':[sv],'env':env}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
 ::PS }
-::PS $MANON_RULES = "# Manon -- 代码智能工具规则`n`n当用户提问涉及代码理解、架构分析时，必须使用 Manon MCP 工具。`n`n| 场景 | 工具 |`n|------|------|`n| 代码理解/搜索 | ``manon_deep_query`` |`n| 调用关系/依赖 | ``manon_graph`` |`n| 改动影响 | ``manon_impact`` |"
+::PS function Install-AgentsSkills {
+::PS     # ~/.agents/skills —— ZCode 与 Kimi Code 用户级都读的共享位，装一份覆盖两个平台
+::PS     $base = "$HOME_DIR\.agents\skills"
+::PS     $sd = "$base\manon"; New-Item -ItemType Directory -Path "$sd\scripts" -Force | Out-Null
+::PS     Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md" -Force
+::PS     Copy-Item "$SCRIPT_DIR\skills\manon\scripts\*.py" "$sd\scripts\" -Force
+::PS     $as = "$base\assurance"; New-Item -ItemType Directory -Path "$as\scripts","$as\references" -Force | Out-Null
+::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as\SKILL.md" -Force
+::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as\scripts\" -Force
+::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as\references\" -Force
+::PS     foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$base\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
+::PS }
 ::PS # ── Configure platforms ───────────────────────────────
 ::PS head1 "Configuration"; $CONFIGURED = @()
 ::PS foreach ($platform in $PLATFORMS) {
@@ -121,51 +128,21 @@ exit /b %errorlevel%
 ::PS             $as_sd = "$HOME_DIR\.claude\skills\assurance"; New-Item -ItemType Directory -Path "$as_sd\scripts","$as_sd\references" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as_sd\scripts\"; Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as_sd\references\"; info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
 ::PS             foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$HOME_DIR\.claude\skills\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
 ::PS         }
-::PS         "cursor" {
-::PS             Write-McpJson "$HOME_DIR\.cursor\mcp.json"; info "Cursor MCP registered"
-::PS             $rd = "$HOME_DIR\.cursor\rules"; if (-not (Test-Path $rd)) { New-Item -ItemType Directory -Path $rd -Force | Out-Null }
-::PS             Set-Content -Path "$rd\manon.md" -Value $MANON_RULES -Encoding UTF8; info "Cursor rules installed"
-::PS         }
-::PS         "windsurf" {
-::PS             $mf = if (Test-Path "$HOME_DIR\.codeium\windsurf") { "$HOME_DIR\.codeium\windsurf\mcp_config.json" } else { "$HOME_DIR\.windsurf\mcp_config.json" }
-::PS             Write-McpJson $mf; info "Windsurf MCP registered"
-::PS             $rd = "$HOME_DIR\.windsurf\rules"; if (-not (Test-Path $rd)) { New-Item -ItemType Directory -Path $rd -Force | Out-Null }
-::PS             Set-Content -Path "$rd\manon.md" -Value $MANON_RULES -Encoding UTF8; info "Windsurf rules installed"
-::PS         }
-::PS         "zed" {
-::PS             $zc = "$HOME_DIR\.config\zed\settings.json"; $d = Split-Path -Parent $zc; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-::PS             & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$zc','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('context_servers',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['context_servers']['manon']={'command':{'path':vp,'args':[sv],'env':env}}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
-::PS             info "Zed MCP registered"
-::PS         }
-::PS         "continue" {
-::PS             $cc = "$HOME_DIR\.continue\config.json"; $d = Split-Path -Parent $cc; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-::PS             & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$cc','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcpServers',[])`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcpServers']=[s for s in cfg['mcpServers'] if s.get('name')!='manon']`ncfg['mcpServers'].append({'name':'manon','command':vp,'args':[sv],'env':env})`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
-::PS             info "Continue MCP registered"
-::PS         }
-::PS         "codebuddy" {
-::PS             $mf = if (Test-Path "$HOME_DIR\.codebuddy") { "$HOME_DIR\.codebuddy\mcp.json" } else { "$HOME_DIR\.tencent\codebuddy\mcp.json" }
-::PS             Write-McpJson $mf; info "CodeBuddy MCP registered"
-::PS             $cbDir = if (Test-Path "$HOME_DIR\.codebuddy") { "$HOME_DIR\.codebuddy" } else { "$HOME_DIR\.tencent\codebuddy" }
-::PS             $sd = "$cbDir\skills\manon"; if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS             Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
-::PS             info "CodeBuddy /manon Skill installed"
-::PS         }
-::PS         "opencode" {
-::PS             Write-OpenCodeMcpJson "$HOME_DIR\.config\opencode\opencode.json"; info "OpenCode MCP registered"
-::PS             $sd = "$HOME_DIR\.claude\skills\manon"
-::PS             if (-not (Test-Path "$sd\SKILL.md")) {
-::PS                 if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-::PS                 Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"
-::PS                 info "OpenCode /manon Skill installed (via ~/.claude/skills/)"
-::PS             } else { info "OpenCode Skill already present (shared with Claude Code)" }
-::PS         }
 ::PS         "codex" {
-::PS             $cf = "$HOME_DIR\.codex\config.toml"
+::PS             $cf = "$HOME_DIR\.codex\config.toml"; $cd = Split-Path -Parent $cf; if (-not (Test-Path $cd)) { New-Item -ItemType Directory -Path $cd -Force | Out-Null }
 ::PS             if ((Test-Path $cf) -and (Select-String -Path $cf -Pattern '\[mcp_servers\.manon\]' -Quiet)) { info "Codex MCP already configured" }
 ::PS             else { Add-Content -Path $cf -Encoding UTF8 -Value "`n[mcp_servers.manon]`ncommand = `"$VENV_PYTHON_NORM`"`nargs = [`"$SERVER_PY_NORM`"]`nenv = { MANON_API_KEY = `"$API_KEY`" }`nstartup_timeout_sec = 30.0`ntool_timeout_sec = 120.0"; info "Codex MCP registered" }
 ::PS             $af = "$HOME_DIR\AGENTS.md"
 ::PS             if ((Test-Path $af) -and (Select-String -Path $af -Pattern 'manon_search' -Quiet)) { info "Codex AGENTS.md already has Manon rules" }
 ::PS             else { Add-Content -Path $af -Encoding UTF8 -Value "`n# Codex AGENTS.md -- Manon 知识图谱规则`n`n## 核心规则（MUST）`n`n代码理解、架构分析、代码搜索时，必须优先使用 Manon MCP 工具，禁止跳过图谱直接搜索文件。`n`n## 强制规则`n`n### 规则 1：搜索前必查图谱`n在使用 grep、find、文件搜索等操作前，必须先用 manon_search / manon_deep_query / manon_graph 查询图谱。`n图谱不足时才用文件搜索补充，并声明'图谱未覆盖，补充搜索'。`n`n### 规则 2：编辑代码前必查上下文`n修改代码文件前，必须先用 manon_search/manon_graph 了解上下文，同时用 git log 查看近期改动。`n`n### 规则 3：探索代码库前必查图谱`n在进行大范围代码探索或规划前，必须先用 manon_search / manon_deep_query 查询图谱。"; info "Codex AGENTS.md rules installed" }
+::PS         }
+::PS         "zcode" {
+::PS             Write-ZcodeMcpJson "$HOME_DIR\.zcode\cli\config.json"; info "ZCode MCP registered"
+::PS             Install-AgentsSkills; info "ZCode /manon + /assurance Skills installed (via ~/.agents/skills/)"
+::PS         }
+::PS         "kimi-code" {
+::PS             Write-McpJson "$HOME_DIR\.kimi-code\mcp.json"; info "Kimi Code MCP registered"
+::PS             Install-AgentsSkills; info "Kimi Code /manon + /assurance Skills installed (via ~/.agents/skills/)"
 ::PS         }
 ::PS     }
 ::PS     $CONFIGURED += $platform
@@ -177,5 +154,5 @@ exit /b %errorlevel%
 ::PS if ($HC -eq "200") { info "API reachable" } else { warn "API not reachable ($HC) -- start the server first" }
 ::PS $MV = & $VENV_PYTHON -c "from pathlib import Path`nimport subprocess`nvf=Path(r'$SCRIPT_DIR') / 'VERSION'`ntry:`n    v=vf.read_text(encoding='utf-8').strip()`n    print(v if v else '1.0.0')`nexcept Exception:`n    r=subprocess.run(['git','rev-list','--count','HEAD'],cwd=r'$SCRIPT_DIR',capture_output=True,text=True)`n    print(f'1.0.{r.stdout.strip()}' if r.returncode==0 else '1.0.0')" 2>&1; if (-not $MV) { $MV = "1.0.0" }
 ::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host "  Manon v$MV installed"; Write-Host "  Configured: $($CONFIGURED -join ', ')"; Write-Host ""
-::PS foreach ($p in $CONFIGURED) { switch ($p) { "claude-code" { Write-Host "  Claude Code:  type /manon to initialize" } "cursor" { Write-Host "  Cursor:       manon_deep_query available" } "windsurf" { Write-Host "  Windsurf:     manon_deep_query available" } "zed" { Write-Host "  Zed:          manon tools available" } "continue" { Write-Host "  Continue:     manon tools available" } "codebuddy" { Write-Host "  CodeBuddy:    type /manon to initialize" } "opencode" { Write-Host "  OpenCode:     type /manon to initialize" } "codex" { Write-Host "  Codex:        manon tools available via MCP" } } }
+::PS foreach ($p in $CONFIGURED) { switch ($p) { "claude-code" { Write-Host "  Claude Code:  type /manon to initialize" } "codex" { Write-Host "  Codex:        manon tools available via MCP" } "zcode" { Write-Host "  ZCode:        type /manon to initialize" } "kimi-code" { Write-Host "  Kimi Code:    type /manon to initialize" } } }
 ::PS Write-Host ""; Write-Host "  ------------------------------------"; Write-Host ""

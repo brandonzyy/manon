@@ -4,7 +4,7 @@ set -euo pipefail
 # ── Manon MCP Installer ──────────────────────────────
 # Multi-platform installer for Manon code intelligence:
 #   1. Python venv + dependencies
-#   2. MCP server registration (Claude Code / Cursor / Windsurf / OpenCode)
+#   2. MCP server registration (Claude Code / Codex / ZCode / Kimi Code)
 #   3. Deep-query behavior rules for each platform
 # ─────────────────────────────────────────────────────
 
@@ -21,21 +21,6 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 err()   { echo -e "${RED}[x]${NC} $1"; exit 1; }
 head1() { echo -e "\n${CYAN}── $1 ──${NC}"; }
 
-# ── Shared content ────────────────────────────────────
-MANON_RULES='# Manon — 代码智能工具规则
-
-当用户提问涉及代码理解、架构分析、代码搜索时，必须使用 Manon MCP 工具。
-
-**默认深度查询**：所有代码理解查询使用 `manon_deep_query`（自动多轮迭代）
-
-| 场景 | 工具 |
-|------|------|
-| 代码理解/搜索 | `manon_deep_query` |
-| 调用关系/依赖 | `manon_graph` |
-| 改动影响 | `manon_impact` |
-
-**规则**：先图谱后搜索，图谱不足时声明"图谱未覆盖，补充搜索"'
-
 # ══════════════════════════════════════════════════════
 #  Platform detection
 # ══════════════════════════════════════════════════════
@@ -48,39 +33,19 @@ detect_platforms() {
         PLATFORMS+=("claude-code")
     fi
 
-    # Cursor
-    if [ -d "$HOME/.cursor" ]; then
-        PLATFORMS+=("cursor")
-    fi
-
-    # Windsurf
-    if [ -d "$HOME/.codeium/windsurf" ] || [ -d "$HOME/.windsurf" ]; then
-        PLATFORMS+=("windsurf")
-    fi
-
-    # Zed
-    if [ -d "$HOME/.config/zed" ] || command -v zed >/dev/null 2>&1; then
-        PLATFORMS+=("zed")
-    fi
-
-    # Continue
-    if [ -d "$HOME/.continue" ]; then
-        PLATFORMS+=("continue")
-    fi
-
-    # CodeBuddy (Tencent)
-    if [ -d "$HOME/.codebuddy" ] || [ -d "$HOME/.tencent/codebuddy" ]; then
-        PLATFORMS+=("codebuddy")
-    fi
-
-    # OpenCode
-    if [ -d "$HOME/.config/opencode" ] || command -v opencode >/dev/null 2>&1; then
-        PLATFORMS+=("opencode")
-    fi
-
     # Codex (OpenAI)
     if [ -d "$HOME/.codex" ] || command -v codex >/dev/null 2>&1; then
         PLATFORMS+=("codex")
+    fi
+
+    # ZCode
+    if [ -d "$HOME/.zcode" ] || command -v zcode >/dev/null 2>&1; then
+        PLATFORMS+=("zcode")
+    fi
+
+    # Kimi Code (Moonshot)
+    if [ -d "$HOME/.kimi-code" ] || command -v kimi >/dev/null 2>&1; then
+        PLATFORMS+=("kimi-code")
     fi
 }
 
@@ -160,150 +125,6 @@ PYEOF
            "$HOME/.claude/skills/experience" "$HOME/.claude/skills/idea"
 }
 
-# --- Cursor ---
-configure_cursor() {
-    local mcp_file="$HOME/.cursor/mcp.json"
-    local rules_dir="$HOME/.cursor/rules"
-
-    # MCP config
-    write_mcp_json "$mcp_file"
-    info "Cursor MCP registered"
-
-    # Global rules
-    mkdir -p "$rules_dir"
-    echo "$MANON_RULES" > "$rules_dir/manon.md"
-    info "Cursor deep-query rules installed → $rules_dir/manon.md"
-}
-
-# --- Windsurf ---
-configure_windsurf() {
-    local mcp_file
-    if [ -d "$HOME/.codeium/windsurf" ]; then
-        mcp_file="$HOME/.codeium/windsurf/mcp_config.json"
-    else
-        mcp_file="$HOME/.windsurf/mcp_config.json"
-    fi
-    local rules_dir="$HOME/.windsurf/rules"
-
-    # MCP config
-    write_mcp_json "$mcp_file"
-    info "Windsurf MCP registered"
-
-    # Global rules
-    mkdir -p "$rules_dir"
-    echo "$MANON_RULES" > "$rules_dir/manon.md"
-    info "Windsurf deep-query rules installed → $rules_dir/manon.md"
-}
-
-# --- Zed ---
-configure_zed() {
-    local settings="$HOME/.config/zed/settings.json"
-    $VENV_PYTHON - "$settings" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
-import json, sys, os
-target, launcher, url, key = sys.argv[1:5]
-cfg = {}
-if os.path.exists(target):
-    with open(target, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-cfg.setdefault("context_servers", {})
-env = {"MANON_API_KEY": key}
-if url != "auto":
-    env["MANON_API_URL"] = url
-cfg["context_servers"]["manon"] = {
-    "command": {"path": "bash", "args": [launcher], "env": env}
-}
-os.makedirs(os.path.dirname(target), exist_ok=True)
-with open(target, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-PYEOF
-    info "Zed MCP registered"
-}
-
-# --- Continue ---
-configure_continue() {
-    local cfg_file="$HOME/.continue/config.json"
-    $VENV_PYTHON - "$cfg_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
-import json, sys, os
-target, launcher, url, key = sys.argv[1:5]
-cfg = {}
-if os.path.exists(target):
-    with open(target, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-cfg.setdefault("mcpServers", [])
-env = {"MANON_API_KEY": key}
-if url != "auto":
-    env["MANON_API_URL"] = url
-cfg["mcpServers"] = [s for s in cfg["mcpServers"] if s.get("name") != "manon"]
-cfg["mcpServers"].append({"name": "manon", "command": "bash", "args": [launcher], "env": env})
-os.makedirs(os.path.dirname(target), exist_ok=True)
-with open(target, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-PYEOF
-    info "Continue MCP registered"
-}
-
-# --- CodeBuddy (Tencent) ---
-configure_codebuddy() {
-    local mcp_file skill_dir
-    if [ -d "$HOME/.codebuddy" ]; then
-        mcp_file="$HOME/.codebuddy/mcp.json"
-        skill_dir="$HOME/.codebuddy/skills/manon"
-    else
-        mcp_file="$HOME/.tencent/codebuddy/mcp.json"
-        skill_dir="$HOME/.tencent/codebuddy/skills/manon"
-    fi
-    write_mcp_json "$mcp_file"
-    info "CodeBuddy MCP registered"
-
-    # /manon Skill
-    mkdir -p "$skill_dir"
-    cp "$SCRIPT_DIR/skills/manon/SKILL.md" "$skill_dir/SKILL.md"
-    info "CodeBuddy /manon Skill installed"
-}
-
-
-
-# --- OpenCode ---
-configure_opencode() {
-    local cfg_file="$HOME/.config/opencode/opencode.json"
-
-    # MCP config (OpenCode uses different format: type+command array+environment)
-    $VENV_PYTHON - "$cfg_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
-import json, sys, os
-target, launcher, url, key = sys.argv[1:5]
-cfg = {}
-if os.path.exists(target):
-    with open(target, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-cfg.setdefault("mcp", {})
-env = {"MANON_API_KEY": key}
-if url != "auto":
-    env["MANON_API_URL"] = url
-cfg["mcp"]["manon"] = {
-    "type": "local",
-    "command": ["bash", launcher],
-    "environment": env,
-}
-os.makedirs(os.path.dirname(target), exist_ok=True)
-with open(target, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-PYEOF
-    info "OpenCode MCP registered"
-
-    # Skill — OpenCode reads ~/.claude/skills/**/SKILL.md automatically
-    # so the Claude Code skill covers OpenCode too. Install it if not present.
-    local skill_dir="$HOME/.claude/skills/manon"
-    if [ ! -f "$skill_dir/SKILL.md" ]; then
-        mkdir -p "$skill_dir"
-        cp "$SCRIPT_DIR/skills/manon/SKILL.md" "$skill_dir/SKILL.md"
-        info "OpenCode /manon Skill installed (via ~/.claude/skills/)"
-    else
-        info "OpenCode Skill already present (shared with Claude Code)"
-    fi
-}
-
-
-
 # --- Codex (OpenAI) ---
 configure_codex() {
     local config_file="$HOME/.codex/config.toml"
@@ -319,6 +140,7 @@ configure_codex() {
     esac
 
     # MCP config — append [mcp_servers.manon] to config.toml if not present
+    mkdir -p "$HOME/.codex"
     if grep -q '\[mcp_servers\.manon\]' "$config_file" 2>/dev/null; then
         info "Codex MCP already configured"
     else
@@ -387,6 +209,73 @@ AGENTSEOF
     fi
 }
 
+# --- shared skill install → ~/.agents/skills ---
+# ZCode 与 Kimi Code 的用户级 skill 都读 ~/.agents/skills/（zcode 官方推荐跨工具
+# 共享位；kimi 的用户级 generic 目录）。装一份同时覆盖两个平台，不各自留副本。
+install_agents_skills() {
+    local base="$HOME/.agents/skills"
+
+    local manon_dir="$base/manon"
+    mkdir -p "$manon_dir/scripts"
+    cp "$SCRIPT_DIR/skills/manon/SKILL.md" "$manon_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/manon/scripts/"*.py "$manon_dir/scripts/"
+
+    # references/ 与 scripts/ 必须随 SKILL.md 一起装（同 ~/.claude/skills 的教训：
+    # 只装 SKILL.md 会留下链向不存在文件的入口，且没有任何报错）
+    local assurance_dir="$base/assurance"
+    mkdir -p "$assurance_dir/references" "$assurance_dir/scripts"
+    cp "$SCRIPT_DIR/skills/assurance/SKILL.md" "$assurance_dir/SKILL.md"
+    cp "$SCRIPT_DIR/skills/assurance/references/"*.md "$assurance_dir/references/"
+    cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_dir/scripts/"
+
+    # 已退役 skill 的壳同样从共享位摘掉（与 ~/.claude/skills 一致）
+    rm -rf "$base/tc" "$base/dao" "$base/audit" \
+           "$base/retire-checks" "$base/experience" "$base/idea"
+}
+
+# --- ZCode ---
+configure_zcode() {
+    local config_file="$HOME/.zcode/cli/config.json"
+
+    # MCP config — config.json 里还有 plugin 开关等状态，必须合并非覆盖；
+    # server schema 是严格校验（未知键整条被丢弃），只写规范字段
+    $VENV_PYTHON - "$config_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
+import json, sys, os
+target, launcher, url, key = sys.argv[1:5]
+cfg = {}
+if os.path.exists(target):
+    with open(target, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+env = {"MANON_API_KEY": key}
+if url != "auto":
+    env["MANON_API_URL"] = url
+cfg.setdefault("mcp", {}).setdefault("servers", {})
+cfg["mcp"]["servers"]["manon"] = {
+    "type": "stdio",
+    "command": "bash",
+    "args": [launcher],
+    "env": env,
+}
+os.makedirs(os.path.dirname(target), exist_ok=True)
+with open(target, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+PYEOF
+    info "ZCode MCP registered"
+
+    install_agents_skills
+    info "ZCode /manon + /assurance Skills installed (via ~/.agents/skills/)"
+}
+
+# --- Kimi Code (Moonshot) ---
+configure_kimi_code() {
+    # ~/.kimi-code/mcp.json 与 Claude 同格式（顶层 mcpServers）
+    write_mcp_json "$HOME/.kimi-code/mcp.json"
+    info "Kimi Code MCP registered"
+
+    install_agents_skills
+    info "Kimi Code /manon + /assurance Skills installed (via ~/.agents/skills/)"
+}
+
 
 
 echo ""
@@ -442,7 +331,7 @@ info "Python $PY_MAJOR.$PY_MINOR"
 # ── Detect platforms ──────────────────────────────────
 detect_platforms
 if [ ${#PLATFORMS[@]} -eq 0 ]; then
-    err "No supported platform detected (Claude Code / Cursor / Windsurf / OpenCode / Codex)"
+    err "No supported platform detected (Claude Code / Codex / ZCode / Kimi Code)"
 fi
 info "Detected: ${PLATFORMS[*]}"
 
@@ -450,9 +339,8 @@ info "Detected: ${PLATFORMS[*]}"
 API_KEY=""
 
 # ── Check for existing key ────────────────────────────
-for _cfg in "$HOME/.claude.json" "$HOME/.claude/settings.json" "$HOME/.cursor/mcp.json" \
-            "$HOME/.codeium/windsurf/mcp_config.json" "$HOME/.windsurf/mcp_config.json" \
-            "$HOME/.config/opencode/opencode.json" "$HOME/.codex/config.toml"; do
+for _cfg in "$HOME/.claude.json" "$HOME/.claude/settings.json" "$HOME/.codex/config.toml" \
+            "$HOME/.zcode/cli/config.json" "$HOME/.kimi-code/mcp.json"; do
     if [ -f "$_cfg" ]; then
         _key=$(python3 -c "
 import json, sys, re
@@ -467,6 +355,8 @@ try:
         k = d.get('mcpServers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
         if not k:
             k = d.get('mcp', {}).get('manon', {}).get('environment', {}).get('MANON_API_KEY', '')
+        if not k:
+            k = d.get('mcp', {}).get('servers', {}).get('manon', {}).get('env', {}).get('MANON_API_KEY', '')
         if k.startswith('msk_'): print(k)
 except: pass
 " "$_cfg" 2>/dev/null)
@@ -539,13 +429,9 @@ for platform in "${PLATFORMS[@]}"; do
     head1 "$platform"
     case "$platform" in
         claude-code) configure_claude_code ;;
-        cursor)      configure_cursor ;;
-        windsurf)    configure_windsurf ;;
-        zed)         configure_zed ;;
-        continue)    configure_continue ;;
-        codebuddy)   configure_codebuddy ;;
-        opencode)    configure_opencode ;;
         codex)       configure_codex ;;
+        zcode)       configure_zcode ;;
+        kimi-code)   configure_kimi_code ;;
     esac
     CONFIGURED+=("$platform")
 done
@@ -588,13 +474,9 @@ echo ""
 for p in "${CONFIGURED[@]}"; do
     case "$p" in
         claude-code) echo "  Claude Code:  type /manon to initialize" ;;
-        cursor)      echo "  Cursor:       manon_deep_query available in Composer" ;;
-        windsurf)    echo "  Windsurf:     manon_deep_query available in Cascade" ;;
-        zed)         echo "  Zed:          manon tools available in Assistant" ;;
-        continue)    echo "  Continue:     manon tools available in Chat" ;;
-        codebuddy)   echo "  CodeBuddy:    type /manon to initialize" ;;
-        opencode)    echo "  OpenCode:     type /manon to initialize" ;;
         codex)       echo "  Codex:        manon tools available via MCP" ;;
+        zcode)       echo "  ZCode:        type /manon to initialize" ;;
+        kimi-code)   echo "  Kimi Code:    type /manon to initialize" ;;
     esac
 done
 echo ""

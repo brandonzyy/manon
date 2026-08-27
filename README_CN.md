@@ -64,7 +64,7 @@ Manon 提供两层能力：
 
 ## ⚡ 快速开始
 
-### 安装（Claude Code / Cursor / Windsurf）
+### 安装（Claude Code / Codex / ZCode / Kimi Code）
 
 **macOS / Linux**
 ```bash
@@ -99,7 +99,7 @@ install.bat
 <details>
 <summary>手动 MCP 配置</summary>
 
-添加到 `~/.claude/settings.json`（Claude Code）或 `~/.cursor/mcp.json`（Cursor）：
+添加到 `~/.claude.json`（Claude Code）或 `~/.kimi-code/mcp.json`（Kimi Code）——两者同为下方 `mcpServers` 结构。ZCode 写 `~/.zcode/cli/config.json`，同一条目嵌在 `mcp.servers` 下；Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.manon]`：
 
 ```json
 {
@@ -167,7 +167,7 @@ python scripts/manon-contract-audit.py <项目路径> --fail-on new --baseline <
 ```
 ┌─ 本地端 (manon_mcp) ────────────────┐     ┌─ 云端 (saas) ──────────────────────┐
 │                                      │     │                                      │
-│  IDE (Claude Code / Cursor / ...)    │     │  FastAPI 应用 (saas/main.py)         │
+│  IDE (Claude Code / ZCode / ...)     │     │  FastAPI 应用 (saas/main.py)         │
 │       ↕ MCP 协议                     │     │       ↕                              │
 │  manon_mcp/server.py                 │     │  路由层                               │
 │    ├─ tools/   (MCP 工具处理)         │     │    query / indexing / repos / ...    │
@@ -340,6 +340,8 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 
 | 版本 | 日期 | 摘要 |
 |------|------|------|
+| **v1.6.2** | 2026-08-27 | 安装器新增 ZCode + Kimi Code，平台收拢为 Claude Code / Codex / ZCode / Kimi Code（移除 Cursor / Windsurf / Zed / Continue / CodeBuddy / OpenCode）；修复 `~/.codex` 缺失时安装中断 |
+| **v1.6.1** | 2026-08-27 | /assurance 补齐第六件：依赖审计 + 密钥扫描；检查器两副本判据对齐 |
 | **v1.6.0** | 2026-08-27 | 技能整合：/dao /audit /retire-checks 并入 /assurance；/experience /idea 退役；只留两个技能（/manon + /assurance） |
 | **v1.5.1** | 2026-08-26 | 补上 /retire-checks（1.5.0 漏装）；check_skills.py 门禁（装块覆盖 + 交叉引用两条不变量） |
 | **v1.5.0** | 2026-08-26 | /assurance 技能（三态体检、分诊入口）；/tc 退役并入 P5 覆盖循环；dao/audit 的 SKILL.md 压进 100 行 + references/ |
@@ -362,7 +364,7 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 ## 📋 环境要求
 
 - Python 3.10+（Windows 上通过 `winget` 自动安装）
-- MCP 客户端：Claude Code、Cursor、Windsurf、Zed、Continue 或 CodeBuddy
+- MCP 客户端：Claude Code、Codex、ZCode 或 Kimi Code
 - 网络连接
 
 ## 🏗️ 自托管

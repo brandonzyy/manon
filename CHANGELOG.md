@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.6.2] - 2026-08-27
+
+### Changed
+- **安装器收拢为四个平台：Claude Code / Codex / ZCode / Kimi Code。** Cursor、
+  Windsurf、Zed、Continue、CodeBuddy、OpenCode 六个平台的检测与装块整体移除
+  ——装块越多，每加一个 skill 要同步的面就越大（check_skills.py 守的就是这个），
+  不再使用的平台留着只会分摊注意力。已装机器上这些平台的 MCP 配置不受影响，
+  只是升级后不再自动配置。已有 key 探测清单与摘要输出同步收窄。
+
+### Added
+- **ZCode 与 Kimi Code 支持。** 两个平台的装法刻意不同——MCP 各写各的（ZCode 是
+  `~/.zcode/cli/config.json` 的嵌套 `mcp.servers`，严格 schema 只写规范字段，且
+  必须与已有的 plugin 开关等状态合并；Kimi Code 是 `~/.kimi-code/mcp.json` 的
+  Claude 兼容 `mcpServers`），而 skill 装一份共享：两家的用户级目录都读
+  `~/.agents/skills/`，再各留一份只会制造两处事实源。`/manon` 与 `/assurance`
+  连同 references/、scripts/ 整树装入，已退役 skill 的壳同样从共享位摘掉；
+  install.sh 与 install.bat 同步，check_skills.py 门禁过。
+
+### Fixed
+- codex 在 PATH 上而 `~/.codex` 不存在时，`cat >> config.toml` 直接被 `set -e`
+  中断，安装走到一半死掉——补 `mkdir -p`（install.bat 的 codex 分支同款）。
+
 ## [1.6.1] - 2026-08-27
 
 ### Added
