@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.4] - 2026-08-27
+
+### Fixed
+- **CI 首跑即红，三个独立根因**（详见 docs/incidents/2026-08-27-ci-first-run-three-root-causes.md）：
+  - 装依赖顺序改为「L1 工具链 → L1 检查 → 产品依赖 → pytest」——mypy 在
+    python_version=3.10 语义下解析 numpy 内嵌 stub 的 PEP 695 语法直接 fatal
+    （exit 2），L1 检查必须跑在产品依赖进环境之前，与 baseline 生成环境同构
+  - check_l1.py 三处 fatal（ruff/mypy/vulture）改 `stderr or stdout` 回显——
+    mypy 的 fatal 打在 stdout，此前 CI 上死因显示为空
+  - `mcp>=1.0.0,<2`（v2 改名 FastMCP，import 全断）、`pytest-asyncio==1.4.0`
+    （此前不在任何清单，48 个异步测试挂）、`tree-sitter-go`（本机 venv 有、
+    清单没有，干净环境必挂）进 requirements
+  - 终验：Python 3.12 干净环境按新 CI 顺序走全流程，929 过 / 0 挂，五条棘轮
+    与 baseline 逐条一致
+
 ## [1.6.3] - 2026-08-27
 
 ### Added

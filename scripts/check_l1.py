@@ -67,7 +67,9 @@ def collect_lint() -> list[str]:
     _need("ruff")
     r = _run(["ruff", "check", ".", "--output-format=concise"])
     if r.returncode not in (0, 1):
-        _die(f"ruff 退出码 {r.returncode}：\n{r.stderr[:500]}")
+        # ruff 的 fatal 走 stderr；mypy 的（如 stub 里的 [syntax]）走 stdout——
+        # 判例（2026-08-27）：CI 上 mypy exit 2、stderr 为空，死因在 stdout 被吞。
+        _die(f"ruff 退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
     counts: Counter[tuple[str, str]] = Counter()
     for line in r.stdout.splitlines():
         m = re.match(r"^(.+?):\d+:\d+: ([A-Z]+\d+)", line)
@@ -80,7 +82,7 @@ def collect_typing() -> list[str]:
     _need("mypy")
     r = _run(["mypy", ".", "--no-incremental", "--no-error-summary"])
     if r.returncode not in (0, 1):
-        _die(f"mypy 退出码 {r.returncode}：\n{r.stderr[:500]}")
+        _die(f"mypy 退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
     counts: Counter[tuple[str, str]] = Counter()
     for line in r.stdout.splitlines():
         m = re.match(r"^(.+?):\d+: error: .*?\[([a-z-]+)\]$", line)
@@ -97,7 +99,7 @@ def collect_dead() -> list[str]:
     r = _run(["vulture", "--min-confidence", "80",
               *[str(f.relative_to(ROOT)) for f in files]])
     if r.returncode not in (0, 3):        # 0 = 干净，3 = 有发现
-        _die(f"vulture 退出码 {r.returncode}：\n{r.stderr[:500]}")
+        _die(f"vulture 退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
     counts: Counter[tuple[str, str]] = Counter()
     for line in r.stdout.splitlines():
         m = re.match(r"^(.+?):\d+: (.+?) \(\d+% confidence\)$", line)

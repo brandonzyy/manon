@@ -9,5 +9,5 @@ pyyaml>=6,<7
 tree-sitter>=0.23.0,<1  # Required by embedded codeindex
 networkx>=3.0
 numpy>=1.24
-mcp>=1.0.0
+mcp>=1.0.0,<2  # v2 renamed FastMCP (2026-08 CI 判例：新解析装到 2.x，import 全断)
 questionary>=2.0,<3  # dao-pick.py interactive issue selector
