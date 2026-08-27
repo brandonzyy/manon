@@ -743,3 +743,33 @@ class TestSingleSegmentPathWithQuery:
                "const r = await API.get(`${INSIGHTS_API}/init?days=${days}`)\n")
         found = _findings(tmp_path, "endpoints")
         assert found["GET /insights/api/prompts"]["verdict"] == "dead"
+
+    def test_git_tree_enumerates_tracked_and_untracked_but_not_ignored(self, tmp_path):
+        """git 视角枚举（2026-08-27 四根因之四的边界）：跟踪 + 未跟踪未忽略算证据，
+        gitignored 的机器私有面不算。变异轮判读发现该分支原先不可达——本条补上。"""
+        import subprocess
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                           capture_output=True)
+
+        (tmp_path / ".gitignore").write_text("web/private/**\n", encoding="utf-8")
+        _write(tmp_path, "app.py", "X = 1\n")
+        _write(tmp_path, "wip_new.py", "Y = 2\n")            # 未跟踪未忽略：在途工作
+        _write(tmp_path, "web/private/front.tsx", "Z = 3\n")  # gitignored：机器私有面
+        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True,
+                       capture_output=True)
+        git("add", ".gitignore", "app.py")
+        git("-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-q", "-m", "init", "--", ".gitignore", "app.py")
+
+        rels = {f.rel for f in enumerate_files(tmp_path, [])}
+        assert "app.py" in rels
+        assert "wip_new.py" in rels
+        assert not any(r.startswith("web/private/") for r in rels)
+
+    def test_non_git_tree_falls_back_to_full_walk(self, tmp_path):
+        """非 git 树回退全量走查：临时导出树、probe 的变异树都靠它。"""
+        _write(tmp_path, "anything.tsx", "A = 1\n")
+        rels = {f.rel for f in enumerate_files(tmp_path, [])}
+        assert "anything.tsx" in rels
