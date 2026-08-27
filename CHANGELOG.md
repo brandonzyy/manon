@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.5] - 2026-08-27
+
+### Added
+- **Day-0 施工器（`skills/assurance/scripts/day0.py`）—— 体系缺口二的闭合。**
+  此前 assurance_check 只体检不施工，每个新仓的 L1 靠会话现场手搓，质量方差
+  取决于那一次会话。现在一条命令装齐：ruff.toml / mypy.ini（含跨机可比边界：
+  钉 python_version、follow_imports=skip）、钉版工具链清单、自含判据
+  scripts/check_l1.py（四条棘轮 + 清单闭合不变量）、gates.txt 登记、CI 模板
+  （GitHub 远端才写，装序即判据：L1 先于产品依赖；Gitee 明说走不了 CI）、
+  .gitignore。装完当场冻结 baseline；工具不在 PATH 则打印收尾命令并标 ⚠。
+  幂等重跑跳过不覆盖。判据测试 tests/test_day0.py：装齐 + 幂等 + 棘轮
+  「存量冻结后绿 / 新增即红」。
+- `/assurance` SKILL.md Step 3 的 Day-0 行接入施工器命令（100 行上限内改行不加行）。
+
+
 ## [1.6.4] - 2026-08-27
 
 ### Fixed

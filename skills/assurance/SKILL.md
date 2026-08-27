@@ -56,7 +56,7 @@ inventory 指 `python3 <SKILL_DIR>/scripts/retire_checks.py inventory --root <�
 
 | 情况 | 走哪条 |
 |---|---|
-| 新仓、第一次提交之前 | **Day-0**：把 L1 六件套一次装齐。此时存量为零，成本最低 |
+| 新仓、第一次提交之前 | **Day-0 施工器**：`python3 <SKILL_DIR>/scripts/day0.py <项目>`——配置、钉版工具链、自含判据、baseline 冻结、CI 模板一次装齐（幂等；判据测试在 tests/test_day0.py）。存量为零，成本最低 |
 | 存量项目 | **补齐序列**：走 Step 4。**一阶段一个终态，绝不并行**——同时上三个工具会一次报几千条，然后就放弃了 |
 
 ## Step 4 — 补齐序列（存量项目）
