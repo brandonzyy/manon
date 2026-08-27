@@ -175,6 +175,37 @@ def _strip_line_comments(path: Path, text: str) -> str:
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(mark))
 
 
+# 依赖清单里的一个包名**不是执行器**。`package.json` 上执行器面是因为它有 `scripts`，
+# 而 devDependencies 恰好在同一个文件里——于是「装了这个工具」被读成「有人跑这个工具」。
+#
+# 判例（项目甲，2026-08-26）：`@stryker-mutator/core` 躺在仓根 devDependencies，
+# 「变异测试 (TS)」于是报 OK；而 mutmut 同样是声明的 dev 依赖，只不过它写在
+# `services/api/pyproject.toml` 的 `[dependency-groups]` 里——那份文件不在执行器面上，
+# 「变异测试 (Python)」于是报 CONFIGURED_NOT_RUN。**同一个事实，两个相反的判定**，
+# 差别只在依赖清单用的是哪种文件格式。假绿那一半更该修：Python 那格至少是诚实的黄。
+#
+# 修法不是把 pyproject 也拉上执行器面（那会让假绿对称，是把错的一半推广），
+# 而是把依赖段从执行器面上剥掉。剥的只有依赖段：`scripts` / `workspaces` /
+# `husky` / `lint-staged` 全部原样留着，它们是真的执行器声明。
+_PKG_DEP_KEYS = ("dependencies", "devDependencies", "peerDependencies",
+                 "optionalDependencies", "bundledDependencies", "bundleDependencies",
+                 "trustedDependencies", "resolutions", "overrides", "pnpm")
+
+
+def _strip_pkg_deps(path: Path, text: str) -> str:
+    if path.name != "package.json":
+        return text
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return text                       # 解析不了就别猜，退回原文
+    if not isinstance(data, dict):
+        return text
+    for key in _PKG_DEP_KEYS:
+        data.pop(key, None)
+    return json.dumps(data, ensure_ascii=False, indent=1)
+
+
 def _iter_files(root: Path, include_vendor: bool, max_files: int = 40000):
     skip = set(SKIP) if include_vendor else SKIP | SKIP_VENDOR
     n = 0
@@ -361,6 +392,7 @@ class Project:
             txt = self.read(p)
             if p.suffix == ".py":
                 txt = _strip_py_docstrings(txt)
+            txt = _strip_pkg_deps(p, txt)
             chunks.append(f"### {p.relative_to(self.root)}\n{_strip_line_comments(p, txt)}")
         return "\n".join(chunks)
 
@@ -562,21 +594,35 @@ def _oneshot(proj) -> tuple[dict, list[str]]:
 
 
 def _with_oneshot(chk: "Check", declared: dict, key: str) -> "Check":
-    """一次性动作：配置面报缺时，用登记的结论文档兜底。
+    """一次性动作：用登记的结论文档兜底。**本函数只服务于变异测试那两格。**
 
-    **只在报缺时生效，不覆盖 CONFIGURED_NOT_RUN**——「配了没跑」是本工具的头号目标，
-    一条登记不该把它盖掉。
+    原先只在 MISSING 时兜底，理由是「配了没跑是本工具的头号目标，一条登记不该把它盖掉」。
+    那条理由对**日常**检查成立，对**一次性**动作恰好反过来。
+
+    判例（项目甲，2026-08-26）：`[tool.mutmut]` 在仓里、mutmut 在 dev 依赖里、
+    前一天真跑过一轮（80 个突变体、37→39 杀、结论逐条落在计划文档里），本格却是
+    CONFIGURED_NOT_RUN——因为按判据，变异测试**不许**进钩子也不进日常 CI（要跑整套
+    测试、会继承套件里的每一个 flake），于是它**本来就不该有执行器**。
+    在这一格上，「有配置无执行器」是设计内的正确形态，不是收据。
+
+    而唯一能把它翻绿的操作是**删掉配置**——删了 `[tool.mutmut]` 就变 MISSING，
+    MISSING 又被这条登记兜成 OK。一条门禁如果奖励「删掉可复现的配置」，那是判据错了。
+
+    所以对这两个键放宽到 CONFIGURED_NOT_RUN，但**只认可核对的证据**：登记必须指向
+    仓库里真实存在的结论文档、日期可解析、且不超过 ONESHOT_VALID_DAYS。
+    这比放宽前那条绿的门槛更高——它此前只需要工具名出现在执行器面上。
     """
     d = declared.get(key)
-    if d is None or chk.status != MISSING:
+    if d is None or chk.status == OK:
         return chk
     if d["stale"]:
         return Check(chk.layer, chk.name, NOT_RUN,
                      f"{d['doc']}（{d['date']}，已过去 {d['age']} 天）",
                      f"结论已超过 {ONESHOT_VALID_DAYS} 天。一次性不等于一次管到底——"
                      f"代码换过一轮之后，那份结论说的是别的代码。重跑一轮并更新 {ONESHOT_DECL}")
+    cfg = f"{chk.evidence} + " if chk.evidence else ""
     return Check(chk.layer, chk.name, OK,
-                 f"{d['doc']}（{d['date']}）  ← 仅确认结论文档存在",
+                 f"{cfg}{d['doc']}（{d['date']}）  ← 仅确认结论文档存在",
                  "本工具查不到那一轮的结论是什么。**打开这篇文档核一次**——"
                  "跑过且看过才算，登记本身不算。")
 
@@ -648,7 +694,7 @@ def run(proj: Project) -> list[Check]:
             proj.find_config(files=[".coveragerc", "coveragerc"], toml_sections=["[tool.coverage"],
                              json_keys=[]) or (
                 "pyproject.toml [addopts --cov]" if proj.executed(r"--cov\b|pytest-cov") else None),
-            [r"--cov\b", r"pytest-cov", r"\bcoverage run\b"],
+            [r"--cov\b", r"pytest-cov", r"\bcoverage run\b", r"-m[\"'\s,]+coverage\b"],
             "上 pytest-cov。重点不是追高数字，是找**零覆盖的分支**——错误处理路径是 bug 高发区",
             "配置在但零执行器"))
         out.append(_with_oneshot(_tool(proj, "L1", "变异测试 (Python)",
@@ -659,6 +705,24 @@ def run(proj: Project) -> list[Check]:
             f"跑过一轮但刻意不留依赖的，在 {ONESHOT_DECL} 里登记 "
             "`mutation-python|<结论文档>|<日期>`",
             "配置在但零执行器"), oneshot, "mutation-python"))
+
+        # 六件套的第六件：前五件审「你写的」，这一格审「你带进来的」。vibe coding 里
+        # 模型自己挑包（投毒包正是冲这个来的）——这条向量没有人的先验可依赖，只能
+        # 机器守。配置面刻意宽松（执行器点名即算配置）：pip-audit 这类工具本来就没
+        # 有独立配置文件，判据不能按文件名的装饰判存在性（判例同 coveragerc 那条）。
+        out.append(_tool(proj, "L1", "依赖审计 (Python)",
+            proj.find_config(files=["osv-scanner.toml", ".osv-scanner.toml"])
+            or ("pip-audit 执行" if proj.executed(r"\bpip-audit\b", r"\bosv-scanner\b") else None),
+            [r"\bpip-audit\b", r"\bosv-scanner\b"],
+            "上 pip-audit（或 osv-scanner）+ 存量棘轮——已知漏洞冻结、新依赖带新漏洞即红",
+            "配置在但零执行器"))
+        out.append(_tool(proj, "L1", "密钥扫描",
+            proj.find_config(files=[".gitleaks.toml", "gitleaks.toml", ".secrets.baseline",
+                                    "detect-secrets.json"]),
+            [r"\bgitleaks\b", r"\bdetect-secrets\b", r"\btrufflehog\b"],
+            "上 gitleaks 或 detect-secrets + baseline 棘轮——模型造的「像密钥的字符串」"
+            "与真凭据在 diff 里长得一模一样，人眼挡不住，机器扫得出",
+            "配置在但零执行器"))
 
     # ── L1 机器层 · TypeScript ────────────────────────────────────────
     if ts >= 3:
@@ -715,6 +779,14 @@ def run(proj: Project) -> list[Check]:
             f"devDependencies，此后每次构建镜像都要装它），在 {ONESHOT_DECL} 里登记 "
             "`mutation-ts|<结论文档>|<日期>`",
             "配置在但零执行器"), oneshot, "mutation-ts"))
+
+        out.append(_tool(proj, "L1", "依赖审计 (TS)",
+            proj.find_config(files=["osv-scanner.toml", ".osv-scanner.toml"])
+            or ("audit 执行" if proj.executed(
+                r"\bnpm audit\b", r"\bpnpm audit\b", r"\byarn audit\b", r"\bosv-scanner\b") else None),
+            [r"\bnpm audit\b", r"\bpnpm audit\b", r"\byarn audit\b", r"\bosv-scanner\b"],
+            "npm audit / pnpm audit / osv-scanner 进 CI——已知漏洞存量冻结，新依赖带新漏洞即红",
+            "配置在但零执行器"))
 
     # ── L2 门禁层 ──────────────────────────────────────────────────────
     # 清单放在哪儿都是清单：只找仓根与 scripts/ 会漏掉把它收进 deploy/ 之类目录的仓库。

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.6.1] - 2026-08-27
+
+### Added
+- **六件套的第六件：依赖与密钥。** 前五件审「你写的代码」，这件审「你带进来的」：
+  依赖里的已知漏洞、误提交的凭据。vibe coding 里模型自己挑包（投毒包正是冲这个
+  来的）、自己造长得像密钥的字符串——这条向量没有人的先验可依赖，只能机器守。
+  - 判据.md 的五件套表加第六行（Python: pip-audit + detect-secrets/gitleaks；
+    TS: npm audit / osv-scanner + gitleaks；Go: govulncheck + gitleaks），
+    SKILL.md 的 Day-0 与读数纪律同步，「17/17」改「满格」——格子数会随体系长，
+    硬编码的数字只会变成第二个事实源
+  - `assurance_check.py` 加三格：依赖审计 (Python/TS)、密钥扫描。前两格配置面
+    刻意宽松（执行器点名即算配置——pip-audit 这类工具没有独立配置文件）；密钥格
+    保留 CONFIGURED_NOT_RUN 形态（gitleaks.toml / .secrets.baseline 在、没人跑）
+
+### Fixed
+- 回流今晨只改了本机副本的两条修正：package.json 的依赖段不算执行器面
+  （`@stryker/core` 躺在 devDependencies 会让「变异测试 (TS)」假绿，而写在
+  pyproject `[dependency-groups]` 里的 mutmut 诚实报黄——同一事实两个相反判定，
+  假绿那一半更该修）；一次性登记兜底放宽的配套。补齐要点.md 同步补「判据实现有
+  两份时 Step 1 自己会假红」一节：两副本不能靠 diff 全等守（判例匿名化），读数与
+  记忆不符时先比两份检查器的代码差异。
+
 ## [1.6.0] - 2026-08-27
 
 ### Changed
