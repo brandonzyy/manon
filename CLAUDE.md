@@ -34,19 +34,23 @@ python3 scripts/install-hooks.py          # 装 pre-commit + 仓外 L1 工具链
 python3 scripts/install-hooks.py --check  # 只看装没装
 ```
 
-L1 工具链必须用**独立 venv**（默认 `~/.cache/manon-l1-venv`），两条理由都是实测：
+L1 工具链必须用**独立 venv**（默认 `~/.cache/manon-l1-venv`），三条理由都是实测：
 
 - CI 刻意在装产品依赖**之前**跑 L1。用项目 `.venv` 跑同一条判据，mypy 多报
   6 条 `import-untyped`——一道红在环境差异上的门禁会被绕过。
 - venv 放仓内会被 vulture 当源码扫进去，多出 40 余条 unused import。
+- 裸 `python3` 跑出的红照着去 `--regenerate`，幻影条目进 baseline，CI 随即以
+  「变少了」再红一次。`check_l1.py` 因此起手就查产品依赖在不在场，在就拒；
+  逃生口 `MANON_L1_ALLOW_DIRTY=1` 只放行读数，对 `--regenerate` 一律无效。
 
 `deps`（pip-audit 连 OSV）是网络判据，不进提交路径——它把钩子从 2 秒拖到 17 秒，
 超出「提交钩子 ≤15 秒」的预算。它的执行器在 CI。
 
 ```bash
-python3 scripts/check_l1.py                      # 五条棘轮全跑（含网络那条）
-python3 scripts/check_l1.py lint typing dead contract
-python3 scripts/check_l1.py --regenerate         # 修好之后收紧 baseline
+L1=~/.cache/manon-l1-venv/bin/python              # 解释器是判据的一部分
+$L1 scripts/check_l1.py                          # 五条棘轮全跑（含网络那条）
+$L1 scripts/check_l1.py lint typing dead contract
+$L1 scripts/check_l1.py --regenerate             # 修好之后收紧 baseline
 python3 scripts/check_skills.py                  # skills 装块覆盖 + 交叉引用
 ```
 
