@@ -716,12 +716,29 @@ def run(proj: Project) -> list[Check]:
             [r"\bpip-audit\b", r"\bosv-scanner\b"],
             "上 pip-audit（或 osv-scanner）+ 存量棘轮——已知漏洞冻结、新依赖带新漏洞即红",
             "配置在但零执行器"))
+        # 执行器面刻意认**自建扫描器**，理由与本函数 docstring 第一段同一条：
+        # 配置文件只是参数的一种存放位置，把三个上游工具名当成存在性判据，
+        # 就会把「自己写的扫描器 + 指纹 allowlist 棘轮」读成「什么都没装」。
+        # 判例（项目甲，2026-08-27）：`scripts/scan_release_secrets.mjs` 带 sha256
+        # 指纹棘轮，由在册门禁 `check_architecture_boundaries.sh` 每次提交调用、
+        # 发布链再调一次，本格却报 MISSING——**同一条教训上一格（依赖审计）
+        # 已经写过，紧挨着的这一格没跟上。**
+        #
+        # 放宽只放执行器面，且只认**标识符形状**的名字（下划线/连字符相连），
+        # 不认散文。写成 `密钥扫描` 那样的中文词会命中门禁清单里的说明栏——
+        # 那是一句描述，不是一个执行器；一条把描述读成执行器的判据，
+        # 比现在这个假红更坏。注释与 docstring 在 executor_text 里已被剥离，
+        # 所以剩下的命中只可能来自真被调用的文件名或符号名。
         out.append(_tool(proj, "L1", "密钥扫描",
             proj.find_config(files=[".gitleaks.toml", "gitleaks.toml", ".secrets.baseline",
                                     "detect-secrets.json"]),
-            [r"\bgitleaks\b", r"\bdetect-secrets\b", r"\btrufflehog\b"],
+            [r"\bgitleaks\b", r"\bdetect-secrets\b", r"\btrufflehog\b",
+             r"\bggshield\b", r"\btalisman\b", r"\bgit-secrets\b",
+             r"\bscan[_-](?:\w+[_-])?(?:secret|credential)s?\b",
+             r"\b(?:secret|credential)s?[_-]scan\w*"],
             "上 gitleaks 或 detect-secrets + baseline 棘轮——模型造的「像密钥的字符串」"
-            "与真凭据在 diff 里长得一模一样，人眼挡不住，机器扫得出",
+            "与真凭据在 diff 里长得一模一样，人眼挡不住，机器扫得出。"
+            "自建扫描器同样算，但要挂在执行器面上（在册门禁/钩子/CI 调它）",
             "配置在但零执行器"))
 
     # ── L1 机器层 · TypeScript ────────────────────────────────────────
