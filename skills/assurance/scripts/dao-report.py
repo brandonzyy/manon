@@ -67,7 +67,7 @@ def render(project_path, issues):
     lines = [
         f"# 代码质量报告 — {project_name}",
         "",
-        f"> 由 /dao 自动维护 | 最后更新: {now}",
+        f"> 由 /assurance（结构简化循环）自动维护 | 最后更新: {now}",
         "",
     ]
     for prefix, label in LAYERS:

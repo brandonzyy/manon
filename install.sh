@@ -142,56 +142,22 @@ result = _install_claude_hooks()
 PYEOF
     info "Claude Code hooks installed (search/edit/agent/commit→impact)"
 
-    # Install dao skill (大道至简 - code simplification)
-    local dao_skill_dir="$HOME/.claude/skills/dao"
-    mkdir -p "$dao_skill_dir/scripts" "$dao_skill_dir/references"
-    cp "$SCRIPT_DIR/skills/dao/SKILL.md" "$dao_skill_dir/SKILL.md"
-    cp "$SCRIPT_DIR/skills/dao/scripts/"*.py "$dao_skill_dir/scripts/"
-    cp "$SCRIPT_DIR/skills/dao/references/"*.md "$dao_skill_dir/references/"
-    info "Claude Code /dao Skill installed (code simplification with Manon)"
-
-    # Install experience skill (体验驱动开发循环)
-    local exp_skill_dir="$HOME/.claude/skills/experience"
-    mkdir -p "$exp_skill_dir"
-    cp "$SCRIPT_DIR/skills/experience/SKILL.md" "$exp_skill_dir/SKILL.md"
-    info "Claude Code /experience Skill installed (experience-driven dev loop)"
-
-    # /tc 已退役（1.5.0）：覆盖循环并进 /assurance 的 P5。
-    # 装过老版本的机器上 ~/.claude/skills/tc 还留着，这里主动摘掉——
-    # 留一个不再被任何文档指向的壳，下一个人会以为它还在维护。
-    rm -rf "$HOME/.claude/skills/tc"
-
-    # Install idea skill (需求精化循环)
-    local idea_skill_dir="$HOME/.claude/skills/idea"
-    mkdir -p "$idea_skill_dir/scripts"
-    cp "$SCRIPT_DIR/skills/idea/SKILL.md" "$idea_skill_dir/SKILL.md"
-    cp "$SCRIPT_DIR/skills/idea/scripts/"*.py "$idea_skill_dir/scripts/"
-    info "Claude Code /idea Skill installed (idea refinement with Manon)"
-
-    # Install audit skill (行为层体检)
-    local audit_skill_dir="$HOME/.claude/skills/audit"
-    mkdir -p "$audit_skill_dir/references"
-    cp "$SCRIPT_DIR/skills/audit/SKILL.md" "$audit_skill_dir/SKILL.md"
-    cp "$SCRIPT_DIR/skills/audit/references/"*.md "$audit_skill_dir/references/"
-    info "Claude Code /audit Skill installed (behaviour-layer audit with contract tables)"
-
-    # Install retire-checks skill (退役过期的检查器 —— /assurance 分诊的去处之一)
-    local retire_skill_dir="$HOME/.claude/skills/retire-checks"
-    mkdir -p "$retire_skill_dir/references" "$retire_skill_dir/scripts"
-    cp "$SCRIPT_DIR/skills/retire-checks/SKILL.md" "$retire_skill_dir/SKILL.md"
-    cp "$SCRIPT_DIR/skills/retire-checks/references/"*.md "$retire_skill_dir/references/"
-    cp "$SCRIPT_DIR/skills/retire-checks/scripts/"*.py "$retire_skill_dir/scripts/"
-    info "Claude Code /retire-checks Skill installed (retire stale gates and test corpora)"
-
-    # Install assurance skill (工程保障体系体检与补齐 —— 体系的入口，按读数分诊到 /audit /dao /retire-checks)
-    # 注意：这个 skill 有 references/ 与 scripts/，两者都必须装。
+    # /assurance —— 工程保障体系的唯一入口（1.6.0 起 /dao、/audit、/retire-checks 并入，
+    # /experience、/idea 退役）。注意它有 references/ 与 scripts/，两者都必须装：
     # 只装 SKILL.md 会留下一个链向不存在文件的入口，而且**没有任何报错**。
     local assurance_skill_dir="$HOME/.claude/skills/assurance"
     mkdir -p "$assurance_skill_dir/references" "$assurance_skill_dir/scripts"
     cp "$SCRIPT_DIR/skills/assurance/SKILL.md" "$assurance_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/assurance/references/"*.md "$assurance_skill_dir/references/"
     cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_skill_dir/scripts/"
-    info "Claude Code /assurance Skill installed (four-layer assurance stack: audit, gap-fill, coverage loop)"
+    info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
+
+    # 已退役 skill 的壳主动摘掉（tc: 1.5.0；dao/audit/retire-checks/experience/idea: 1.6.0）。
+    # 装过老版本的机器上它们还留着——留一个不再被任何文档指向的壳，
+    # 下一个人会以为它还在维护。
+    rm -rf "$HOME/.claude/skills/tc" "$HOME/.claude/skills/dao" \
+           "$HOME/.claude/skills/audit" "$HOME/.claude/skills/retire-checks" \
+           "$HOME/.claude/skills/experience" "$HOME/.claude/skills/idea"
 }
 
 # --- Cursor ---

@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.6.0] - 2026-08-27
+
+### Changed
+- **skill 体系收拢成两个：/manon（激活）+ /assurance（工程保障唯一入口）。**
+  1.5.x 结束时是 7 个 skill，拆成多个入口的代价和当年 /tc 一样：没人记得在什么时候
+  进哪个门。收拢后 SKILL.md 的 Step 2 分诊表是唯一路由，旧入口的触发语全部收进
+  assurance 的触发段。
+  - **/dao、/audit、/retire-checks 并入 /assurance**，各自变成一条带 references 的循环：
+    结构简化、行为层审计、检查退役。判据与流程原文迁移；scripts 原样搬进
+    `assurance/scripts/`（dao 系列五个 + `retire_checks.py`），git mv 保留历史。
+    dao 流程同步译成中文，与体系其余部分一种语言。
+  - **/experience、/idea 退役。** 体验驱动验证与需求精化不再需要独立 skill 承载——
+    今天的模型在普通对话里已经能做好这两件事，做成 skill 反而多一层要维护的壳
+    （README 的「技能自增强循环」叙述同步改写）。
+  - `install.sh` 装块合并为一个 assurance 块；退役 skill 的壳（tc / dao / audit /
+    retire-checks / experience / idea）安装时主动摘除，理由同 1.5.0 摘 tc。
+  - `判据.md` 的 L3 行、`dao-report.py` 的报告落款同步改指新去处；
+    CLAUDE.md 的 /experience 章节删除。
+
+### Fixed
+- CHANGELOG 1.4.1 / 1.4.0 两条的版本标题此前丢失（只剩「 - 2026-08-24」），补回。
+- README / README_CN 自 1.2.4 起未随 skill 演进更新：/tc、/exp 等已不存在的命令仍在被
+  宣传，版本历史缺 1.4/1.5 整段。本次随整合重写 skill 章节、补齐版本表；
+  docs/PRODUCT.md 的技能章节同步重写为两技能结构。
+
 ## [1.5.1] - 2026-08-26
 
 ### Added
@@ -132,7 +157,7 @@
   留在语料里就成了「有人引用」——第一个认真写豁免清单的人，会看着整张表静默归零。
   策略文件现在整体不进语料。CaseOS 上实测：写完清单后 21 死面被误报成 0，修复后回到 21。
 
- - 2026-08-24
+## [1.4.1] - 2026-08-24
 
 ### Fixed
 在 CaseOS 上逐条人工核对 1.4.0 的输出时找到的四类假阳性。四条都会把活着的东西报成死面，
@@ -151,7 +176,7 @@
 ### Changed
 - 新增 6 条回归测试（每类假阳性一条正例 + 一条反例），contract audit 测试 31 → 37
 
- - 2026-08-24
+## [1.4.0] - 2026-08-24
 
 ### Added
 - **契约对账（contract audit）** — 四张确定性对账表，补上图谱看不见的那类事实。

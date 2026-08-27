@@ -50,16 +50,14 @@ Manon provides two layers:
 Indexes every function, class, call relationship, import chain, and module boundary. Vector + graph hybrid search. When the model needs context, it gets precisely the relevant code — not too much, not too little.
 
 **Layer 2 — Development Skills** (the workflow)
-Six skills that cover the full development lifecycle — requirements, code quality, testing, auditing, and validation. Each skill is backed by the graph, ensuring decisions are grounded in code facts, not LLM imagination.
+Two skills. `/manon` activates the knowledge graph for your project. `/assurance` is the single entry to the engineering assurance system: it scores the project by measurement first, then routes to one of its loops — gap-filling the tool stack, coverage, behaviour-layer audit, structural simplification, retiring stale gates. Every loop is backed by the graph or deterministic scripts, so decisions are grounded in code facts, not LLM imagination.
 
 ```
-  /idea        write code       /dao          /tc         /audit          /exp
-  ┌─────┐      ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐       ┌─────┐
-  │Refine│ ──▶ │Build│  ──▶  │Clean│  ──▶  │Test │  ──▶  │Audit│  ──▶  │Verify│
-  │ Req  │     │     │       │     │       │     │       │Behav│       │ E2E  │
-  └──┬──┘      └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘       └──┬──┘
-     │            │              │              │              │              │
-     └──────────  all grounded in knowledge graph  ──────────────────────────┘
+  /manon (activate)                  /assurance (assure)
+  ┌─────┐                          ┌──────────┐
+  │Index│──▶ graph-backed coding ─▶│ triage by│──▶ gap-fill · coverage · behaviour
+  └─────┘                          │ reading  │    audit · simplify · retire
+                                   └──────────┘
 ```
 
 ---
@@ -121,50 +119,31 @@ Add to `~/.claude/settings.json` (Claude Code) or `~/.cursor/mcp.json` (Cursor):
 
 ## 🎯 Skill System
 
-Skills exist only when they provide capabilities that pure LLM conversation cannot — external tool integration (graph API, coverage data, Playwright), deterministic workflows, or structured output. If Claude can do it well in a normal chat, it doesn't need a skill.
+Skills exist only when they provide capabilities that pure LLM conversation cannot — external tool integration (graph API, coverage data), deterministic workflows, or structured output. If the model can do it well in a normal chat, it doesn't need a skill.
 
-| Phase | Skill | What it does | Why a skill, not just chat? |
-|-------|-------|-------------|----------------------------|
-| **Requirements** | `/idea` | Graph + GitHub research → Socratic questioning → dev document | Questions based on code facts (fan-in, dependencies), not generic |
-| **Development** | Claude + graph | Write code with `manon_search` / `manon_graph` | Hooks enforce graph-first; `manon_impact` after every commit |
-| **Maintenance** | `/dao` | Health scan → 3-layer classification → auto-simplify | Batch Architecture/Module/Code analysis with graph validation |
-| **Testing** | `/tc` | Coverage scan → graph-prioritize → write tests → verify | Ranks by structural importance, not random |
-| **Audit** | `/audit` | Contract tables scope it → semantic audit by defect taxonomy | Finds what survives a green test suite and a high health score |
-| **Validation** | `/exp` | AI agent operates the product like a real user | Playwright/Bash to click, type, read logs — not imagination |
+| Skill | Role | What it does |
+|-------|------|-------------|
+| `/manon` | Activation | Index the project, enter graph mode, install hooks |
+| `/assurance` | Engineering assurance | One entry, triage by measurement: gap-fill the tool stack, coverage loop, behaviour-layer audit, structural simplification, retiring stale gates |
 
-### `/idea` — Requirement Refinement
+### `/manon` — Activation
 
-Queries the knowledge graph and GitHub, then asks Socratic questions grounded in what it found — "Module X has high fan-in, should the new feature go there or in a new module?" After 3-7 rounds, proposes 2-3 approaches with impact analysis, outputs a reviewable dev document.
+Type `/manon` once per project. It indexes your code (with directory-role analysis for what to index vs skip), shows index status and the 8-dimension code health table, and installs hooks that enforce graph-first search and post-commit impact analysis.
 
-```
-/idea   — context → questioning → propose → document → review
-```
+### `/assurance` — Engineering Assurance
 
-### `/dao` — Code Simplification
-
-Scans code health, classifies complexity into three layers (Architecture / Module / Code), shows A/M issues for your pick, auto-fixes all C issues with graph validation (e.g., dead code deletion only after zero-caller confirmation).
+The single entry for everything "is this project actually protected". It scores the project's tool stack first — three states: `OK` / `CONFIGURED_NOT_RUN` (configured but never executed — the dangerous one, it *looks* installed) / `MISSING` — then routes by that reading:
 
 ```
-/dao    — health scan → classify → A/M panel + auto-fix C → commit
+/assurance — checkup → triage → one of:
+             gap-fill  P1-P6: free wins → dead surface → CI → types → coverage → mutation
+             coverage loop    rank untested code by fan-in × coverage, add mutation-killing assertions
+             behaviour audit  4 contract tables scope it → 5-defect-taxonomy semantic audit
+             simplification   graph-driven: 19 principles, A/M panel + auto-fix C layer
+             retirement       inventory executors/checkers, prove before deleting, install ratchets
 ```
 
-### `/tc` — Test Coverage
-
-Scans coverage data, queries the graph for entity importance (fan-in, complexity, centrality), generates a prioritized list of untested code, writes tests, runs them, commits.
-
-```
-/tc     — coverage scan → graph-prioritize → write tests → verify → commit
-```
-
-### `/audit` — Behaviour-Layer Audit
-
-A health score answers "is the shape right"; tests answer "does the happy path work". Both can be green while a class of defects lives on — all of it on **negative paths**.
-
-`/audit` runs four deterministic contract tables first (no model, sub-second, CI-ready) to narrow the surface, then audits only the suspect areas against five defect taxonomies.
-
-```
-/audit  — contract tables scope it → parallel taxonomy audit → negative test as the done-criterion → ratchet
-```
+The four deterministic contract tables behind the behaviour audit (no model, sub-second, also standalone for CI and git hooks):
 
 | Table | What it reconciles |
 |---|---|
@@ -173,28 +152,11 @@ A health score answers "is the shape right"; tests answer "does the happy path w
 | states | state values a schema allows ↔ values code writes and reads (dead states, phantom states) |
 | envelope | routed entry points → sensitive sinks, with no gate in between |
 
-The tables also run standalone, for CI and git hooks:
-
 ```bash
 python scripts/manon-contract-audit.py <project_path> --fail-on new --baseline <repo_id>
 ```
 
 `--fail-on new` fails only on surfaces that were not already there, so turning it on does not block every push on day one.
-
-### `/exp` — Experience Validation
-
-AI agent operates the product like a real user. Supports 4 product types:
-
-| Type | Tools | Use Case |
-|------|-------|----------|
-| `web` | Playwright MCP | Frontend pages |
-| `cli` | Bash | Scripts, CLI tools |
-| `service` | curl + logs | Backend APIs |
-| `hybrid` | Playwright + Bash | Full-stack |
-
-```
-/exp    — define scenarios → agent operates → report → fix → re-test (max 3 rounds)
-```
 
 ---
 
@@ -276,7 +238,7 @@ How much better is graph-powered querying vs. native tools (Grep/Glob/Read)?
 
 Manon uses its own skills to develop itself. These are real outcomes, not synthetic benchmarks.
 
-**`/dao` — Code Simplification**
+**Simplification loop (now one loop of `/assurance`)**
 
 Applied to Manon's own codebase (93 files, 800+ entities):
 
@@ -287,31 +249,11 @@ Applied to Manon's own codebase (93 files, 800+ entities):
 | Test coverage | 32% | 61% | **+29pp** |
 | Cross-module relations | 0 | 48 | Fixed from zero (was a graph bug) |
 
-`/dao` identified and auto-fixed: dead functions, over-fragmented modules, barrel re-exports, circular dependencies, and merged 4 redundant files — all validated against the graph before committing.
-
-**`/exp` — Experience Validation**
-
-Used `/exp` to test `/idea` skill before release:
-
-| Round | Result | Bugs Found | Fix |
-|-------|--------|-----------|-----|
-| Round 1 | 4/5 pass | graph API response parsing wrong; Windows GBK encoding crash | Fixed relation matching + UTF-8 output |
-| Round 2 | 0/1 pass | Symbol filter too strict; Chinese query crash | Relaxed filter + encoding fix |
-| Round 3 | 1/1 pass | — | All scenarios pass |
-
-3 rounds, 4 real bugs found and fixed — bugs that would have shipped to users without `/exp`.
-
-**`/idea` — Requirement Refinement**
-
-Full flow test (batch repo import feature):
-- Phase 1 (CONTEXT): 15 related modules + 3 graph entries + health score retrieved in one script call
-- Phase 2 (EXPLORE): 5 Socratic questions generated, all grounded in graph facts (fan-in, module boundaries)
-- Phase 3 (PROPOSE): 3 technical approaches with per-approach impact analysis
-- Phase 4 (DOCUMENT): Complete dev document generated, passed 5-dimension automated review
+The loop identified and auto-fixed: dead functions, over-fragmented modules, barrel re-exports, circular dependencies, and merged 4 redundant files — all validated against the graph before committing.
 
 ### 3. Self-Improvement Loop
 
-The skills reinforce each other: `/idea` defines requirements → code is written with graph context → `/dao` cleans up complexity → `/tc` fills test gaps → `/exp` validates end-to-end → bugs found feed back into the next cycle. Manon v1.0→v1.2.4 was developed entirely through this loop.
+Code is written with graph context (hooks enforce graph-first) → `/assurance` audits behaviour on suspect surfaces, fills coverage gaps where fan-in is highest, simplifies structure, and retires gates that no longer prove anything → findings feed back into the next cycle. Manon v1.0→v1.2.4 was developed entirely through this loop; v1.5+ consolidates all of it behind a single entry.
 
 ---
 
@@ -450,6 +392,13 @@ Override via `MANON_API_KEY`, `MANON_API_URL`.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.6.0** | 2026-08-27 | Skill consolidation: `/dao` `/audit` `/retire-checks` merged into `/assurance`; `/experience` `/idea` retired; two skills remain (`/manon` + `/assurance`) |
+| **v1.5.1** | 2026-08-26 | `/retire-checks` added (missed in 1.5.0); `check_skills.py` gate (install coverage + cross-reference invariants) |
+| **v1.5.0** | 2026-08-26 | `/assurance` skill (3-state checkup, triage entry); `/tc` retired into the P5 coverage loop; dao/audit SKILL.md compressed ≤100 lines with `references/` |
+| **v1.4.3** | 2026-08-24 | Contract-audit schema lifecycle + write-out-of-bounds criteria; tests 38→55; CaseOS dead surfaces 21→15 |
+| **v1.4.2** | 2026-08-24 | Contract-audit policy file no longer counts itself as evidence (exemption list zeroed the table); tests 31→37 |
+| **v1.4.1** | 2026-08-24 | Four false-positive classes fixed in contract audit (same-file callers, same-module constants, MIME-as-state, column DEFAULTs) |
+| **v1.4.0** | 2026-08-24 | Contract audit: 4 reconciliation tables, MCP tool, zero-model CLI, `/audit` skill, `.manon-contract.yaml`; venv-suffix dirs skipped (18.5s→1.2s) |
 | **v1.2.4** | 2026-03-22 | `/idea` + `/exp` skills; HANDLES edge type; Playwright MCP auto-config; complete skill ecosystem |
 | **v1.2.3** | 2026-03-22 | `/tc` skill; health dimensions MF/RE; `_resolve()` repo_id tolerance; dao code simplification; release tooling |
 | **v1.2.2** | 2026-03-21 | Bugfixes: install.sh crash, Windows MANON_DIR, phantom nodes; TS/JS coverage; scan mtime fast path |

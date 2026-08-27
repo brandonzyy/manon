@@ -18,7 +18,10 @@ import pathlib, re, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = ROOT / "skills"
-SH = (ROOT / "install.sh").read_text(encoding="utf-8")
+INSTALLERS = {  # install.sh 用 / 引路径，install.bat 的 ::PS 段用 \
+    "install.sh": (ROOT / "install.sh").read_text(encoding="utf-8"),
+    "install.bat": (ROOT / "install.bat").read_text(encoding="utf-8"),
+}
 names = sorted(p.name for p in SKILLS.iterdir() if p.is_dir())
 bad = []
 
@@ -26,21 +29,34 @@ if not names:
     print("❌ skills/ 下一个目录都没有——解析失败必须报错，不能报成「没有问题」")
     sys.exit(1)
 
-# 不变量 1：装块覆盖每个文件
-for n in names:
-    d = SKILLS / n
-    for f in (f for f in d.rglob("*") if f.is_file() and "__pycache__" not in str(f)):
-        rel = f.relative_to(d)
-        if str(rel) == "SKILL.md":       pat = f'skills/{n}/SKILL.md"'
-        elif rel.parts[0] == "references": pat = f'skills/{n}/references/"*.md'
-        elif rel.parts[0] == "scripts":    pat = f'skills/{n}/scripts/"*.py'
-        else:
-            bad.append(f"{n}/{rel}: 不认识的目录层（只支持 references/ 与 scripts/）"); continue
-        if pat not in SH:
-            bad.append(f"{n}/{rel} —— install.sh 里没有对应的 cp（缺 {pat}）")
-    for kind, ext in (("references", "*.md"), ("scripts", "*.py")):
-        if f'skills/{n}/{kind}/"{ext}' in SH and not (d / kind).is_dir():
-            bad.append(f"{n}: install.sh 要装 {kind}/ 但磁盘上没有 → cp 会报错")
+def _pats(n: str, rel: pathlib.PurePosixPath) -> tuple[str, ...] | None:
+    """一个文件在两个安装脚本里应有的 cp 模式；目录层不认识返回 None。"""
+    if str(rel) == "SKILL.md":
+        return (f'skills/{n}/SKILL.md"', f'skills\\{n}\\SKILL.md"')
+    if rel.parts[0] == "references":
+        return (f'skills/{n}/references/"*.md', f'skills\\{n}\\references\\*.md')
+    if rel.parts[0] == "scripts":
+        return (f'skills/{n}/scripts/"*.py', f'skills\\{n}\\scripts\\*.py')
+    return None
+
+# 不变量 1：两个安装脚本的装块都覆盖每个文件（install.bat 曾连装三个版本都没人发现）
+for installer, text in INSTALLERS.items():
+    for n in names:
+        d = SKILLS / n
+        for f in (f for f in d.rglob("*") if f.is_file() and "__pycache__" not in str(f)):
+            rel = f.relative_to(d)
+            pats = _pats(n, rel)
+            if pats is None:
+                bad.append(f"{n}/{rel}: 不认识的目录层（只支持 references/ 与 scripts/）"); continue
+            if not any(p in text for p in pats):
+                bad.append(f"{installer}: {n}/{rel} 没有对应的 cp（缺 {pats[0]}）")
+        for kind, sh_pat, bat_pat in (
+            ("references", f'skills/{n}/references/"*.md', f'skills\\{n}\\references\\*.md'),
+            ("scripts", f'skills/{n}/scripts/"*.py', f'skills\\{n}\\scripts\\*.py'),
+        ):
+            for pat in (sh_pat, bat_pat):
+                if pat in text and not (d / kind).is_dir():
+                    bad.append(f"{installer}: {n} 要装 {kind}/ 但磁盘上没有 → cp 会报错")
 
 # 不变量 2：交叉引用不悬空
 KNOWN_EXTERNAL = {"worktree"}      # 明确不属于本仓、且正文里已说明的
