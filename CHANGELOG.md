@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.3] - 2026-08-27
+
+### Added
+- **manon 给自己装上了保障栈——体检从 1/14 到 13/14（唯一缺格是变异测试，
+  P6 按序列刻意留位）。** 此前本仓零 CI、零 lint、零类型、零死代码、零依赖审计，
+  发明 /assurance 的仓自己是裸的。
+  - `scripts/check_l1.py` —— L1 五条棘轮（lint / 类型 / 死代码 / 契约死面 / 依赖
+    漏洞）+ 清单闭合不变量，判据只此一份，CI 与本机同款。基线冻结于
+    `scripts/l1-baselines/`：lint 116、typing 38（mypy `follow_imports=skip` 钉死
+    跨机可比——本机生成与 CI 装依赖的两套解析深度会读出两套错误）、死代码 8、
+    契约死面 13（诱饵旋钮与死端点入账，处置是退役或接线，不是豁免）、依赖漏洞 0
+  - `.github/workflows/ci.yml` —— 机外执行器：干净克隆跑 check_skills + check_l1 +
+    937 条测试带覆盖率测量（P5 第一步：只测量不设门槛）；gitleaks 独立 job 守密钥
+  - `gates.txt` 门禁清单（2 登记 + 1 豁免闭合）、`ruff.toml` / `mypy.ini` /
+    `scripts/requirements-l1.txt`（工具钉版本）
+  - `docs/incidents/` 事故账开账：README 停更五个月、install.bat 烂三个版本
+    两页，防复发各自落位（CONTRIBUTING 发版清单 + check_skills 双安装脚本校验）
+  - `/assurance` 行为层审计收尾加一条：**审完把受影响主链路实际操作一遍**——
+    静态读码判不掉运行时断点，这一步把「审计过了」和「产品好的」分开
+
+### Changed
+- `tests/e2e_mcp*.py|sh` 归位进 `tests/e2e/` 目录（零外部引用，体检的验收用例
+  格此前因「是文件不是目录」看不到它们）
+
 ## [1.6.2] - 2026-08-27
 
 ### Changed

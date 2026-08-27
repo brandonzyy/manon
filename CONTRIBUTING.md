@@ -132,3 +132,12 @@ All submissions require review. We aim to:
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
+
+## Release Checklist
+
+- [ ] `VERSION` 与 `CHANGELOG.md` 新条目同改
+- [ ] **版本表加行时 README/README_CN 的 skill 章节必须同改**——判例见
+      `docs/incidents/2026-08-27-readme-skills-stale-three-versions.md`（对外文档与
+      产品貌合神离了五个月才被发现）
+- [ ] `python3 scripts/check_skills.py && python3 scripts/check_l1.py` 本机双绿再推
+      （CI 跑同一对判据，本机先红省一轮往返）

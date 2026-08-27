@@ -1,0 +1,6 @@
+# 门禁清单 —— 每条都要答得出「谁执行它」。
+# 执行器：CI（.github/workflows/ci.yml，从干净克隆跑）；本机手动：python3 <路径>。
+# 格式：<路径>|<一句话说明>；豁免行写 exempt:<路径>|<reason>。
+
+scripts/check_skills.py|skills/ 的两条不变量：安装脚本装块覆盖每个文件、skill 交叉引用不悬空
+scripts/check_l1.py|L1 五条棘轮（lint/类型/死代码/契约死面/依赖漏洞）+ 执行器覆盖不变量：磁盘上每个 check_* 都得在本清单登记或在豁免区带 reason，登记的路径必须存在

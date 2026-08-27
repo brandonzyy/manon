@@ -1,0 +1,42 @@
+# manon 的机外门禁 —— 元规则二：执行器至少有一个不在你的机器上、从干净克隆跑。
+# 三个 job 秒级到分钟级；慢判据（覆盖率全套、变异）按补齐序列排在 P5/P6，刻意不进 PR 路径。
+name: gates
+
+on:
+  pull_request:
+  push:
+    branches: [master, dev]
+
+jobs:
+  l1-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 装依赖（产品 + L1 工具链，均钉版本——工具输出是 baseline 的内容）
+        run: |
+          pip install -r requirements.txt -r manon_mcp/requirements.txt
+          pip install -r scripts/requirements-l1.txt
+      - name: skills 两条不变量（装块覆盖 + 交叉引用）
+        run: python3 scripts/check_skills.py
+      - name: L1 五条棘轮 + 清单闭合（判据只此一份，本机同款）
+        run: python3 scripts/check_l1.py
+      - name: 测试 + 覆盖率测量（P5 第一步：只测量不设门槛）
+        run: >
+          python3 -m pytest tests/ -q
+          --cov=core --cov=manon_mcp --cov=codeindex --cov=matrixone_graph
+          --cov-report=term --cov-report=json:coverage.json
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 密钥扫描（六件套第六件——真凭据在进远端之前拦下）
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,9 @@
+# L1 六件套之一：lint。规则集 F（未用/未定义）· B（陷阱）· ARG（未用参数）·
+# ERA（注释掉的代码）· ASYNC（异步陷阱）。存量冻结在 scripts/l1-baselines/lint.txt，
+# 比对逻辑在 scripts/check_l1.py（只此一份）。
+target-version = "py310"
+extend-exclude = ["repos", "indexes", "saas_repos", "saas_indexes", "saas_data",
+                  "web/static", "dist", "build"]
+
+[lint]
+select = ["F", "B", "ARG", "ERA", "ASYNC"]
