@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,10 +108,54 @@ def _excluded(rel: str, patterns: list[str]) -> bool:
     return False
 
 
+def _git_scope(root: Path) -> list[str] | None:
+    """git 眼中的审计面：跟踪文件 + 未跟踪未忽略的在途工作，排除 gitignored。
+
+    基线必须跨机可比：CI 克隆只看得到跟踪面，本机多出来的私有树（gitignore
+    的前端、本地缓存）会改写 verdict——同一份代码两台机器读出两套死面
+    （判例 2026-08-27：web/ 在场时 5 条 dead，缺席时降级 suspect / 消失，
+    CI 首跑即红）。--exclude-standard 走 gitignore，所以在途的未跟踪文件
+    仍然算证据，机器私有的不算。git 不在 / 不是工作树时返回 None，回退全量走查。
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z",
+             "--cached", "--others", "--exclude-standard"],
+            capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return [p for p in r.stdout.decode("utf-8", "replace").split("\0") if p]
+
+
+def _readable(entry: Path, root: Path, patterns: list[str]) -> SourceFile | None:
+    """共享的逐文件收口：kind / 豁免 / 大小 / 可读性，两条枚举路径同款。"""
+    rel = entry.relative_to(root).as_posix()
+    kind = _kind_for(rel)
+    if kind is None or _excluded(rel, patterns):
+        return None
+    try:
+        if entry.is_symlink() or entry.stat().st_size > MAX_FILE_BYTES:
+            return None
+        text = entry.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return SourceFile(path=entry, rel=rel, kind=kind, text=text)
+
+
 def enumerate_files(root: Path, extra_excludes: list[str] | None = None) -> list[SourceFile]:
-    """Walk the tree once and return every readable text file with its kind."""
+    """Enumerate the audit surface: git-visible files, or a full walk outside a work tree."""
     patterns = list(extra_excludes or [])
     files: list[SourceFile] = []
+    scope = _git_scope(root)
+    if scope is not None:
+        for rel in scope:
+            sf = _readable(root / rel, root, patterns)
+            if sf is not None:
+                files.append(sf)
+        files.sort(key=lambda f: f.rel)
+        return files
     stack = [root]
     while stack:
         current = stack.pop()
@@ -129,19 +174,9 @@ def enumerate_files(root: Path, extra_excludes: list[str] | None = None) -> list
                     continue
                 stack.append(entry)
                 continue
-            rel = entry.relative_to(root).as_posix()
-            kind = _kind_for(rel)
-            if kind is None:
-                continue
-            if _excluded(rel, patterns):
-                continue
-            try:
-                if entry.stat().st_size > MAX_FILE_BYTES:
-                    continue
-                text = entry.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            files.append(SourceFile(path=entry, rel=rel, kind=kind, text=text))
+            sf = _readable(entry, root, patterns)
+            if sf is not None:
+                files.append(sf)
     files.sort(key=lambda f: f.rel)
     return files
 

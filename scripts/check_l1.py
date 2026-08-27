@@ -111,7 +111,14 @@ def collect_dead() -> list[str]:
 def collect_contract() -> list[str]:
     """契约对账的死面 id。suspect 不进棘轮——它只决定审计投向，不是缺陷清单。"""
     auditor = ROOT / "scripts" / "manon-contract-audit.py"
-    r = _run([sys.executable, str(auditor), ".", "--json"], timeout=900)
+    # 基线文件本身不许当证据：contract.txt 里写着 "endpoints:GET /tunnel-url"，
+    # 留在扫描面里下一轮就把这行字读成弱引用，dead 升 suspect——棘轮自指，
+    # 判定随基线内容翻转（判例 2026-08-27：CI「5 条存量消失」即此）。两种
+    # pattern 各管一条枚举路径：走查分支按目录尾斜杠匹配，git 枚举分支按文件名。
+    r = _run([sys.executable, str(auditor), ".", "--json",
+              "--no-project-excludes",
+              "--exclude", "scripts/l1-baselines/",
+              "--exclude", "scripts/l1-baselines/*"], timeout=900)
     if r.returncode != 0:
         _die(f"契约对账退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
     # JSON 是扁平结构：findings 一行一条，带 table/id/verdict。

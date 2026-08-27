@@ -3,7 +3,7 @@
 ## [1.6.4] - 2026-08-27
 
 ### Fixed
-- **CI 首跑即红，三个独立根因**（详见 docs/incidents/2026-08-27-ci-first-run-three-root-causes.md）：
+- **CI 首跑即红，四个独立根因**（详见 docs/incidents/2026-08-27-ci-first-run-four-root-causes.md）：
   - 装依赖顺序改为「L1 工具链 → L1 检查 → 产品依赖 → pytest」——mypy 在
     python_version=3.10 语义下解析 numpy 内嵌 stub 的 PEP 695 语法直接 fatal
     （exit 2），L1 检查必须跑在产品依赖进环境之前，与 baseline 生成环境同构
@@ -12,8 +12,15 @@
   - `mcp>=1.0.0,<2`（v2 改名 FastMCP，import 全断）、`pytest-asyncio==1.4.0`
     （此前不在任何清单，48 个异步测试挂）、`tree-sitter-go`（本机 venv 有、
     清单没有，干净环境必挂）进 requirements
-  - 终验：Python 3.12 干净环境按新 CI 顺序走全流程，929 过 / 0 挂，五条棘轮
-    与 baseline 逐条一致
+  - **contract 棘轮的审计面机器相关且自指**（修完前三个后 CI 复红，读数在
+    8/11/13 间翻转）：基线文件自身在扫描面里被当弱引用（自指翻转）；
+    `.manon_runtime` 的本机 custom_excludes 把 scripts/ 排除出证据（CI 读另
+    一个世界）；gitignore 的 web/ 只在本机改写证据权重。三条边界：`--exclude`
+    排除棘轮自身产物、`--no-project-excludes` 审计版本化仓库、`enumerate_files`
+    在 git 树内钉「跟踪 + 未跟踪未忽略」面。基线在 CI 同构树重造 13 → 11
+    （tunnel-url 两条本就被 launch_mcp.sh 引用，是本机配置制造的假 dead）
+  - 终验：3.12 干净树与 3.14 本机树各三连跑全绿（11==11），pytest 937 过
+    （3.14）/ 929 过（3.12），五条棘轮与 baseline 逐条一致
 
 ## [1.6.3] - 2026-08-27
 

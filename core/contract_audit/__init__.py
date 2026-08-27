@@ -43,18 +43,28 @@ _AUDITORS = {
 }
 
 
-def audit_project(local_path: str, tables: tuple[str, ...] = TABLES) -> dict:
+def audit_project(local_path: str, tables: tuple[str, ...] = TABLES,
+                  extra_excludes: list[str] | None = None,
+                  use_project_excludes: bool = True) -> dict:
     """Run the requested tables against a project tree and return raw facts."""
     root = Path(local_path).resolve()
     started = time.monotonic()
     policy = load_policy(root)
+    # 运行时的 custom_excludes 是**用户为本机索引**配的取舍，不是仓库的事实：
+    # 棘轮（check_l1）必须传 use_project_excludes=False，否则本机配过索引与
+    # CI 干净克隆读出两套死面（判例 2026-08-27：scripts/ 被本机排除后，
+    # launch_mcp.sh 对 /tunnel-url 的引用蒸发，两条 dead 凭空出现）。
+    runtime_excludes = project_excludes(str(root)) if use_project_excludes else []
     files = [
-        source for source in enumerate_files(root, project_excludes(str(root)))
+        source for source in enumerate_files(
+            root, runtime_excludes + list(extra_excludes or []))
         if source.rel not in POLICY_FILENAMES
     ]
     # The policy file names every finding it exempts. Left in the corpus it
     # reads as a consumer of every surface it mentions, and the whole table
-    # silently goes to zero the moment someone writes one.
+    # silently goes to zero the moment someone writes one. The ratchet's own
+    # baseline files are the same disease one layer out (--exclude exists so
+    # the caller can keep its outputs out of the evidence).
 
     results: list[TableResult] = []
     for name in tables:

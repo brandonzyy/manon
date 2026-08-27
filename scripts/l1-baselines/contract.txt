@@ -11,5 +11,3 @@ configs:env:SAAS_RATE_ENTERPRISE
 configs:env:SAAS_RATE_FREE
 configs:env:SAAS_RATE_PRO
 endpoints:GET /admin-console
-endpoints:GET /tunnel-url
-endpoints:POST /tunnel-url
