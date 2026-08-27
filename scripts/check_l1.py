@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """manon 自己的 L1 门禁 —— 五条棘轮 + 一条清单不变量。
 
-    python3 scripts/check_l1.py               # 全部判据，与 baseline 比对
-    python3 scripts/check_l1.py lint typing   # 只跑指定的
-    python3 scripts/check_l1.py --regenerate  # 重新生成全部 baseline（修好后收紧用）
+    L1=~/.cache/manon-l1-venv/bin/python
+    $L1 scripts/check_l1.py               # 全部判据，与 baseline 比对
+    $L1 scripts/check_l1.py lint typing   # 只跑指定的
+    $L1 scripts/check_l1.py --regenerate  # 重新生成全部 baseline（修好后收紧用）
 
-工具链钉版本在 scripts/requirements-l1.txt；本机没有就先装：
-    pip install -r scripts/requirements-l1.txt
+**解释器是判据的一部分**，不是随便哪个 python3：产品依赖在解析路径上时 mypy
+换一套结果，读出来的红与 CI 的红不是同一件事。裸跑当场拒（见 PRODUCT_ONLY）。
+装一次：python3 scripts/install-hooks.py
+
+工具链钉版本在 scripts/requirements-l1.txt。
 **工具缺失时红，不跳过**：静默变绿等于谎报「这一类缺陷有人看着」。
 
 五条棘轮共用一套语义（与 ~/.claude 工具仓的 ratchet 同构，那份不公开、这份自包含）：
@@ -18,12 +22,15 @@ key 不含行号——行号随任何编辑漂移，带行号的 baseline 撑不
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +40,54 @@ SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".mypy_cache",
              ".ruff_cache", "repos", "indexes", "saas_repos", "saas_indexes",
              "saas_data", "dist", "build", "web/static/reports",
              "web/static/test-results"}
-REGEN = "python3 scripts/check_l1.py --regenerate"
+L1_PY = "~/.cache/manon-l1-venv/bin/python"
+REGEN = f"{L1_PY} scripts/check_l1.py --regenerate"
+
+# 判据的读数不许随解释器变——CI 那一步的名字就是这条不变量（ci.yml：
+# 「此刻环境里不许有产品依赖」），这里把它写成可执行的一句。
+# 产品依赖在解析路径上时 mypy 换一套解析结果：实测多报 6 条 import-untyped，
+# 而 CI 上一条都没有。后果不是「多一条红」——照着这条红去 --regenerate，
+# 幻影条目就进了 baseline，CI 随即以「变少了」再红一次，两步之后基线已经脏了。
+# 2026-08-27 的 CI 首跑判例里这条只留下一句方法论教训，没有执行器；这就是。
+#
+# 哨兵按 (import 名, 发行名) 成对写：发行名必须在产品依赖表里、且不许出现在
+# requirements-l1.txt 里，由 tests/test_check_l1_env.py 判——哨兵指错人时那份
+# 用例红，而不是这道门禁开始乱拒。
+PRODUCT_ONLY = (("yaml", "pyyaml"), ("numpy", "numpy"), ("fastapi", "fastapi"))
+ALLOW_DIRTY = "MANON_L1_ALLOW_DIRTY"
+
+_Find = Callable[[str], object | None]
+
+
+def contaminated(find: _Find = importlib.util.find_spec) -> list[str]:
+    """当前解释器里在场的产品依赖（发行名）。空列表 = 与 baseline 生成环境同构。"""
+    found: list[str] = []
+    for mod, dist in PRODUCT_ONLY:
+        try:
+            if find(mod) is not None:
+                found.append(dist)
+        except (ImportError, ValueError):
+            pass
+    return found
+
+
+def _env_ok_or_die(regen: bool) -> None:
+    dirty = contaminated()
+    if not dirty:
+        return
+    names = "、".join(dirty)
+    how = (f"换 L1 专用解释器：{L1_PY} scripts/check_l1.py …"
+           f"（没装就先跑 python3 scripts/install-hooks.py）")
+    if regen:
+        _die(f"产品依赖在场（{names}），拒绝生成 baseline。{how} "
+             f"逃生口对 --regenerate 无效：脏环境写出的基线带着幻影条目，"
+             f"CI 随后会以「变少了」再红一次。")
+    if os.environ.get(ALLOW_DIRTY):
+        print(f"⚠️  {ALLOW_DIRTY}=1：产品依赖在场（{names}），"
+              f"这一轮读数与 CI 不可比，不算判过。", file=sys.stderr)
+        return
+    _die(f"产品依赖在场（{names}），这一轮读数与 CI 不可比。{how} "
+         f"只想看一眼：{ALLOW_DIRTY}=1 强跑——会在 stderr 留痕，且对 --regenerate 无效。")
 
 
 def _die(msg: str) -> None:
@@ -230,6 +284,7 @@ ALL = {"lint": collect_lint, "typing": collect_typing, "dead": collect_dead,
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     regen = "--regenerate" in sys.argv
+    _env_ok_or_die(regen)
     gates = args or list(ALL)
     unknown = [g for g in gates if g not in ALL]
     if unknown:

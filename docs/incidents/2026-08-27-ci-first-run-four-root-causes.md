@@ -43,3 +43,12 @@
      （tunnel-url 两条本就被 launch_mcp.sh 引用，是 runtime 配置制造的假 dead）。
    - 验证：Python 3.12 干净树与 3.14 本机树各三连跑全绿（11==11），pytest
      937 过（3.14）/ 929 过（3.12），五条棘轮与 baseline 逐条一致。
+
+**补记（2026-08-28）**：上面第 2 条那句方法论教训当时只落在纸上——「必须连解释器
+一起换」没有执行器，于是它照常复发：CLAUDE.md 与 CONTRIBUTING.md 写的都是裸
+`python3 scripts/check_l1.py`，照着跑多出 6 条 `import-untyped`。真正的代价不是多
+一条红，是下一步顺手 `--regenerate` 把幻影写进 baseline，CI 随后以「变少了」再红
+一次，而两次红看起来都像真的。现补执行器：`check_l1.py` 起手查产品依赖在不在场
+（哨兵 `PRODUCT_ONLY`），在场即拒；逃生口 `MANON_L1_ALLOW_DIRTY=1` 只放行读数、
+对 `--regenerate` 一律无效。判据在 `tests/test_check_l1_env.py`（15 格），含一格
+反向不变量：哨兵在真 L1 venv 里必须读作干净，否则红的是用例而不是那道门禁。
