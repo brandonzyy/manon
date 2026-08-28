@@ -32,6 +32,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINES = ROOT / "scripts" / "l1-baselines"
@@ -90,16 +91,66 @@ def _env_ok_or_die(regen: bool) -> None:
          f"只想看一眼：{ALLOW_DIRTY}=1 强跑——会在 stderr 留痕，且对 --regenerate 无效。")
 
 
-def _die(msg: str) -> None:
+def _die(msg: str) -> NoReturn:
     print(f"❌ {msg}", file=sys.stderr)
     raise SystemExit(2)
 
 
-def _need(tool: str) -> None:
-    if shutil.which(tool) is None:
-        _die(f"L1 工具缺失：{tool} 不在 PATH。装一次："
-             f"pip install -r scripts/requirements-l1.txt。"
+PINS_FILE = ROOT / "scripts" / "requirements-l1.txt"
+_VER = re.compile(r"(\d+\.\d+(?:\.\d+)?)")
+
+
+def pinned_versions(text: str) -> dict[str, str]:
+    """requirements-l1.txt 里钉的版本。**这份表是唯一事实源**，不在代码里抄第二份。"""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            name, ver = line.split("==", 1)
+            out[name.strip()] = ver.strip()
+    return out
+
+
+def tool_version(path: str) -> str | None:
+    """`<工具> --version` 里的版本号。读不出来返回 None（当作「量不到」，不是「对」）。"""
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True,
+                           text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = _VER.search(f"{r.stdout} {r.stderr}")
+    return m.group(1) if m else None
+
+
+def _tool(name: str) -> str:
+    """L1 工具的绝对路径，**先找解释器自己那个 bin，再退回 PATH**，并核版本。
+
+    钉解释器只挡住了「产品依赖换掉 mypy 的解析结果」那一种；出读数的是工具，
+    而工具此前一律按裸名字走 PATH——解释器钉在 venv 上、工具却来自别处。
+    实测 2026-08-28：本机 PATH 上是 mypy 1.19.0、requirements-l1.txt 钉的是
+    2.3.1，同一份代码本机多报 6 条 import-untyped，vulture 干脆不在 PATH。
+    照那个红去 --regenerate，baseline 就被写进了另一个版本的读数，CI 随即以
+    「变少了」再红一次——正是钉解释器要防的那条链，只是下沉了一层。
+
+    **版本不符一律拒，没有逃生口**：工具版本就是 baseline 的内容，读数与 CI
+    不可比时给出的任何结论都是假的，而 ALLOW_DIRTY 那个口子放行的是「让我看一眼」，
+    不是「让我按不可比的读数改 baseline」。
+    """
+    how = (f"装一次：python3 scripts/install-hooks.py"
+           f"（或 pip install -r scripts/requirements-l1.txt），"
+           f"再用 {L1_PY} 跑。")
+    cand = Path(sys.executable).parent / name
+    path = str(cand) if cand.exists() else shutil.which(name)
+    if path is None:
+        _die(f"L1 工具缺失：{name} 既不在 {cand.parent} 也不在 PATH。{how} "
              f"本门禁刻意不跳过——工具缺失时静默变绿，等于谎报「有人看着」。")
+    want = pinned_versions(PINS_FILE.read_text(encoding="utf-8")).get(name)
+    got = tool_version(path)
+    if want and got != want:
+        _die(f"{name} 版本不符：在跑的是 {got or '读不出版本'}（{path}），"
+             f"requirements-l1.txt 钉的是 {want}。工具的输出就是 baseline 的内容，"
+             f"版本一漂读数与 CI 就不可比。{how}")
+    return path
 
 
 def _pyfiles() -> list[Path]:
@@ -118,8 +169,7 @@ def _run(cmd: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
 # ── 各判据只回答「当前存量是什么」 ──────────────────────────────────────
 
 def collect_lint() -> list[str]:
-    _need("ruff")
-    r = _run(["ruff", "check", ".", "--output-format=concise"])
+    r = _run([_tool("ruff"), "check", ".", "--output-format=concise"])
     if r.returncode not in (0, 1):
         # ruff 的 fatal 走 stderr；mypy 的（如 stub 里的 [syntax]）走 stdout——
         # 判例（2026-08-27）：CI 上 mypy exit 2、stderr 为空，死因在 stdout 被吞。
@@ -133,8 +183,7 @@ def collect_lint() -> list[str]:
 
 
 def collect_typing() -> list[str]:
-    _need("mypy")
-    r = _run(["mypy", ".", "--no-incremental", "--no-error-summary"])
+    r = _run([_tool("mypy"), ".", "--no-incremental", "--no-error-summary"])
     if r.returncode not in (0, 1):
         _die(f"mypy 退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
     counts: Counter[tuple[str, str]] = Counter()
@@ -146,11 +195,10 @@ def collect_typing() -> list[str]:
 
 
 def collect_dead() -> list[str]:
-    _need("vulture")
     files = _pyfiles()
     if not files:
         _die("扫描面为空——这不是「没有发现」，是「没看」。")
-    r = _run(["vulture", "--min-confidence", "80",
+    r = _run([_tool("vulture"), "--min-confidence", "80",
               *[str(f.relative_to(ROOT)) for f in files]])
     if r.returncode not in (0, 3):        # 0 = 干净，3 = 有发现
         _die(f"vulture 退出码 {r.returncode}：\n{(r.stderr or r.stdout)[:500]}")
@@ -184,12 +232,11 @@ def collect_contract() -> list[str]:
 
 
 def collect_deps() -> list[str]:
-    _need("pip-audit")
     manifests = [ROOT / "requirements.txt", ROOT / "manon_mcp" / "requirements.txt"]
     manifests = [m for m in manifests if m.exists()]
     if not manifests:
         _die("找不到依赖清单——判据没有对象可看。")
-    r = _run(["pip-audit", "--no-deps", "-f", "json",
+    r = _run([_tool("pip-audit"), "--no-deps", "-f", "json",
               *[f"-r={m}" for m in manifests]], timeout=300)
     if r.returncode not in (0, 1):
         _die(f"pip-audit 退出码 {r.returncode}（网络？）——判据没跑成不算零发现：\n"
