@@ -43,11 +43,17 @@ L1 工具链必须用**独立 venv**（默认 `~/.cache/manon-l1-venv`），三�
   「变少了」再红一次。`check_l1.py` 因此起手就查产品依赖在不在场，在就拒；
   逃生口 `MANON_L1_ALLOW_DIRTY=1` 只放行读数，对 `--regenerate` 一律无效。
 
+**判据是工具链，不只是解释器。** ruff / mypy / vulture / pip-audit 的输出就是
+baseline 的内容，工具版本一漂读数就与 CI 不可比。`check_l1.py` 按
+`sys.executable` 的同级 bin 解析工具，再与 `scripts/requirements-l1.txt` 钉的
+版本逐个核对，不符当场拒且没有逃生口——`MANON_L1_ALLOW_DIRTY` 放行的是
+「让我看一眼」，不是「让我按不可比的读数改 baseline」。
+
 `deps`（pip-audit 连 OSV）是网络判据，不进提交路径——它把钩子从 2 秒拖到 17 秒，
 超出「提交钩子 ≤15 秒」的预算。它的执行器在 CI。
 
 ```bash
-L1=~/.cache/manon-l1-venv/bin/python              # 解释器是判据的一部分
+L1=~/.cache/manon-l1-venv/bin/python              # 工具链是判据的一部分
 $L1 scripts/check_l1.py                          # 五条棘轮全跑（含网络那条）
 $L1 scripts/check_l1.py lint typing dead contract
 $L1 scripts/check_l1.py --regenerate             # 修好之后收紧 baseline
