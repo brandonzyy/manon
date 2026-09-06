@@ -93,7 +93,7 @@ tests/test_matrixone_graph.py|F401|1
 tests/test_matrixone_graph.py|F841|1
 tests/test_mcp_config.py|F401|2
 tests/test_mcp_helpers.py|ARG005|3
-tests/test_mcp_helpers.py|F401|3
+tests/test_mcp_helpers.py|F401|2
 tests/test_mcp_helpers.py|F841|1
 tests/test_mcp_init_service.py|ARG005|15
 tests/test_mcp_sync.py|F401|5

@@ -9,6 +9,7 @@ from core.ast import find_project_by_repo_id
 
 from .deps import ToolDependencies
 from .search import _resolve
+from ..query_state import record_query
 
 log = logging.getLogger("manon-mcp")
 
@@ -63,6 +64,7 @@ def register_health_tools(mcp, deps: ToolDependencies):
     def manon_code_health(repo_id: str) -> str:
         """分析代码库的健康状况。"""
         repo_id = _resolve(repo_id)
+        record_query(repo_id)
         debt = _get_cached_debt(repo_id)
         body = {"debt_metrics": debt} if debt else {}
         result = client._post(f"/api/v1/repos/{repo_id}/code-health", body, timeout=15)
