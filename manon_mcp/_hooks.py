@@ -60,9 +60,12 @@ Manon-first 那几个钩子原本对**任何仓**生效，而本机 12 个 git �
 """
 import json
 import os
+import time
 from pathlib import Path
 
 REGISTRY = ".manon/projects.json"
+QUERY_STATE = ".manon/last_query.json"
+QUERY_WINDOW = 3600  # 秒——「查过 manon」的时效，超窗就当没查过，提示重查一次。
 
 
 def registry(home=None):
@@ -98,6 +101,30 @@ def repo_of(cwd=None, home=None):
             if best is None or len(str(r)) > len(str(best[0])):
                 best = (r, rid)
     return best
+
+
+def manon_queried(root, home=None, now=None):
+    """root 这个仓在 QUERY_WINDOW 内查过 manon 没有。
+
+    时间戳由 MCP 服务端在处理查询时写（manon_mcp/query_state.py），这里只读。
+    状态**不可知**——文件不存在（冷启动：还没装过会写它的服务端版本）、读不了、
+    不是合法 JSON——按查过处理：同 registry() 的方向，这条规则是提醒不是
+    安全边界，宁可漏拦一次提醒，也不要回到那道永远过不去的门。
+    「文件在而该仓没有条目」不算不可知：那是明确没查过，照拦。"""
+    q = (Path.home() if home is None else home) / QUERY_STATE
+    try:
+        state = json.loads(q.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return True
+    if not isinstance(state, dict):
+        return True  # 文件在但结构不对——写入方坏了，同「读不到」方向处理
+    try:
+        ts = float(state[str(root)])
+    except (KeyError, TypeError, ValueError):
+        return False  # 文件是好的，这个仓没有有效条目——明确没查过
+    if now is None:
+        now = time.time()
+    return (now - ts) <= QUERY_WINDOW
 '''
 
 
@@ -242,6 +269,15 @@ _PRE_AGENT_PLAN_HOOK = '''\
 
 作用面同 pre_search.py：没有索引的仓里，「先查 manon」没有可查的东西。
 
+拦截是有时效的（2026-09-07）：本会话在 QUERY_WINDOW（60 分钟）内查过这个仓的
+manon（search / deep_query / graph / code_health 等都算）就放行。原先无条件退 2，
+又不记录「查过没有」，按字面永远过不去——模型于是学会省略 subagent_type 绕行，
+而省略类型会让客户端对内置子代理的模型覆盖（builtInModelOverrides）不生效，
+子代理全跑在主模型上。**一道永远过不去的门，训练出来的不是「先查」，是「绕门」。**
+
+时间戳由 MCP 服务端写 ~/.manon/last_query.json（manon_mcp/query_state.py），
+这里经 manon_scope.manon_queried 只读；读不到按查过处理（fail-open）。
+
 本文件由 manon_mcp/_hooks.py 生成，手改会在下次 MCP init 时被覆盖。
 """
 import json
@@ -249,7 +285,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from manon_scope import repo_of  # noqa: E402
+from manon_scope import manon_queried, repo_of  # noqa: E402
 
 try:
     data = json.load(sys.stdin)
@@ -258,9 +294,11 @@ except (json.JSONDecodeError, ValueError):
 
 agent_type = (data.get("tool_input") or {}).get("subagent_type", "")
 hit = repo_of(data.get("cwd"))
-if agent_type in ("Explore", "general-purpose") and hit is not None:
-    print("Hook rule: query Manon before spawning Explore/general-purpose agents "
-          "for repository exploration (repo_id=%s)." % hit[1], file=sys.stderr)
+if (agent_type in ("Explore", "general-purpose") and hit is not None
+        and not manon_queried(hit[0])):
+    print("Hook rule: query Manon (manon_search / manon_deep_query / manon_graph / "
+          "manon_code_health, repo_id=%s) before spawning Explore/general-purpose "
+          "agents for repository exploration." % hit[1], file=sys.stderr)
     sys.exit(2)
 
 print(json.dumps({"continue": True}))

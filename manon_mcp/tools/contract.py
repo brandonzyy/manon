@@ -14,6 +14,7 @@ from core.ast import find_project_by_repo_id
 
 from .deps import ToolDependencies
 from .search import _resolve
+from ..query_state import record_query
 
 log = logging.getLogger("manon-mcp")
 
@@ -28,6 +29,7 @@ def register_contract_tools(mcp, deps: ToolDependencies):
         from core.contract_audit.report import render
 
         repo_id = _resolve(repo_id)
+        record_query(repo_id)
         found = find_project_by_repo_id(repo_id)
         if not found:
             return f"repo {repo_id} 未在本机注册，契约对账需要本地源码树"
