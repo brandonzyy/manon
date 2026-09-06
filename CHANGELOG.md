@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.6.5] - 2026-08-27
+
+### Added
+- **Day-0 施工器（`skills/assurance/scripts/day0.py`）—— 体系缺口二的闭合。**
+  此前 assurance_check 只体检不施工，每个新仓的 L1 靠会话现场手搓，质量方差
+  取决于那一次会话。现在一条命令装齐：ruff.toml / mypy.ini（含跨机可比边界：
+  钉 python_version、follow_imports=skip）、钉版工具链清单、自含判据
+  scripts/check_l1.py（四条棘轮 + 清单闭合不变量）、gates.txt 登记、CI 模板
+  （GitHub 远端才写，装序即判据：L1 先于产品依赖；Gitee 明说走不了 CI）、
+  .gitignore。装完当场冻结 baseline；工具不在 PATH 则打印收尾命令并标 ⚠。
+  幂等重跑跳过不覆盖。判据测试 tests/test_day0.py：装齐 + 幂等 + 棘轮
+  「存量冻结后绿 / 新增即红」。
+- `/assurance` SKILL.md Step 3 的 Day-0 行接入施工器命令（100 行上限内改行不加行）。
+
+
+## [1.6.4] - 2026-08-27
+
+### Fixed
+- **CI 首跑即红，四个独立根因**（详见 docs/incidents/2026-08-27-ci-first-run-four-root-causes.md）：
+  - 装依赖顺序改为「L1 工具链 → L1 检查 → 产品依赖 → pytest」——mypy 在
+    python_version=3.10 语义下解析 numpy 内嵌 stub 的 PEP 695 语法直接 fatal
+    （exit 2），L1 检查必须跑在产品依赖进环境之前，与 baseline 生成环境同构
+  - check_l1.py 三处 fatal（ruff/mypy/vulture）改 `stderr or stdout` 回显——
+    mypy 的 fatal 打在 stdout，此前 CI 上死因显示为空
+  - `mcp>=1.0.0,<2`（v2 改名 FastMCP，import 全断）、`pytest-asyncio==1.4.0`
+    （此前不在任何清单，48 个异步测试挂）、`tree-sitter-go`（本机 venv 有、
+    清单没有，干净环境必挂）进 requirements
+  - **contract 棘轮的审计面机器相关且自指**（修完前三个后 CI 复红，读数在
+    8/11/13 间翻转）：基线文件自身在扫描面里被当弱引用（自指翻转）；
+    `.manon_runtime` 的本机 custom_excludes 把 scripts/ 排除出证据（CI 读另
+    一个世界）；gitignore 的 web/ 只在本机改写证据权重。三条边界：`--exclude`
+    排除棘轮自身产物、`--no-project-excludes` 审计版本化仓库、`enumerate_files`
+    在 git 树内钉「跟踪 + 未跟踪未忽略」面。基线在 CI 同构树重造 13 → 11
+    （tunnel-url 两条本就被 launch_mcp.sh 引用，是本机配置制造的假 dead）
+  - 终验：3.12 干净树与 3.14 本机树各三连跑全绿（11==11），pytest 937 过
+    （3.14）/ 929 过（3.12），五条棘轮与 baseline 逐条一致
+
+## [1.6.3] - 2026-08-27
+
+### Added
+- **manon 给自己装上了保障栈——体检从 1/14 到 13/14（唯一缺格是变异测试，
+  P6 按序列刻意留位）。** 此前本仓零 CI、零 lint、零类型、零死代码、零依赖审计，
+  发明 /assurance 的仓自己是裸的。
+  - `scripts/check_l1.py` —— L1 五条棘轮（lint / 类型 / 死代码 / 契约死面 / 依赖
+    漏洞）+ 清单闭合不变量，判据只此一份，CI 与本机同款。基线冻结于
+    `scripts/l1-baselines/`：lint 116、typing 38（mypy `follow_imports=skip` 钉死
+    跨机可比——本机生成与 CI 装依赖的两套解析深度会读出两套错误）、死代码 8、
+    契约死面 13（诱饵旋钮与死端点入账，处置是退役或接线，不是豁免）、依赖漏洞 0
+  - `.github/workflows/ci.yml` —— 机外执行器：干净克隆跑 check_skills + check_l1 +
+    937 条测试带覆盖率测量（P5 第一步：只测量不设门槛）；gitleaks 独立 job 守密钥
+  - `gates.txt` 门禁清单（2 登记 + 1 豁免闭合）、`ruff.toml` / `mypy.ini` /
+    `scripts/requirements-l1.txt`（工具钉版本）
+  - `docs/incidents/` 事故账开账：README 停更五个月、install.bat 烂三个版本
+    两页，防复发各自落位（CONTRIBUTING 发版清单 + check_skills 双安装脚本校验）
+  - `/assurance` 行为层审计收尾加一条：**审完把受影响主链路实际操作一遍**——
+    静态读码判不掉运行时断点，这一步把「审计过了」和「产品好的」分开
+
+### Changed
+- `tests/e2e_mcp*.py|sh` 归位进 `tests/e2e/` 目录（零外部引用，体检的验收用例
+  格此前因「是文件不是目录」看不到它们）
+
 ## [1.6.2] - 2026-08-27
 
 ### Changed

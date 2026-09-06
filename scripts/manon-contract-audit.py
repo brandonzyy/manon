@@ -44,6 +44,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--baseline", default="")
     parser.add_argument("--update-baseline", action="store_true")
     parser.add_argument("--fail-on", choices=("dead", "any", "new", "never"), default="never")
+    parser.add_argument("--exclude", action="append", default=[],
+                        help="fnmatch pattern(s) kept out of the evidence corpus — "
+                             "e.g. the ratchet's own baseline outputs (self-reference)")
+    parser.add_argument("--no-project-excludes", action="store_true",
+                        help="ignore the runtime index's custom_excludes — the ratchet "
+                             "audits the repo as versioned, not as configured locally")
     return parser.parse_args(argv)
 
 
@@ -60,7 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"unknown table(s): {', '.join(unknown)}; known: {', '.join(TABLES)}", file=sys.stderr)
         return 2
 
-    result = audit_project(str(root), tables=tables)
+    result = audit_project(str(root), tables=tables, extra_excludes=args.exclude,
+                           use_project_excludes=not args.no_project_excludes)
 
     baseline = load_baseline(args.baseline) if args.baseline else {}
     new_findings = diff_baseline(result, baseline)[0] if args.baseline else []

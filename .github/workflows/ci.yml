@@ -1,0 +1,47 @@
+# manon 的机外门禁 —— 元规则二：执行器至少有一个不在你的机器上、从干净克隆跑。
+# 三个 job 秒级到分钟级；慢判据（覆盖率全套、变异）按补齐序列排在 P5/P6，刻意不进 PR 路径。
+name: gates
+
+on:
+  pull_request:
+  push:
+    branches: [master, dev]
+
+jobs:
+  l1-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # 顺序是判据的一部分：L1 工具链先装、L1 检查先跑，产品依赖在 L1 之后才进环境。
+      # mypy.ini 钉 python_version=3.10，baseline 在「产品依赖不在解析路径上」的
+      # 环境里生成（本机 ~/.claude/.venv-l1 正是这形态）；产品依赖在场时 mypy 会去
+      # 解析 numpy 自带的 __init__.pyi，其中的 PEP 695 语法在 3.10 语义下直接
+      # fatal（exit 2）——1.6.3 首跑即红就是这么来的（mypy 的 fatal 在 stdout）。
+      - name: 装 L1 工具链（仅此一份，钉版本——工具输出是 baseline 的内容）
+        run: pip install -r scripts/requirements-l1.txt
+      - name: skills 两条不变量（装块覆盖 + 交叉引用）
+        run: python3 scripts/check_skills.py
+      - name: L1 五条棘轮 + 清单闭合（判据只此一份，本机同款；此刻环境里不许有产品依赖）
+        run: python3 scripts/check_l1.py
+      - name: 装产品依赖（L1 已跑完，现在才轮到它们）
+        run: pip install -r requirements.txt -r manon_mcp/requirements.txt
+      - name: 测试 + 覆盖率测量（P5 第一步：只测量不设门槛）
+        run: >
+          python3 -m pytest tests/ -q
+          --cov=core --cov=manon_mcp --cov=codeindex --cov=matrixone_graph
+          --cov-report=term --cov-report=json:coverage.json
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 密钥扫描（六件套第六件——真凭据在进远端之前拦下）
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

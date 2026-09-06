@@ -1,4 +1,4 @@
-mcp>=1.0.0
+mcp>=1.0.0,<2  # v2 renamed FastMCP (2026-08 CI 判例：新解析装到 2.x，import 全断)
 httpx>=0.28,<1
 # codeindex is now embedded in the repository tree
 tree-sitter>=0.23.0,<1
@@ -8,6 +8,7 @@ tree-sitter-javascript
 # Install manually: pip install https://github.com/brandonzyy/tree-sitter-typescript/releases/download/v0.23.5/manon_tree_sitter_typescript-0.23.3-cp39-abi3-win_amd64.whl
 tree-sitter-typescript
 tree-sitter-java
+tree-sitter-go  # 测试断言 go 可解析（2026-08 CI 判例：本机 venv 有、清单没有，干净环境必挂）
 tree-sitter-php
 networkx>=3.0
 numpy>=1.24

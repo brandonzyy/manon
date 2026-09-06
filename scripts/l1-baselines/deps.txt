@@ -1,0 +1,2 @@
+# deps 存量 baseline —— 由 check_l1.py --regenerate 生成，别手改。
+# 格式每行一条，key 不含行号。只许变短；修好后必须重新生成。

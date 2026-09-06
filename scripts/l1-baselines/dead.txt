@@ -1,0 +1,10 @@
+# dead 存量 baseline —— 由 check_l1.py --regenerate 生成，别手改。
+# 格式每行一条，key 不含行号。只许变短；修好后必须重新生成。
+core/ast/analysis.py|unused variable 'should_exclude_fn'|1
+matrixone_graph/tracer.py|unused variable 'arg'|1
+saas/main.py|unused import 'StaticFiles'|1
+skills/manon/scripts/manon-scan-tests.py|redundant if-condition|1
+tests/conftest.py|unused variable 'raise_error'|1
+tests/test_chunking.py|unused import 'impact_mod'|1
+tests/test_parser_installer.py|unused variable 'mock_check'|2
+tests/test_parser_installer.py|unused variable 'mock_pip'|2

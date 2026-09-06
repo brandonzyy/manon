@@ -1,0 +1,8 @@
+# L1 机器层工具链。**钉版本**：这几件工具的输出就是 baseline 的内容，
+# 版本一漂 baseline 全线报新增，而漂移只在别人的机器上表现为红。
+ruff==0.16.4
+mypy==2.3.1
+vulture==2.16
+pip-audit==2.10.0
+pytest-cov==7.0.0
+pytest-asyncio==1.4.0

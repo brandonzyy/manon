@@ -45,48 +45,172 @@ sys.exit(0)
 '''
 
 
+_MANON_SCOPE = '''\
+"""会话钩子的作用面 —— 当前目录属于哪个 manon 已注册的仓。
+
+Manon-first 那几个钩子原本对**任何仓**生效，而本机 12 个 git 仓里只有 7 个注册过。
+后果分两头：pre_search 在没有索引的仓里也拦住 Grep/Glob，那里根本没有 manon_search
+可退回；post_commit 在每个仓提交后都注入一句 "You MUST run manon_impact"，
+那条命令在没注册的仓里跑不出结果——**在做不到的地方下 MUST，磨损的是所有 MUST 的分量。**
+
+注册表就用 manon 自己写的 ~/.manon/projects.json，不另立一份名单：
+两份名单迟早不一致，而不一致的表现是钩子在已经注册了的仓里不说话。
+
+本文件由 manon_mcp/_hooks.py 生成，手改会在下次 MCP init 时被覆盖。
+"""
+import json
+import os
+import time
+from pathlib import Path
+
+REGISTRY = ".manon/projects.json"
+QUERY_STATE = ".manon/last_query.json"
+QUERY_WINDOW = 3600  # 秒——「查过 manon」的时效，超窗就当没查过，提示重查一次。
+
+
+def registry(home=None):
+    """<仓的绝对路径> -> repo_id。读不到就返回空表——空表等于所有仓都不在作用面内，
+    钩子于是全部放行。这个方向是刻意的：注册表读不到时宁可不说话，
+    也不要在一个查不到索引的仓里拦住工具。"""
+    q = (Path.home() if home is None else home) / REGISTRY
+    try:
+        data = json.loads(q.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    out = {}
+    for path, meta in (data.get("projects") or {}).items():
+        rid = (meta or {}).get("repo_id") if isinstance(meta, dict) else None
+        if rid:
+            out[Path(path)] = str(rid)
+    return out
+
+
+def repo_of(cwd=None, home=None):
+    """cwd 落在哪个已注册的仓里，取最长匹配（仓套仓时内层说了算）。"""
+    try:
+        here = Path(cwd or os.getcwd()).resolve()
+    except OSError:
+        return None
+    best = None
+    for root, rid in registry(home).items():
+        try:
+            r = root.resolve()
+        except OSError:
+            continue
+        if r == here or r in here.parents:
+            if best is None or len(str(r)) > len(str(best[0])):
+                best = (r, rid)
+    return best
+
+
+def manon_queried(root, home=None, now=None):
+    """root 这个仓在 QUERY_WINDOW 内查过 manon 没有。
+
+    时间戳由 MCP 服务端在处理查询时写（manon_mcp/query_state.py），这里只读。
+    状态**不可知**——文件不存在（冷启动：还没装过会写它的服务端版本）、读不了、
+    不是合法 JSON——按查过处理：同 registry() 的方向，这条规则是提醒不是
+    安全边界，宁可漏拦一次提醒，也不要回到那道永远过不去的门。
+    「文件在而该仓没有条目」不算不可知：那是明确没查过，照拦。"""
+    q = (Path.home() if home is None else home) / QUERY_STATE
+    try:
+        state = json.loads(q.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return True
+    if not isinstance(state, dict):
+        return True  # 文件在但结构不对——写入方坏了，同「读不到」方向处理
+    try:
+        ts = float(state[str(root)])
+    except (KeyError, TypeError, ValueError):
+        return False  # 文件是好的，这个仓没有有效条目——明确没查过
+    if now is None:
+        now = time.time()
+    return (now - ts) <= QUERY_WINDOW
+'''
+
+
 _PRE_SEARCH_HOOK = '''\
-"""PreToolUse hook: enforce Manon-first before Grep/Glob."""
+"""PreToolUse hook: Grep/Glob 之前先走 Manon —— 只在 manon 已注册的仓里。
+
+作用面（2026-08-27 收窄）：原先对所有仓无条件退 2，包括根本没有索引的仓，
+那里没有 manon_search 可退回，拦下来只剩「拦」。
+
+它拦不住 Bash(grep)：钩子按工具名匹配，而 Bash 是另一个工具。
+所以这是一条提示级约束，不是强制——写在这里省得下一个人把它当成强制。
+
+本文件由 manon_mcp/_hooks.py 生成，手改会在下次 MCP init 时被覆盖。
+"""
 import json
 import sys
+from pathlib import Path
 
-json.load(sys.stdin)
-print(
-    "Hook rule: call manon_search, manon_deep_query, or manon_graph before Grep/Glob.",
-    file=sys.stderr,
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manon_scope import repo_of  # noqa: E402
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+
+hit = repo_of(data.get("cwd"))
+if hit is None:
+    sys.exit(0)
+
+print("Hook rule: call manon_search, manon_deep_query, or manon_graph before "
+      "Grep/Glob (repo_id=%s)." % hit[1], file=sys.stderr)
 sys.exit(2)
 '''
 
 
 
 _POST_COMMIT_HOOK = '''\
-"""PostToolUse hook: manon_impact reminder after successful git commit."""
+"""PostToolUse hook: 提交成功后提醒跑 manon_impact —— 只在 manon 已注册的仓里。
+
+两处收窄（2026-08-27）：
+
+1. 作用面。原先在任何仓提交后都注入这段话，而 manon_impact 需要 repo_id，
+   本机 12 个仓里只有 7 个注册过。在跑不出结果的仓里下一句 MUST，
+   得到的不是执行，是对 MUST 这个词的贬值——下一条真需要 MUST 的指令跟着一起贬。
+2. 措辞。原先写 "CRITICAL ... You MUST immediately ... Do NOT proceed with other
+   tasks until"。影响分析是有用的下一步，不是不做就出事的那一档；把每件事都写成
+   最高级，等于没有等级。repo_id 现在从注册表取真值，不再让读的人自己去填。
+
+本文件由 manon_mcp/_hooks.py 生成，手改会在下次 MCP init 时被覆盖。
+"""
 import json
 import sys
+from pathlib import Path
 
-data = json.load(sys.stdin)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manon_scope import repo_of  # noqa: E402
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+
 if data.get("tool_name") != "Bash":
     sys.exit(0)
 
-command = data.get("tool_input", {}).get("command", "")
-if data.get("tool_response", {}).get("exitCode", -1) != 0:
+command = (data.get("tool_input") or {}).get("command", "")
+if (data.get("tool_response") or {}).get("exitCode", -1) != 0:
     sys.exit(0)
 
-if not any(t in command for t in ("git commit", "git commit -m", "git commit -am")):
+if "git commit" not in command:
+    sys.exit(0)
+
+hit = repo_of(data.get("cwd"))
+if hit is None:
     sys.exit(0)
 
 print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": (
-            "CRITICAL: Git commit succeeded. You MUST immediately run "
-            "manon_impact(<repo_id>) to analyze this commit\'s impact on "
-            "dependencies and downstream callers. Do NOT proceed with other "
-            "tasks until impact analysis is complete."
+            "提交成功。下一步跑 manon_impact(repo_id=%r) 看这次改动波及哪些"
+            "下游调用方，再决定要不要跟着改。" % hit[1]
         ),
     }
-}))
+}, ensure_ascii=False))
 '''
 
 
@@ -141,18 +265,40 @@ print(json.dumps({
 
 
 _PRE_AGENT_PLAN_HOOK = '''\
-"""PreToolUse hook: enforce Manon-first before Explore/general-purpose agents."""
+"""PreToolUse hook: 起 Explore/general-purpose 子代理之前先查 Manon —— 只在已注册的仓里。
+
+作用面同 pre_search.py：没有索引的仓里，「先查 manon」没有可查的东西。
+
+拦截是有时效的（2026-09-07）：本会话在 QUERY_WINDOW（60 分钟）内查过这个仓的
+manon（search / deep_query / graph / code_health 等都算）就放行。原先无条件退 2，
+又不记录「查过没有」，按字面永远过不去——模型于是学会省略 subagent_type 绕行，
+而省略类型会让客户端对内置子代理的模型覆盖（builtInModelOverrides）不生效，
+子代理全跑在主模型上。**一道永远过不去的门，训练出来的不是「先查」，是「绕门」。**
+
+时间戳由 MCP 服务端写 ~/.manon/last_query.json（manon_mcp/query_state.py），
+这里经 manon_scope.manon_queried 只读；读不到按查过处理（fail-open）。
+
+本文件由 manon_mcp/_hooks.py 生成，手改会在下次 MCP init 时被覆盖。
+"""
 import json
 import sys
+from pathlib import Path
 
-data = json.load(sys.stdin)
-tool_input = data.get("tool_input", {})
-agent_type = tool_input.get("subagent_type", "")
-if agent_type in ("Explore", "general-purpose"):
-    print(
-        "Hook rule: query Manon before spawning Explore/general-purpose agents for repository exploration.",
-        file=sys.stderr,
-    )
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from manon_scope import manon_queried, repo_of  # noqa: E402
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+
+agent_type = (data.get("tool_input") or {}).get("subagent_type", "")
+hit = repo_of(data.get("cwd"))
+if (agent_type in ("Explore", "general-purpose") and hit is not None
+        and not manon_queried(hit[0])):
+    print("Hook rule: query Manon (manon_search / manon_deep_query / manon_graph / "
+          "manon_code_health, repo_id=%s) before spawning Explore/general-purpose "
+          "agents for repository exploration." % hit[1], file=sys.stderr)
     sys.exit(2)
 
 print(json.dumps({"continue": True}))
@@ -254,12 +400,16 @@ def _install_claude_hooks() -> str | None:
         enter_plan_hook  = hooks_dir / "pre_enter_plan.py"
         commit_hook      = hooks_dir / "post_commit.py"
         stop_dao_hook    = hooks_dir / "stop_dao.py"
+        scope_mod        = hooks_dir / "manon_scope.py"
 
         search_hook.write_text(_PRE_SEARCH_HOOK,      encoding="utf-8")
         agent_hook.write_text(_PRE_AGENT_PLAN_HOOK,   encoding="utf-8")
         enter_plan_hook.write_text(_PRE_ENTER_PLAN_HOOK, encoding="utf-8")
         commit_hook.write_text(_POST_COMMIT_HOOK,     encoding="utf-8")
         stop_dao_hook.write_text(_STOP_DAO_HOOK,      encoding="utf-8")
+        # 三个 Manon-first 钩子共用的作用面判定。**必须跟着一起装**：
+        # 少了它，那三个钩子 import 就炸，而钩子炸掉的表现是安静地放行。
+        scope_mod.write_text(_MANON_SCOPE,            encoding="utf-8")
 
         # Remove retired hook files
         for retired in ("pre_edit.py", "post_exit_plan.py"):

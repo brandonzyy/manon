@@ -1,0 +1,4 @@
+# 一次性动作的结论登记（格式与过期判据见 ~/.claude/specs/工程保障体系规范.md §3）
+# <动作键>|<结论文档路径>|<YYYY-MM-DD>
+
+mutation-python|docs/mutation-2026-08-27.md|2026-08-27
