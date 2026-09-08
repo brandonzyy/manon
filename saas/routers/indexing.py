@@ -1,10 +1,12 @@
 """Indexing endpoints — sync-ast, index-status, merge-dynamic."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -212,103 +214,147 @@ def _persist_kg_state(kg_path: Path, graph, vec_index, all_chunks: dict, new_has
     invalidate_kg_cache(kg_path)
 
 
-async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
-    """Background task: process pre-parsed AST data from MCP client."""
-    db = await get_db()
-    try:
-        await db.execute("UPDATE repos SET index_status = 'indexing', updated_at = datetime('now') WHERE id = ?", (repo_id,))
-        await db.commit()
+# Batches for one repo must apply sequentially — each batch reads the previous
+# batch's saved graph state. sync-ast used to get this "for free" from blocking
+# the event loop; now that batches run in worker threads, the lock makes it explicit.
+_repo_sync_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
-        kg_path = Path(settings.index_dir) / tenant_id / repo_name / "kg"
-        kg_path.mkdir(parents=True, exist_ok=True)
 
-        graph, vec_index = CodeGraph(), VectorIndex()
+def _repo_sync_lock(tenant_id: str, repo_id: str) -> asyncio.Lock:
+    key = (tenant_id, repo_id)
+    lock = _repo_sync_locks.get(key)
+    if lock is None:
+        lock = _repo_sync_locks[key] = asyncio.Lock()
+    return lock
+
+
+class _BatchResult(NamedTuple):
+    graph: CodeGraph
+    vec_index: VectorIndex
+    all_chunks: dict
+    meta: dict
+    new_hashes: dict
+    entities: list
+    chunks: list
+    stats: dict
+
+
+def _load_and_process_batch(repo_id: str, kg_path: Path, body: SyncAstRequest) -> _BatchResult:
+    """Load current KG state and fold one AST batch into it.
+
+    Runs in a worker thread: a large batch takes tens of seconds of graph
+    load/process/save, and running that on the event loop froze /health long
+    enough for the server watchdog to kill the process mid-write.
+    """
+    graph, vec_index = CodeGraph(), VectorIndex()
+    all_chunks: dict = {}
+    meta: dict = {"version": 1, "hashes": {}}
+    if not body.full_reindex:
         graph.load(kg_path / GRAPH_FILE)
         vec_index.load(kg_path / VECTORS_FILE)
         all_chunks = _load_chunks(kg_path)
         meta = _load_meta(kg_path)
 
-        if body.full_reindex:
-            graph, vec_index, all_chunks, meta = CodeGraph(), VectorIndex(), {}, {"version": 1, "hashes": {}}
+    _remove_deleted_files(body, graph, vec_index, all_chunks, meta)
+    all_entities, all_relations, new_chunks, file_hashes, new_reexports = _process_ast_files(body, graph, all_chunks, vec_index)
+    new_hashes = {**meta.get("hashes", {}), **file_hashes}
+    # Accumulate re-export map across batches (stored in meta for persistence)
+    meta.setdefault("reexport_map", {}).update(new_reexports)
 
-        _remove_deleted_files(body, graph, vec_index, all_chunks, meta)
-        all_entities, all_relations, new_chunks, file_hashes, new_reexports = _process_ast_files(body, graph, all_chunks, vec_index)
-        new_hashes = {**meta.get("hashes", {}), **file_hashes}
-        # Accumulate re-export map across batches (stored in meta for persistence)
-        meta.setdefault("reexport_map", {}).update(new_reexports)
-
-        # Final-batch reconcile (step 1): remove stale files BEFORE inserting new
-        # entities so that orphan cleanup sees the full picture.
-        if body.is_final_batch and not body.full_reindex:
-            tracked = set(new_hashes.keys())
-            stale_files = {
-                d["file_path"]
-                for _, d in graph._g.nodes(data=True)
-                if d.get("file_path") and d["file_path"] not in tracked
-            }
-            for fp in stale_files:
-                old_cids = {cid for cid, c in all_chunks.items() if c.file_path == fp}
-                vec_index.remove_by_ids(old_cids)
-                for cid in old_cids:
-                    del all_chunks[cid]
-                graph.remove_by_file(fp)
-                meta.get("hashes", {}).pop(fp, None)
-            if stale_files:
-                logger.info("reconcile: removed stale entities from %d files: %s",
-                            len(stale_files), list(stale_files)[:10])
-
-        entities_added = len(all_entities)
-        for e in all_entities:
-            graph.add_entity(e)
-        relations_added = 0
-        for r in all_relations:
-            # Require at least one *real* entity (has kind) to avoid
-            # chaining phantom nodes for fully-unresolved references.
-            src_real = graph.get_entity(r.src_id) is not None
-            tgt_real = graph.get_entity(r.tgt_id) is not None
-            if src_real or tgt_real:
-                graph.add_relation(r)
-                relations_added += 1
-
-        # Final-batch reconcile (step 2): prune and reexport AFTER inserting new
-        # entities/relations so that newly-added real entities fill phantom slots
-        # before pruning, and reexport redirections see the complete graph.
-        if body.is_final_batch:
-            pruned = graph.prune_phantoms()
-            if pruned:
-                logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
-            reexport_map = meta.get("reexport_map", {})
-            if reexport_map:
-                redirected = _apply_reexport_map(graph, reexport_map)
-                if redirected:
-                    logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
-
-        await _embed_and_index_vectors(all_entities, new_chunks, vec_index, settings.embedding_url, embedding_model=settings.embedding_model, embedding_api_key=settings.embedding_api_key)
-        _persist_kg_state(kg_path, graph, vec_index, all_chunks, new_hashes, meta)
-
-        phantom_ratio = graph.phantom_count / max(graph.entity_count, 1)
-        stats = {
-            "files_synced": len(body.files), "files_deleted": len(body.deleted_files),
-            "entities_added": entities_added, "relations_added": relations_added,
-            "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
-            "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
-            "total_files": len(new_hashes), "phantom_nodes": graph.phantom_count,
-            "phantom_ratio": round(phantom_ratio, 3),
+    # Final-batch reconcile (step 1): remove stale files BEFORE inserting new
+    # entities so that orphan cleanup sees the full picture.
+    if body.is_final_batch and not body.full_reindex:
+        tracked = set(new_hashes.keys())
+        stale_files = {
+            d["file_path"]
+            for _, d in graph._g.nodes(data=True)
+            if d.get("file_path") and d["file_path"] not in tracked
         }
-        if phantom_ratio > 0.25:
-            stats["recommend_rebuild"] = True
-            logger.warning(
-                "repo %s: phantom ratio %.2f (phantoms=%d entities=%d) exceeds threshold 0.25 — recommend full reindex",
-                repo_id, phantom_ratio, graph.phantom_count, graph.entity_count,
-            )
-        await db.execute("UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps(stats), repo_id))
-        await db.commit()
-        logger.info("sync-ast done for %s: %s", repo_id, stats)
+        for fp in stale_files:
+            old_cids = {cid for cid, c in all_chunks.items() if c.file_path == fp}
+            vec_index.remove_by_ids(old_cids)
+            for cid in old_cids:
+                del all_chunks[cid]
+            graph.remove_by_file(fp)
+            meta.get("hashes", {}).pop(fp, None)
+        if stale_files:
+            logger.info("reconcile: removed stale entities from %d files: %s",
+                        len(stale_files), list(stale_files)[:10])
 
-    except Exception as exc:
-        logger.exception("sync-ast failed for %s", repo_id)
-        await db.execute("UPDATE repos SET index_status = 'error', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps({"error": str(exc)[:500]}), repo_id))
-        await db.commit()
+    entities_added = len(all_entities)
+    for e in all_entities:
+        graph.add_entity(e)
+    relations_added = 0
+    for r in all_relations:
+        # Require at least one *real* entity (has kind) to avoid
+        # chaining phantom nodes for fully-unresolved references.
+        src_real = graph.get_entity(r.src_id) is not None
+        tgt_real = graph.get_entity(r.tgt_id) is not None
+        if src_real or tgt_real:
+            graph.add_relation(r)
+            relations_added += 1
+
+    # Final-batch reconcile (step 2): prune and reexport AFTER inserting new
+    # entities/relations so that newly-added real entities fill phantom slots
+    # before pruning, and reexport redirections see the complete graph.
+    if body.is_final_batch:
+        pruned = graph.prune_phantoms()
+        if pruned:
+            logger.info("prune_phantoms: removed %d dead phantom nodes", pruned)
+        reexport_map = meta.get("reexport_map", {})
+        if reexport_map:
+            redirected = _apply_reexport_map(graph, reexport_map)
+            if redirected:
+                logger.info("reexport normalization: redirected %d edges to canonical entities", redirected)
+
+    phantom_ratio = graph.phantom_count / max(graph.entity_count, 1)
+    stats = {
+        "files_synced": len(body.files), "files_deleted": len(body.deleted_files),
+        "entities_added": entities_added, "relations_added": relations_added,
+        "chunks_added": len(new_chunks), "total_entities": graph.entity_count,
+        "total_relations": graph.relation_count, "total_chunks": len(all_chunks),
+        "total_files": len(new_hashes), "phantom_nodes": graph.phantom_count,
+        "phantom_ratio": round(phantom_ratio, 3),
+    }
+    if phantom_ratio > 0.25:
+        stats["recommend_rebuild"] = True
+        logger.warning(
+            "repo %s: phantom ratio %.2f (phantoms=%d entities=%d) exceeds threshold 0.25 — recommend full reindex",
+            repo_id, phantom_ratio, graph.phantom_count, graph.entity_count,
+        )
+
+    return _BatchResult(graph, vec_index, all_chunks, meta, new_hashes, all_entities, new_chunks, stats)
+
+
+async def _run_ast_sync(repo_id: str, tenant_id: str, repo_name: str, body: SyncAstRequest):
+    """Process pre-parsed AST data from MCP client.
+
+    Only DB writes and the embedding call stay on the event loop; the graph
+    load/process/save runs in a worker thread so other requests (including
+    /health) stay responsive while a large batch syncs.
+    """
+    db = await get_db()
+    async with _repo_sync_lock(tenant_id, repo_id):
+        try:
+            await db.execute("UPDATE repos SET index_status = 'indexing', updated_at = datetime('now') WHERE id = ?", (repo_id,))
+            await db.commit()
+
+            kg_path = Path(settings.index_dir) / tenant_id / repo_name / "kg"
+            kg_path.mkdir(parents=True, exist_ok=True)
+
+            batch = await asyncio.to_thread(_load_and_process_batch, repo_id, kg_path, body)
+
+            await _embed_and_index_vectors(batch.entities, batch.chunks, batch.vec_index, settings.embedding_url, embedding_model=settings.embedding_model, embedding_api_key=settings.embedding_api_key)
+            await asyncio.to_thread(_persist_kg_state, kg_path, batch.graph, batch.vec_index, batch.all_chunks, batch.new_hashes, batch.meta)
+
+            await db.execute("UPDATE repos SET index_status = 'done', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps(batch.stats), repo_id))
+            await db.commit()
+            logger.info("sync-ast done for %s: %s", repo_id, batch.stats)
+
+        except Exception as exc:
+            logger.exception("sync-ast failed for %s", repo_id)
+            await db.execute("UPDATE repos SET index_status = 'error', index_stats = ?, updated_at = datetime('now') WHERE id = ?", (json.dumps({"error": str(exc)[:500]}), repo_id))
+            await db.commit()
 
 
 @router.post("/sync-ast", status_code=200)
@@ -333,6 +379,33 @@ async def sync_ast(
 # merge-dynamic — merge runtime-traced call edges into the graph
 # ---------------------------------------------------------------------------
 
+def _merge_dynamic_sync(kg_path: Path, edges: dict, raw_edges, project_root: str):
+    """File-mutating part of merge-dynamic — runs in a worker thread (see _run_ast_sync)."""
+    from matrixone_graph.merge_dynamic import merge_dynamic_edges
+
+    graph = CodeGraph()
+    graph.load(kg_path / GRAPH_FILE)
+
+    # Resolve raw file-path edges if provided
+    resolved_count = 0
+    if raw_edges:
+        from matrixone_graph.resolve_runtime import resolve_js_edges
+        resolved = resolve_js_edges(raw_edges, project_root, graph=graph)
+        resolved_count = len(resolved)
+        # Merge resolved edges into the main edges dict
+        for k, v in resolved.items():
+            edges[k] = edges.get(k, 0) + v
+
+    if not edges:
+        return None, resolved_count
+
+    stats = merge_dynamic_edges(graph, edges, replace=True)
+
+    graph.save(kg_path / GRAPH_FILE)
+    invalidate_kg_cache(kg_path)
+    return stats, resolved_count
+
+
 @router.post("/merge-dynamic")
 async def merge_dynamic(
     repo_id: str,
@@ -345,36 +418,23 @@ async def merge_dynamic(
     - edges: {"caller->callee": count} — pre-resolved entity IDs
     - raw_edges: [{"from": path, "to": path}] + project_root — file paths resolved server-side
     """
-    from matrixone_graph.merge_dynamic import merge_dynamic_edges
-
     row = await _get_repo_row(repo_id, ctx.tenant_id)
     repo_name = row["name"]
     kg_path = Path(settings.index_dir) / ctx.tenant_id / repo_name / "kg"
 
-    graph = CodeGraph()
-    graph.load(kg_path / GRAPH_FILE)
+    if body.raw_edges and not body.project_root:
+        raise HTTPException(400, "project_root is required when raw_edges are provided")
 
     edges = dict(body.edges)
+    # Shares graph.json with sync-ast — hold the repo lock so the two can't
+    # interleave their load/modify/save cycles.
+    async with _repo_sync_lock(ctx.tenant_id, repo_id):
+        stats, resolved_count = await asyncio.to_thread(
+            _merge_dynamic_sync, kg_path, edges, body.raw_edges, body.project_root
+        )
 
-    # Resolve raw file-path edges if provided
-    resolved_count = 0
-    if body.raw_edges:
-        if not body.project_root:
-            raise HTTPException(400, "project_root is required when raw_edges is provided")
-        from matrixone_graph.resolve_runtime import resolve_js_edges
-        resolved = resolve_js_edges(body.raw_edges, body.project_root, graph=graph)
-        resolved_count = len(resolved)
-        # Merge resolved edges into the main edges dict
-        for k, v in resolved.items():
-            edges[k] = edges.get(k, 0) + v
-
-    if not edges:
+    if stats is None:
         return {"repo_id": repo_id, "status": "done", "removed": 0, "added": 0, "skipped": 0, "resolved": 0}
-
-    stats = merge_dynamic_edges(graph, edges, replace=True)
-
-    graph.save(kg_path / GRAPH_FILE)
-    invalidate_kg_cache(kg_path)
 
     await record_usage(ctx.tenant_id, "indexing.merge_dynamic", repo_id)
     return {"repo_id": repo_id, "status": "done", "resolved_from_raw": resolved_count, **stats}
