@@ -16,7 +16,7 @@ from typing import Any
 from core.ast.chunking import _make_entity_id, _module_from_rel_path
 
 from .embed import EmbeddingClient
-from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex
+from .store import Chunk, CodeGraph, Entity, Relation, VectorIndex, atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +231,7 @@ def _load_meta(kg_path: Path) -> dict[str, Any]:
     return {"version": 1, "hashes": {}}
 
 def _save_meta(kg_path: Path, meta: dict[str, Any]) -> None:
-    kg_path.mkdir(parents=True, exist_ok=True)
-    (kg_path / META_FILE).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(kg_path / META_FILE, json.dumps(meta, ensure_ascii=False, indent=2))
 
 def _load_chunks(kg_path: Path) -> dict[str, Chunk]:
     p = kg_path / CHUNKS_FILE
@@ -242,10 +241,9 @@ def _load_chunks(kg_path: Path) -> dict[str, Chunk]:
     return {k: Chunk.from_dict(v) for k, v in raw.items()}
 
 def _save_chunks(kg_path: Path, chunks: dict[str, Chunk]) -> None:
-    kg_path.mkdir(parents=True, exist_ok=True)
-    (kg_path / CHUNKS_FILE).write_text(
+    atomic_write_text(
+        kg_path / CHUNKS_FILE,
         json.dumps({k: v.to_dict() for k, v in chunks.items()}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
 
