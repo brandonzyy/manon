@@ -17,6 +17,26 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
+# Atomic file writes
+# ---------------------------------------------------------------------------
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write via temp file + rename so a crash mid-write can't truncate the target."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def atomic_write_npz(path: Path, arrays: dict) -> None:
+    """Save .npz atomically. Temp name keeps the .npz suffix so numpy doesn't append another."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp.npz")
+    np.savez_compressed(tmp, **arrays)
+    tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
@@ -205,9 +225,8 @@ class CodeGraph:
         return self._g.number_of_edges()
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         data = nx.node_link_data(self._g)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def load(self, path: Path) -> None:
         if not path.exists():
@@ -296,17 +315,16 @@ class VectorIndex:
         return self._cosine_topk(np.array(query_vec), self._chunk_vecs, self._chunk_ids, top_k)
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         arrays = {}
         if self._entity_vecs is not None:
             arrays["entity_vecs"] = self._entity_vecs
         if self._chunk_vecs is not None:
             arrays["chunk_vecs"] = self._chunk_vecs
-        np.savez_compressed(path, **arrays)
+        atomic_write_npz(path, arrays)
         meta_path = path.with_suffix(".ids.json")
-        meta_path.write_text(json.dumps({
+        atomic_write_text(meta_path, json.dumps({
             "entity_ids": self._entity_ids, "chunk_ids": self._chunk_ids,
-        }, ensure_ascii=False), encoding="utf-8")
+        }, ensure_ascii=False))
 
     def load(self, path: Path) -> None:
         if not path.exists():

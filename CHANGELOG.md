@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.6.6] - 2026-09-08
+
+### Fixed
+- **服务端 sync-ast 大批次同步冻结整个 API（线上事故：MCP 调用 30s 超时与 502，watchdog 每 5 分钟把服务强杀一轮）。**
+  根因：图的全量 load/reconcile/save 直接跑在 async handler 里，阻塞 uvicorn 事件循环
+  几十秒——期间 `/health` 与所有带鉴权的接口都无响应（超时请求在服务端访问日志里
+  根本不存在）；服务器 watchdog（healthcheck.sh）探活失败即重启，卡死的进程收不了
+  SIGTERM、10s 后被 SIGKILL——~15s 的中断窗口就是 502 的来源，且 `write_text`
+  写一半被杀可能留下半截 graph.json。
+  - `sync-ast` / `merge-dynamic` 的图重活移入 `asyncio.to_thread` 工作线程，事件循环
+    只留 DB 写与 embedding 网络调用；批次间「后批见前批落盘状态」的串行语义从
+    靠阻塞事件循环意外获得，改为显式 per-repo `asyncio.Lock`
+  - 图 / 向量 / chunks / meta 落盘全部改为原子写（临时文件 + rename），SIGKILL 或
+    断电不再可能写出损坏的 KG 文件
+  - systemd `TimeoutStopSec` 10s → 90s：重启时让进行中的批次跑完，而不是杀掉后
+    由客户端整批重传
+  - 回归测试 `tests/test_saas_sync_blocking.py`：慢批次进行中 `/health` 必须
+    <0.5s 响应；批次失败必须落 `index_status=error` 而非挂死
+  - 验证：pytest 972 过、L1 四条本地棘轮在基线；部署后实测同步期间 `/health`
+    24 采样最慢 0.042s、零超时，watchdog 连续 OK
+
 ## [1.6.5] - 2026-08-27
 
 ### Added
