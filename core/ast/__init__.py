@@ -17,9 +17,11 @@ from .parser_utils import ensure_parsers
 from .project import (
     PROJECTS_DIR,
     PROJECTS_FILE,
+    drop_project,
     find_project_by_repo_id,
     get_project,
     load_projects,
+    main_worktree,
     save_projects,
     set_project,
 )
@@ -28,7 +30,9 @@ from .scanner import SYNC_BATCH_SIZE, count_scannable_files, scan_and_parse
 __all__ = [
     "PROJECTS_DIR",
     "PROJECTS_FILE",
+    "drop_project",
     "load_projects",
+    "main_worktree",
     "save_projects",
     "get_project",
     "set_project",

@@ -13,7 +13,9 @@ from mcp.server.fastmcp import Context
 
 from core.ast import (
     collect_directory_signals,
+    drop_project,
     get_project,
+    main_worktree,
     needs_smart_analysis_refresh,
     preview_project_structure,
     set_custom_excludes,
@@ -109,6 +111,18 @@ async def initialize_project(
 
     log.info("manon_init called: path=%s, name=%s", project_path, project_name)
 
+    # **隔离树不单独建仓。** 传进来的是一棵隔离树时，一切都落到它的主工作树上：
+    # 注册表、图谱、钩子。不这么做的后果不是报错——是每开一棵树就多一个仓，而
+    # push 钩子里写的是主树路径，那些仓建完就冻住，读出来是陈旧结构且看不出陈旧。
+    requested = project_path
+    project_path = main_worktree(project_path)
+    stale_dropped = False
+    if project_path != requested:
+        log.info("worktree folded into its main tree: %s -> %s", requested, project_path)
+        # 这棵树此前被单独建过仓的话，那条登记现在是错的：会话钩子按最长匹配认仓，
+        # 留着它模型就一直被指向那个建完即冻的图谱。摘掉，并说出来。
+        stale_dropped = drop_project(requested)
+
     await progress(5, "Checking API connectivity...")
     try:
         client._get_no_auth("/health")
@@ -121,6 +135,15 @@ async def initialize_project(
     lines = [f"─── 🧠 Manon v{config._get_client_version()} {'─' * 28}"]
     lines.append("\n📦 项目状态")
     lines.append("  ✅ API 连接成功")
+    if project_path != requested:
+        # os.path 而不是 Path：这是 async 函数，pathlib 的方法会阻塞事件循环。
+        lines.append(f"  ↩︎  {os.path.basename(requested)} 是隔离树，复用主工作树的图谱")
+        lines.append(f"      主树 {project_path}")
+        lines.append("      图谱是主线快照，**不含本树未合并的改动**——"
+                     "判当前代码长什么样一律以工作区文件为准")
+        if stale_dropped:
+            lines.append("      已摘掉本树那条陈旧登记（此前为它单独建过仓，"
+                         "而只有主树那份会被 push 钩子更新）")
     prev = read_update_status()
     if prev:
         lines.append(prev)

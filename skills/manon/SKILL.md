@@ -13,6 +13,17 @@ user_invocable: true
 
 ---
 
+## Step 0: 已注册的仓直接用
+
+`~/.manon/projects.json` 里已有当前仓（或它的主工作树）就**跳过 Step 1-5**：
+repo_id 已经在那儿，图谱由 git push 钩子自更新，最近一次结论在
+`~/.manon/update_status.json`。只跑一次 `manon_index_status(repo_id)` 看新鲜度，
+然后进 Step 6。
+
+Step 1-6 只在**第一次接入一个仓**时走。**隔离树不是新仓**——`manon_init` 会把它
+折回主工作树复用同一个 repo_id，别为每棵树单独建（那样建出来的图谱只有主树那份
+会被 push 钩子更新，其余建完即冻，而读出来看不出陈旧）。
+
 ## Step 1: Init
 `manon_init(project_path)` → 提取 `repo_id`
 
