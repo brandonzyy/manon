@@ -47,6 +47,9 @@ EXECUTOR_GLOBS = [
     # 「覆盖率 (Python)」一并误报。
     "**/package.json", "**/Makefile", "**/justfile",
     "**/scripts/*.sh", "**/scripts/*.py", "**/scripts/*.mjs",
+    # 可执行门禁本身也是执行器。只认 scripts/ 会把常见的 quality/gates.sh 整体漏掉，
+    # 连带把其中已经执行的 ruff/mypy/vulture/coverage 全报成 MISSING/NOT_RUN。
+    "quality/gates.sh", "**/quality/gates.sh", "**/*gates*.sh",
     # 门禁清单放在哪儿都是清单：只在仓根找会漏掉把它收进 deploy/ 之类目录的仓库。
     # 判例：项目乙 的 deploy/release/static_gates.txt 由三个执行器共读，
     # 工具却因为只 glob 仓根而报「门禁清单 MISSING」，连带「执行器覆盖不变量」
@@ -75,6 +78,7 @@ SKILL_PAYLOAD = re.compile(r"(^|/)skills/[^/]+/(scripts|references|assets)/")
 # 门禁清单的 glob 只此一份：执行器面要用它（清单登记的检查器本身就是执行器），
 # L2 那一格也要用它。此前两处各写一份，加一个后缀只改了一处就会让两格互相矛盾。
 MANIFEST_GLOBS = ["*gates*.txt", "*gates*.yml", "**/*gates*.txt", "**/*gates*.yml"]
+EXECUTABLE_GATE_GLOBS = ["quality/gates.sh", "**/quality/gates.sh", "**/*gates*.sh"]
 
 CI_GLOBS = [".github/workflows/*.yml", ".github/workflows/*.yaml",
             ".workflow/*.yml", ".workflow/*.yaml", ".gitlab-ci.yml",
@@ -217,7 +221,7 @@ def _iter_files(root: Path, include_vendor: bool, max_files: int = 40000):
         except (PermissionError, OSError):
             continue
         for e in entries:
-            if e.name in skip or e.name.startswith(".DS"):
+            if e.name in skip or e.name.startswith((".DS", ".venv-")):
                 continue
             if e.is_dir() and not e.is_symlink():
                 stack.append(e)
@@ -291,7 +295,8 @@ class Project:
             for q in self.root.glob(pattern):
                 if not q.is_file():
                     continue
-                if skip & set(q.relative_to(self.root).parts):
+                parts = set(q.relative_to(self.root).parts)
+                if skip & parts or any(part.startswith(".venv-") for part in parts):
                     continue
                 hits.append(q)
         except (OSError, ValueError):
@@ -396,9 +401,32 @@ class Project:
             chunks.append(f"### {p.relative_to(self.root)}\n{_strip_line_comments(p, txt)}")
         return "\n".join(chunks)
 
+    def executed_where(self, *patterns: str) -> str | None:
+        """命中落在**哪个**执行器文件上，找不到返回 None。
+
+        判例（2026-08-27，项目甲）：覆盖率那一格判绿，证据写死
+        `pyproject.toml [addopts --cov]`——那个文件在仓里根本不存在，
+        真正的命中在 `.github/workflows/ci.yml`。**状态对、证据假。**
+        三态读数的全部价值是「照着证据去看一眼」，指错文件的绿格比红格更坏：
+        它让人以为自己核过了。
+
+        `executed()` 由这一个实现导出、不另写一份。两份实现迟早不一致，
+        而不一致的表现恰好是「说有、但说不出在哪」——正是这里要修的那个形状。
+        """
+        text = self.executor_text
+        if text.startswith("### "):
+            text = text[4:]
+        for chunk in text.split("\n### "):
+            head, _, _body = chunk.partition("\n")
+            if any(re.search(p, chunk, re.I) for p in patterns):
+                # `or` 那一支保证「命中了却说不出在哪」不可能发生——
+                # 一旦它发生，executed() 会跟着说 False，读数就静悄悄少一格。
+                return head.strip() or "执行器面"
+        return None
+
     def executed(self, *patterns: str) -> bool:
         """这些工具名是否出现在任何执行器面上。"""
-        return any(re.search(p, self.executor_text, re.I) for p in patterns)
+        return self.executed_where(*patterns) is not None
 
     def has_lang(self, ext: str, threshold: int = 3) -> int:
         return sum(1 for r in self.rel if r.endswith(ext))
@@ -627,6 +655,17 @@ def _with_oneshot(chk: "Check", declared: dict, key: str) -> "Check":
                  "跑过且看过才算，登记本身不算。")
 
 
+def _executor_evidence(proj, hint: str, *patterns: str) -> str | None:
+    """执行器面上的命中当证据用——报**哪个文件**命中，不报一句「有调用」。
+
+    这几格没有独立配置文件（pip-audit / npm audit / --cov 这类），配置面只能靠
+    执行器点名。原先每一处都在调用点自己拼一个字面量当证据，于是证据与命中
+    各走各的：最坏的一处点名了一个仓里不存在的文件（见 executed_where）。
+    """
+    where = proj.executed_where(*patterns)
+    return f"{where} [{hint}]" if where else None
+
+
 def _tool(proj, layer, name, cfg, run_patterns, advice_missing, advice_notrun):
     """配置 × 执行器 的四格，**两条对角线不对称**。
 
@@ -641,14 +680,39 @@ def _tool(proj, layer, name, cfg, run_patterns, advice_missing, advice_notrun):
     「跑了没配」最多是参数不可移植，还有人在跑；「配了没跑」是看起来像装了——
     本工具存在的头号理由，不能被这条放宽顺手抹掉。
     """
-    ran = proj.executed(*run_patterns)
+    where = proj.executed_where(*run_patterns)
     if cfg is None:
-        if ran:
-            return Check(layer, name, OK, "执行器面上有调用（参数不在配置文件里）")
+        if where:
+            return Check(layer, name, OK, f"{where}（参数不在配置文件里）")
         return Check(layer, name, MISSING, "", advice_missing)
-    if ran:
+    if where:
         return Check(layer, name, OK, cfg)
     return Check(layer, name, NOT_RUN, cfg, advice_notrun)
+
+
+# 端到端/验收用例的判据**看资产，不看目录名、更不看文档**。
+# 判例（2026-09-11）：这一格在两个仓上同时读错——项目乙的 `docs/acceptance/*.md`
+# 让它读绿（那是文档，一条用例都不是，与本体系「文档不算执行器」同一条），
+# 而项目丙有跑真实服务的行为契约（`board/test_server.py` 起 HTTP 服务）与跨语言
+# 契约测试，却因为不叫 e2e/ 读红。两种错方向相反、根因同一个：按名字判存在性。
+E2E_NAMED = re.compile(r"e2e|acceptance", re.I)
+E2E_BEHAVIOR = re.compile(
+    r"http\.client|urllib\.request|\buvicorn\b|TestClient|subprocess\.(?:run|Popen)\(", re.I)
+TEST_FILE_NAME = re.compile(r"(^|/)test_|_test\.|\.spec\.|\.test\.")
+
+
+def _e2e_cases(proj: Project) -> tuple[str, ...]:
+    """名字或**内容**任一条成立即算——真的把系统跑起来的那种用例。"""
+    hits: list[str] = []
+    for rel in sorted(proj.rel):
+        if not TEST_FILE_NAME.search(rel):
+            continue
+        if E2E_NAMED.search(Path(rel).name):
+            hits.append(rel)
+            continue
+        if E2E_BEHAVIOR.search(proj.read(proj.root / rel)):
+            hits.append(rel)
+    return tuple(hits)
 
 
 def run(proj: Project) -> list[Check]:
@@ -692,14 +756,14 @@ def run(proj: Project) -> list[Check]:
             # 等价。只认带点那个，等于按**文件名的装饰**判存在性。
             # 判例（项目乙）：配置在 `deploy/quality/coveragerc`。
             proj.find_config(files=[".coveragerc", "coveragerc"], toml_sections=["[tool.coverage"],
-                             json_keys=[]) or (
-                "pyproject.toml [addopts --cov]" if proj.executed(r"--cov\b|pytest-cov") else None),
+                             json_keys=[])
+            or _executor_evidence(proj, "--cov", r"--cov\b|pytest-cov"),
             [r"--cov\b", r"pytest-cov", r"\bcoverage run\b", r"-m[\"'\s,]+coverage\b"],
             "上 pytest-cov。重点不是追高数字，是找**零覆盖的分支**——错误处理路径是 bug 高发区",
             "配置在但零执行器"))
         out.append(_with_oneshot(_tool(proj, "L1", "变异测试 (Python)",
             proj.find_config(files=["setup.cfg"], toml_sections=["[tool.mutmut]", "[tool.cosmic-ray]"])
-            or ("mutmut/cosmic-ray 依赖" if proj.executed(r"\bmutmut\b|\bcosmic-ray\b") else None),
+            or _executor_evidence(proj, "mutmut/cosmic-ray", r"\bmutmut\b|\bcosmic-ray\b"),
             [r"\bmutmut\b", r"\bcosmic-ray\b"],
             "核心模块跑一轮 mutmut——唯一直接回答「测试全绿但我还是不放心」的方法。"
             f"跑过一轮但刻意不留依赖的，在 {ONESHOT_DECL} 里登记 "
@@ -712,7 +776,7 @@ def run(proj: Project) -> list[Check]:
         # 有独立配置文件，判据不能按文件名的装饰判存在性（判例同 coveragerc 那条）。
         out.append(_tool(proj, "L1", "依赖审计 (Python)",
             proj.find_config(files=["osv-scanner.toml", ".osv-scanner.toml"])
-            or ("pip-audit 执行" if proj.executed(r"\bpip-audit\b", r"\bosv-scanner\b") else None),
+            or _executor_evidence(proj, "pip-audit", r"\bpip-audit\b", r"\bosv-scanner\b"),
             [r"\bpip-audit\b", r"\bosv-scanner\b"],
             "上 pip-audit（或 osv-scanner）+ 存量棘轮——已知漏洞冻结、新依赖带新漏洞即红",
             "配置在但零执行器"))
@@ -782,9 +846,9 @@ def run(proj: Project) -> list[Check]:
             "上 knip——它找未使用的文件/导出/依赖，是「冗余设计」的机器化定义",
             "配置在但零执行器"))
         out.append(_tool(proj, "L1", "覆盖率 (TS)",
-            ("覆盖率脚本" if proj.executed(
+            _executor_evidence(proj, "覆盖率",
                 r"--coverage\b", r"(?:npx |bunx |bun |pnpm |yarn |npm run |&&\s*|\|\s*|\")c8\b",
-                r"(?:npx |bunx |bun |pnpm |yarn |npm run |&&\s*|\|\s*|\")nyc\b", r"coverage-v8") else None),
+                r"(?:npx |bunx |bun |pnpm |yarn |npm run |&&\s*|\|\s*|\")nyc\b", r"coverage-v8"),
             [r"--coverage\b", r"(?:npx |bunx |bun |pnpm |yarn |npm run |&&\s*|\|\s*|\")c8\b",
              r"(?:npx |bunx |bun |pnpm |yarn |npm run |&&\s*|\|\s*|\")nyc\b", r"coverage-v8"],
             "bun test --coverage 或 vitest --coverage", "配置在但零执行器"))
@@ -799,8 +863,8 @@ def run(proj: Project) -> list[Check]:
 
         out.append(_tool(proj, "L1", "依赖审计 (TS)",
             proj.find_config(files=["osv-scanner.toml", ".osv-scanner.toml"])
-            or ("audit 执行" if proj.executed(
-                r"\bnpm audit\b", r"\bpnpm audit\b", r"\byarn audit\b", r"\bosv-scanner\b") else None),
+            or _executor_evidence(proj, "audit",
+                r"\bnpm audit\b", r"\bpnpm audit\b", r"\byarn audit\b", r"\bosv-scanner\b"),
             [r"\bnpm audit\b", r"\bpnpm audit\b", r"\byarn audit\b", r"\bosv-scanner\b"],
             "npm audit / pnpm audit / osv-scanner 进 CI——已知漏洞存量冻结，新依赖带新漏洞即红",
             "配置在但零执行器"))
@@ -811,6 +875,10 @@ def run(proj: Project) -> list[Check]:
     # （pre-commit / 发布 preflight / 自建 CI），工具却报「门禁清单 MISSING」，
     # 连带「执行器覆盖不变量」也误报——**一份完全达标的 L2 被读成零**。
     manifests = [q for pat in MANIFEST_GLOBS for q in proj.glob(pat)]
+    executable_gates = [q for pat in EXECUTABLE_GATE_GLOBS for q in proj.glob(pat)]
+    executable_gates = [q for q in executable_gates if re.search(
+        r"\b(?:ruff|mypy|vulture|coverage|pytest)\b|discover_tests|\b(?:spawn|step|cov)\s+",
+        proj.read(q))]
     # 一个仓可能有主清单 + 豁免区两份。挑**条目最多**的当主清单：
     # 按路径排序会挑中 `ci_only_gates.txt`（1 条）而不是 `static_gates.txt`（36 条），
     # 于是一层达标的 L2 被读成「只有 1 条门禁」。
@@ -818,15 +886,20 @@ def run(proj: Project) -> list[Check]:
         return sum(1 for l in proj.read(q).splitlines()
                    if l.strip() and not l.strip().startswith("#"))
     manifests = sorted(set(manifests), key=lambda q: (-_entry_count(q), q.as_posix()))
-    if manifests:
-        m = manifests[0].relative_to(proj.root).as_posix()
-        entries = [l for l in proj.read(manifests[0]).splitlines()
+    gate = manifests[0] if manifests else (sorted(set(executable_gates))[0]
+                                           if executable_gates else None)
+    if gate:
+        m = gate.relative_to(proj.root).as_posix()
+        entries = [l for l in proj.read(gate).splitlines()
                    if l.strip() and not l.strip().startswith("#")]
-        exempt = [l for l in proj.read(manifests[0]).splitlines() if "exempt:" in l]
-        out.append(Check("L2", "门禁清单", OK, f"{m}：{len(entries)} 条登记 + {len(exempt)} 条豁免"))
+        exempt = [l for l in proj.read(gate).splitlines() if "exempt:" in l]
+        kind = "可执行清单" if gate.suffix == ".sh" else "登记清单"
+        out.append(Check("L2", "门禁清单", OK,
+                         f"{m}：{kind}，{len(entries)} 条有效行 + {len(exempt)} 条豁免"))
         # 断言可能写在清单里，也可能写在检查器源码里（本仓是后者：
         # ExecutorCoverageTests 在 test_release_delivery.py 里）。两处都认。
-        cov = proj.executed(r"执行器覆盖|executor.?coverage|gate.?registry|check_gate_registry")
+        cov = proj.executed(r"执行器覆盖|executor.?coverage|gate.?registry|check_gate_registry",
+                            r"orphan_tests_check|discover_tests")
         if not cov:
             cov = any(
                 re.search(r"执行器覆盖|ExecutorCoverage|executor.?coverage", proj.read(q))
@@ -903,7 +976,9 @@ def run(proj: Project) -> list[Check]:
                 rel = q.relative_to(proj.root).as_posix()
             except ValueError:
                 continue
-            if not q.exists() or skip & set(rel.split("/")):
+            parts = set(rel.split("/"))
+            if (not q.exists() or skip & parts
+                    or any(part.startswith(".venv-") for part in parts)):
                 continue
             if proj.tracked is None or any(t == rel or t.startswith(rel + "/")
                                            for t in proj.tracked):
@@ -962,9 +1037,11 @@ def run(proj: Project) -> list[Check]:
                          "或一份只增不改的长期记忆（文件名带 事故 / 长期记忆 / incident / "
                          "postmortem 之一，条目 ≥5）。每条都要回答「防复发：哪个门禁守着它」。"
                          "**仓里有文档治理规范的按它的域来——别为这一格造出第二事实源。**"))
-    e2e = any(re.search(r"(^|/)(e2e|integration|acceptance)/", r) for r in proj.rel)
-    out.append(Check("L3", "端到端/验收用例", OK if e2e else MISSING,
-                     "" if e2e else "未发现 e2e/integration/acceptance 目录"))
+    cases = _e2e_cases(proj)
+    out.append(Check("L3", "端到端/验收用例", OK if cases else MISSING,
+                     f"{len(cases)} 份（如 {cases[0]}）" if cases
+                     else "未发现端到端/验收用例：名字带 e2e/acceptance 的用例文件，"
+                          "或真把服务/进程跑起来的行为用例"))
     return out
 
 
@@ -985,7 +1062,11 @@ def main() -> int:
         return 0 if all(c.status in (OK, NA) for c in checks) else 1
 
     icon = {OK: "✅", NOT_RUN: "⚠️ ", MISSING: "❌", NA: "  "}
-    print(f"\n工程保障体系合规检查 —— {root.name}")
+    # **读数叫什么，决定它被怎么用。** 这份输出说的是「配置与接线状态」——
+    # 配置在不在、有没有执行器引用它；它**不回答**「项目现在健康吗」：
+    # 全绿只等于装齐了，跑得怎么样要看那些执行器自己的读数。
+    # 原先叫「合规检查」，读的人容易把满格当成「这个项目没问题」（2026-09-11 改）。
+    print(f"\n配置与接线状态（工程保障体系）—— {root.name}")
     print(f"判据：references/判据.md" + ("" if proj.include_vendor else "（已跳过 vendor/）"))
     print("=" * 78)
     layer = None
@@ -1005,6 +1086,8 @@ def main() -> int:
     n_ms = sum(1 for c in checks if c.status == MISSING)
     print("\n" + "=" * 78)
     print(f"  OK {n_ok}   配了没跑 {n_nr}   缺 {n_ms}   合计 {len(checks)}")
+    print("  这一屏只回答**配置与接线**：全绿 = 装齐了，不等于项目当前健康——"
+          "跑得怎么样要看那些执行器自己的读数。")
     if n_nr:
         print("\n  ⚠️  「配了没跑」按缺计分，且比缺更危险——它看起来像装了。")
     return 0 if (n_nr + n_ms) == 0 else 1

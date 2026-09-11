@@ -24,7 +24,10 @@ def register_contract_tools(mcp, deps: ToolDependencies):
 
     @mcp.tool()
     def manon_contract_audit(repo_id: str, tables: str = "", limit: int = 8) -> str:
-        """契约对账：端点/配置/状态值/守卫包络四张表，找出图谱看不见的死面。"""
+        """契约对账：端点/配置/状态值/守卫包络四张表，列出图谱看不见的死面**候选**。
+
+        候选不是结论：判定缺陷要回源码看一眼（能指出文件与行才算）。
+        """
         from core.contract_audit import TABLES, audit_project
         from core.contract_audit.report import render
 
@@ -51,7 +54,7 @@ def register_contract_tools(mcp, deps: ToolDependencies):
         body = render(result, limit=limit)
         if not result["policy_source"]:
             body += (
-                "\n\n提示：建仓根 .manon-contract.yaml 记录豁免（哪条死面是"
+                "\n\n提示：建仓根 .manon-contract.yaml 记录豁免（哪条候选是"
                 "刻意保留的运维口），否则每轮都会重报同样的条目。"
             )
         return "<!-- DISPLAY_VERBATIM -->\n" + body

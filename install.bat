@@ -110,10 +110,11 @@ exit /b %errorlevel%
 ::PS     $sd = "$base\manon"; New-Item -ItemType Directory -Path "$sd\scripts" -Force | Out-Null
 ::PS     Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md" -Force
 ::PS     Copy-Item "$SCRIPT_DIR\skills\manon\scripts\*.py" "$sd\scripts\" -Force
-::PS     $as = "$base\assurance"; New-Item -ItemType Directory -Path "$as\scripts","$as\references" -Force | Out-Null
+::PS     $as = "$base\assurance"; New-Item -ItemType Directory -Path "$as\scripts","$as\references","$as\tests" -Force | Out-Null
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as\SKILL.md" -Force
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as\scripts\" -Force
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as\references\" -Force
+::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\tests\*.py" "$as\tests\" -Force
 ::PS     foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$base\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
 ::PS }
 ::PS # ── Configure platforms ───────────────────────────────
@@ -125,7 +126,7 @@ exit /b %errorlevel%
 ::PS             $sd = "$HOME_DIR\.claude\skills\manon"; New-Item -ItemType Directory -Path "$sd\scripts" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\manon\SKILL.md" "$sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\manon\scripts\*.py" "$sd\scripts\"; info "Claude Code /manon Skill installed"
 ::PS             & $VENV_PYTHON -c "import sys; sys.path.insert(0, r'$SCRIPT_DIR'); from manon_mcp._hooks import _install_claude_hooks; _install_claude_hooks()"
 ::PS             info "Claude Code hooks installed (search/edit/agent/commit->impact)"
-::PS             $as_sd = "$HOME_DIR\.claude\skills\assurance"; New-Item -ItemType Directory -Path "$as_sd\scripts","$as_sd\references" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as_sd\scripts\"; Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as_sd\references\"; info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
+::PS             $as_sd = "$HOME_DIR\.claude\skills\assurance"; New-Item -ItemType Directory -Path "$as_sd\scripts","$as_sd\references","$as_sd\tests" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as_sd\scripts\"; Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as_sd\references\"; Copy-Item "$SCRIPT_DIR\skills\assurance\tests\*.py" "$as_sd\tests\"; info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
 ::PS             foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$HOME_DIR\.claude\skills\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
 ::PS         }
 ::PS         "codex" {

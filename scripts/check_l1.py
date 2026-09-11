@@ -40,7 +40,12 @@ GATES = ROOT / "gates.txt"
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".mypy_cache",
              ".ruff_cache", "repos", "indexes", "saas_repos", "saas_indexes",
              "saas_data", "dist", "build", "web/static/reports",
-             "web/static/test-results"}
+             "web/static/test-results",
+             # 隔离树是**同一份内容的另一棵树**，不是仓里多出来的代码。不排除它，
+             # 读数会随「此刻有没有开着树」变化：2026-09-11 实测，一棵树在场时
+             # lint 棘轮凭空多出 6 条「新增」（全是那棵树里的分支代码），
+             # 而基线是按没有树的状态取的。
+             ".worktrees"}
 L1_PY = "~/.cache/manon-l1-venv/bin/python"
 REGEN = f"{L1_PY} scripts/check_l1.py --regenerate"
 
@@ -156,7 +161,12 @@ def _tool(name: str) -> str:
 def _pyfiles() -> list[Path]:
     out = []
     for p in ROOT.rglob("*.py"):
-        if not any(d in p.parts for d in SKIP_DIRS) and "__pycache__" not in str(p):
+        # 按**相对 ROOT** 的段判排除：拿绝对路径判的话，当 ROOT 自己就在一棵
+        # `.worktrees/<名字>/` 里面时（从隔离树里跑门禁，2026-09-11 实测），
+        # 每一个文件都命中了 `.worktrees` 这一跳——探测面变成空的，
+        # 而空的输出长得像「一切正常」。
+        if not any(d in p.relative_to(ROOT).parts for d in SKIP_DIRS) \
+                and "__pycache__" not in str(p):
             out.append(p)
     return sorted(out)
 
