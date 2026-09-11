@@ -111,10 +111,11 @@ PYEOF
     # /experience、/idea 退役）。注意它有 references/ 与 scripts/，两者都必须装：
     # 只装 SKILL.md 会留下一个链向不存在文件的入口，而且**没有任何报错**。
     local assurance_skill_dir="$HOME/.claude/skills/assurance"
-    mkdir -p "$assurance_skill_dir/references" "$assurance_skill_dir/scripts"
+    mkdir -p "$assurance_skill_dir/references" "$assurance_skill_dir/scripts" "$assurance_skill_dir/tests"
     cp "$SCRIPT_DIR/skills/assurance/SKILL.md" "$assurance_skill_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/assurance/references/"*.md "$assurance_skill_dir/references/"
     cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_skill_dir/scripts/"
+    cp "$SCRIPT_DIR/skills/assurance/tests/"*.py "$assurance_skill_dir/tests/"
     info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
 
     # 已退役 skill 的壳主动摘掉（tc: 1.5.0；dao/audit/retire-checks/experience/idea: 1.6.0）。
@@ -223,10 +224,11 @@ install_agents_skills() {
     # references/ 与 scripts/ 必须随 SKILL.md 一起装（同 ~/.claude/skills 的教训：
     # 只装 SKILL.md 会留下链向不存在文件的入口，且没有任何报错）
     local assurance_dir="$base/assurance"
-    mkdir -p "$assurance_dir/references" "$assurance_dir/scripts"
+    mkdir -p "$assurance_dir/references" "$assurance_dir/scripts" "$assurance_dir/tests"
     cp "$SCRIPT_DIR/skills/assurance/SKILL.md" "$assurance_dir/SKILL.md"
     cp "$SCRIPT_DIR/skills/assurance/references/"*.md "$assurance_dir/references/"
     cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_dir/scripts/"
+    cp "$SCRIPT_DIR/skills/assurance/tests/"*.py "$assurance_dir/tests/"
 
     # 已退役 skill 的壳同样从共享位摘掉（与 ~/.claude/skills 一致）
     rm -rf "$base/tc" "$base/dao" "$base/audit" \

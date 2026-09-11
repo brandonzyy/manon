@@ -37,6 +37,10 @@ def _pats(n: str, rel: pathlib.PurePosixPath) -> tuple[str, ...] | None:
         return (f'skills/{n}/references/"*.md', f'skills\\{n}\\references\\*.md')
     if rel.parts[0] == "scripts":
         return (f'skills/{n}/scripts/"*.py', f'skills\\{n}\\scripts\\*.py')
+    # tests/ 是随 skill 发布的判据测试（2026-09-11 起 assurance 有）：判据实现只有
+    # 一份，它的测试跟着实现走，不装的后果是「实现到了、判据没到」而没人看得出来。
+    if rel.parts[0] == "tests":
+        return (f'skills/{n}/tests/"*.py', f'skills\\{n}\\tests\\*.py')
     return None
 
 # 不变量 1：两个安装脚本的装块都覆盖每个文件（install.bat 曾连装三个版本都没人发现）
@@ -47,13 +51,13 @@ for installer, text in INSTALLERS.items():
             rel = f.relative_to(d)
             pats = _pats(n, rel)
             if pats is None:
-                bad.append(f"{n}/{rel}: 不认识的目录层（只支持 references/ 与 scripts/）"); continue
+                bad.append(f"{n}/{rel}: 不认识的目录层（只支持 references/ scripts/ tests/）"); continue
             if not any(p in text for p in pats):
                 bad.append(f"{installer}: {n}/{rel} 没有对应的 cp（缺 {pats[0]}）")
         for kind, sh_pat, bat_pat in (
             ("references", f'skills/{n}/references/"*.md', f'skills\\{n}\\references\\*.md'),
             ("scripts", f'skills/{n}/scripts/"*.py', f'skills\\{n}\\scripts\\*.py'),
-        ):
+        ):  # tests/ 不进这张反向表：没有测试的 skill（manon）不该被要求造一个
             for pat in (sh_pat, bat_pat):
                 if pat in text and not (d / kind).is_dir():
                     bad.append(f"{installer}: {n} 要装 {kind}/ 但磁盘上没有 → cp 会报错")

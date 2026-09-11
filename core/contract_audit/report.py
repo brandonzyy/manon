@@ -23,10 +23,10 @@ def _lines_for_table(table: dict, limit: int) -> list[str]:
     head = f"  {table['title']}  {ok}/{total} 干净"
     if active:
         dead = sum(1 for f in active if f["verdict"] == "dead")
-        head += f"，{dead} 死面"
+        head += f"，{dead} 条强候选"
         suspect = len(active) - dead
         if suspect:
-            head += f" + {suspect} 待确认"
+            head += f" + {suspect} 条弱候选"
     if exempted:
         head += f"（已豁免 {exempted}）"
     lines.append(head)
@@ -42,9 +42,15 @@ def _lines_for_table(table: dict, limit: int) -> list[str]:
 
 
 def render(result: dict, limit: int = 8) -> str:
-    """Full human-readable report."""
+    """Full human-readable report.
+
+    **输出的是候选，不是结论。** 图谱与静态匹配只能给到「这里可能没人用」——
+    判定缺陷要回源码看一眼（能不能指出文件与行）。把候选直接说成死面/缺陷，
+    代价是有人照着删掉一个其实在被调用、只是调用形状不在图里的东西。
+    """
     lines = [
-        f"契约对账  {result['dead']} 死面 / {result['suspect']} 待确认"
+        f"契约对账（候选问题，须回源码复核）  {result['dead']} 条强候选 / "
+        f"{result['suspect']} 条弱候选"
         f"（{result['files_scanned']} 文件，{result['elapsed_seconds']}s）"
     ]
     lines.append(
@@ -60,6 +66,9 @@ def render(result: dict, limit: int = 8) -> str:
         for entry in stale[:5]:
             lines.append(f"    - {entry['table']} {entry['id']}")
         lines.append("")
+    if result["dead"] or result["suspect"]:
+        lines.append("  每条候选都要在源码里看一眼才算数：能指出文件与行 → 缺陷；"
+                     "指不出（名字只出现在字符串/配置/动态调用里）→ 不是。")
     return "\n".join(lines).rstrip()
 
 

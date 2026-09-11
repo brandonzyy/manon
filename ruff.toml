@@ -2,8 +2,12 @@
 # ERA（注释掉的代码）· ASYNC（异步陷阱）。存量冻结在 scripts/l1-baselines/lint.txt，
 # 比对逻辑在 scripts/check_l1.py（只此一份）。
 target-version = "py310"
+# `.worktrees` 是**同一份内容的另一棵树**：不排除它，读数随「此刻有没有开着树」
+# 变化（2026-09-11 实测：一棵树在场，lint 棘轮凭空多出 6 条「新增」，全是那棵树
+# 里的分支代码），而基线是按没有树的状态取的。scripts/check_l1.py 的 SKIP_DIRS
+# 与 skills/assurance 的 retire_checks.py 用同一条判据。
 extend-exclude = ["repos", "indexes", "saas_repos", "saas_indexes", "saas_data",
-                  "web/static", "dist", "build"]
+                  "web/static", "dist", "build", ".worktrees"]
 
 [lint]
 select = ["F", "B", "ARG", "ERA", "ASYNC"]

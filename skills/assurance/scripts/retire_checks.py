@@ -26,8 +26,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".retire-checks"
+# `.worktrees` 与 `.venv-*` 都是**同一份内容的另一棵树，不是仓里多出来的检查器**：
+# 不排除的话，主工作树盘点会把自己的隔离树再数一遍（执行器/检查器清单凭空翻倍，
+# 而这个翻倍只发生在「刚开过树」的仓上——正是盘点前后差别最大的那段时间）。
 SKIP_DIRS = {"node_modules", "vendor", ".venv", ".git", "dist", "build",
-             "__pycache__", ".mypy_cache", ".pytest_cache", "coverage"}
+             "__pycache__", ".mypy_cache", ".pytest_cache", "coverage", ".worktrees"}
 TEST_FILE = re.compile(r"^(test_.*|.*_test|.*\.spec|.*\.test)\.(py|ts|tsx|js|mjs|go|rb)$")
 MILESTONE = re.compile(r"^test_(m\d|mvp\d|s\d|g\d)", re.IGNORECASE)
 
@@ -47,7 +50,8 @@ def now_iso():
 
 def walk(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames
+                       if d not in SKIP_DIRS and not d.startswith(".venv-")]
         for name in filenames:
             yield Path(dirpath) / name
 
@@ -78,16 +82,22 @@ def find_runners(root: Path):
     hits = []
     for path in walk(root):
         name = path.name
-        if not (name.startswith("run_") and path.suffix in {".sh", ".py"}):
+        conventional = (name.startswith("run_") or name in {"gate.sh", "gates.sh"}
+                        or name.endswith(("_gate.sh", "_gates.sh", "_audit.sh", "_poll.sh")))
+        if not (conventional and path.suffix in {".sh", ".py"}):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         signals = {
             "phases": len(re.findall(r"if selected |--phases|PHASES", text)),
             "pytest": len(re.findall(r"\bpytest\b", text)),
-            "checkers": len(set(re.findall(r"check_[a-z0-9_]+\.(?:sh|py)", text))),
+            "checkers": len(set(re.findall(
+                r"(?:check_[a-z0-9_]+|[a-z0-9_]+_check)\.(?:sh|py)", text))),
             # 清单驱动的执行器不硬编码任何检查器名字——只认 pytest/check_ 会把它漏掉，
             # 而它恰恰是最该保留的那种（唯一实现、单一事实源）。
-            "manifest_driven": len(re.findall(r"[a-z0-9_]*gates?[a-z0-9_]*\.txt", text)),
+            "manifest_driven": len(re.findall(
+                r"[a-z0-9_]*gates?[a-z0-9_]*\.(?:txt|sh)", text)),
+            "dynamic_tests": len(re.findall(r"discover_tests|test_\*\.py", text)),
+            "parallel_gate": len(re.findall(r"\b(?:spawn|cov)\s+|coverage run", text)),
         }
         if any(signals.values()):
             hits.append({"path": str(path.relative_to(root)),
@@ -98,7 +108,9 @@ def find_runners(root: Path):
 def find_checkers(root: Path):
     return sorted(
         {str(p.relative_to(root)) for p in walk(root)
-         if p.name.startswith("check_") and p.suffix in {".sh", ".py"}})
+         if not TEST_FILE.match(p.name)
+         and (p.name.startswith("check_") or p.stem.endswith("_check"))
+         and p.suffix in {".sh", ".py"}})
 
 
 def find_manifests(root: Path):
@@ -160,8 +172,15 @@ def execution_counts(root: Path, checkers, runners, manifests):
                 stripped = line.strip()
                 if stripped.startswith("#") or name not in stripped:
                     continue
-                if re.search(rf"(bash|sh|python3?|node|\./|\$PY|\$\{{PY\}}|run\()"
-                             rf"[^\n]*{re.escape(name)}", stripped):
+                clean = stripped.replace('"', "").replace("'", "")
+                direct = re.search(
+                    rf"(?:^|\s)(?:bash|sh|python3?|node|\$PY|\$\{{PY\}})\s+"
+                    rf"\S*{re.escape(name)}(?:\s|$)", clean)
+                wrapped = re.search(
+                    rf"^(?:spawn|cov|step)\s+\S+\s+"
+                    rf"(?:(?:\$PY|\$\{{PY\}}|python3?)\s+)?"
+                    rf"\S*{re.escape(name)}(?:\s|$)", clean)
+                if direct or wrapped:
                     hits += 1
             if hits:
                 n += hits
