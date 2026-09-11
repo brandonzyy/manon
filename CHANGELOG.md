@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.6.7] - 2026-09-11
+
+### Added
+- **红灯裁决（`/assurance`）**：命令失败不是红灯，只是待验证结果。权威结论收成四档
+  ——`PASS` / `RED` / `INVALID` / `UNKNOWN`，只有「基线绿 + 稳定复现 + 改动到失败的
+  因果链成立」三者齐备的失败才算 `RED`，也只有 `RED` 能阻断流程或驱动业务代码修改；
+  判据、范围、基线或检查器错了归 `INVALID`（修门禁，不改业务代码），环境故障或结果
+  翻转归 `UNKNOWN`（停止，修环境或补证据）。同一条件无新证据最多执行两次。
+  写进 `skills/assurance/SKILL.md` 的 Step 0，处置规则与匿名化判例在
+  `skills/assurance/references/红灯裁决.md`。
+  - 落地当日的两条真实失败按它判成 `INVALID` 并各留一行回执（Ops 保障读数：判据范围
+    错；`~/.agents` 与源分歧：既有状态缺陷，非本次改动引入），两条命令各执行一次。
+
+### Fixed
+- **两个 Assurance 检查器收敛成一份实现（`/assurance`）**：唯一源码是
+  `skills/assurance/scripts/assurance_check.py`；`~/.claude/bin/assurance-check.py`
+  收成薄壳入口。测试迁进 `skills/assurance/tests/`（70 条），新增「两个入口对同一个仓
+  输出逐字节一致」的用例，覆盖三个真实产品仓。
+- **四类假读数**：
+  - 隔离树被重复统计：`retire_checks.py`、`check_l1.py`、`ruff.toml` 三处都排除
+    `.worktrees`，且 `check_l1.py` 改按仓根相对路径判定（绝对路径前缀此前漏判）；
+  - 门禁清单识别：只认 `*gates*.` 形态、多候选取条目最多者；baseline、landed units
+    与任意 `manifest.txt` 不再被当成门禁清单；
+  - 验收误报两个方向：Ops 不再被读成「没有验收」，Agents 不再靠一篇文档读绿
+    （端到端/验收用例改看资产）；
+  - 契约审计输出统一改称「候选问题 / 强候选 / 弱候选」，并写明判定缺陷前必须回源码复核。
+- 读数口径：输出标题「合规检查」→「配置与接线状态」，并加一行「全绿 = 装齐了，
+  不等于项目当前健康」。
+
 ## [1.6.6] - 2026-09-08
 
 ### Fixed
