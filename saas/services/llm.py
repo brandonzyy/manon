@@ -39,9 +39,10 @@ async def llm_chat(
     resp = await client.post(
         settings.llm_api_url,
         headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
-        # GLM-4.5 系列不传 thinking 时思考模式默认开启，planner 类调用会先生成
-        # 数千 token 推理（单次 30-70s 且 content 可能为空）。注意 GLM-5.x
-        # 强制开启思考，传 disabled 会直接报错——届时需移除此参数。
+        # 思考型模型不传 thinking 时默认开推理，planner 类调用会先生成数千
+        # token 推理（单次 30-70s 且 content 可能为空）。实测 glm-4.5 与
+        # deepseek-flash 均接受 {"type": "disabled"}；GLM-5.x 强制思考，
+        # 传 disabled 会报错——届时需移除此参数。
         json={"model": settings.llm_model, "max_tokens": max_tokens, "messages": messages,
               "thinking": {"type": "disabled"}},
         timeout=timeout,
