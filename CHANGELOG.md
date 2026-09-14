@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.6.9] - 2026-09-14
+
+### Added
+- **`scripts/rebuild-repo.py` —— 换 embedding 模型后的全量重建执行器。**
+  向量模型不兼容（维度与向量空间都不同）必须整仓重建。脚本清本地哈希 → 全量扫描 →
+  首批带 `full_reindex` 上传（服务端整体重置图/向量/chunks）→ 完成后从服务端
+  index-status 回写本地哈希，增量同步随即恢复正常。
+
+### Fixed
+- **向量维度不匹配从 numpy 裸错变成明确报错。** 换 embedding 模型后，未重建仓库的
+  查询在 `matrix @ q.T` / `vstack` 处抛难懂的 numpy 异常：
+  - 查询侧：`EmbeddingModelMismatch` → HTTP 409，detail 指明
+    「stored=2048, incoming=1024，需全量重建（scripts/rebuild-repo.py）」
+  - 同步侧：同异常进入 sync-ast 的 error 状态，原因可读
+  - 回归测试补三例：add/search 维度冲突 + `_mg_query` 409 转换
+
+### 运维
+- embedding 供应商由智谱 Embedding-3（0.5 元/M，账户余额耗尽致 9/14 事故）切换为
+  硅基流动 BAAI/bge-m3 免费版（1024 维）；首批评级重建 CaseOS / Agents-verispring /
+  verispring-ops 三仓，其余仓库查询返回上述 409 待重建。
+
 ## [1.6.8] - 2026-09-14
 
 ### Fixed

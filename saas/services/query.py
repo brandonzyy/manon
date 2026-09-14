@@ -23,6 +23,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from matrixone_graph import MatrixoneGraph  # noqa: E402
+from matrixone_graph.store import EmbeddingModelMismatch  # noqa: E402
 
 MatrixoneGraph.configure(
     embedding_url=settings.embedding_url,
@@ -113,6 +114,11 @@ async def _mg_query(mg, text: str, **kwargs):
         return await mg.query(text, **kwargs)
     except HTTPException:
         raise
+    except EmbeddingModelMismatch as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{exc} — run a full rebuild (scripts/rebuild-repo.py) for this repo",
+        ) from exc
     except httpx.HTTPError as exc:
         reason = f"HTTP {exc.response.status_code}: {exc.response.text[:120]}" \
             if isinstance(exc, httpx.HTTPStatusError) else str(exc)
