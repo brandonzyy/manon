@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi import HTTPException, status
 
 from ..config import settings
@@ -80,7 +81,13 @@ def _hits_to_log(result) -> dict:
 
 
 async def require_indexed_repo(repo_id: str, tenant_id: str):
-    """Return repo row or raise HTTP errors for missing/unindexed repos."""
+    """Return repo row or raise HTTP errors for missing/unindexed repos.
+
+    A failed incremental sync (index_status=error) leaves the last good
+    graph on disk — sync only persists after embedding succeeds — so it
+    stays queryable. Only a repo that never synced (pending) or has no
+    graph on disk is rejected.
+    """
     db = await get_db()
     cur = await db.execute(
         "SELECT * FROM repos WHERE id = ? AND tenant_id = ?",
@@ -89,9 +96,31 @@ async def require_indexed_repo(repo_id: str, tenant_id: str):
     row = await cur.fetchone()
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "repo not found")
-    if row["index_status"] != "done":
+    kg_graph = Path(settings.index_dir) / tenant_id / row["name"] / "kg" / "graph.json"
+    if row["index_status"] == "pending" or not kg_graph.exists():
         raise HTTPException(400, f"repo not indexed yet (status={row['index_status']})")
     return row
+
+
+async def _mg_query(mg, text: str, **kwargs):
+    """mg.query wrapper — embedding outages fail loud and explicit, never silently degrade.
+
+    Quota exhaustion / auth failure / network errors surface as 503 with the
+    underlying reason, so the outage is visible instead of masked by fallback
+    results. Impact and code-health (pure graph, no embedding) stay available.
+    """
+    try:
+        return await mg.query(text, **kwargs)
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        reason = f"HTTP {exc.response.status_code}: {exc.response.text[:120]}" \
+            if isinstance(exc, httpx.HTTPStatusError) else str(exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"embedding service unavailable ({reason}) — search/graph queries down; "
+            "impact and code-health unaffected",
+        ) from exc
 
 
 async def search_repo(
@@ -104,7 +133,7 @@ async def search_repo(
 ) -> SearchResult:
     row = await require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
-    result = await mg.query(query, top_k=top_k, depth=depth)
+    result = await _mg_query(mg, query, top_k=top_k, depth=depth)
     await record_usage(ctx.tenant_id, "query.search", repo_id)
     asyncio.create_task(record_query(
         ctx.tenant_id,
@@ -137,7 +166,7 @@ async def graph_repo(
 ) -> SearchResult:
     row = await require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
-    result = await mg.query(symbol, top_k=5, depth=depth, direction=direction)
+    result = await _mg_query(mg, symbol, top_k=5, depth=depth, direction=direction)
     await record_usage(ctx.tenant_id, "query.graph", repo_id)
     return SearchResult(
         entities=result.entities,
@@ -239,7 +268,10 @@ async def impact_local_repo(
     for sym in sym_names:
         try:
             result = await mg.query(sym, top_k=5, depth=1, direction="callers")
-        except Exception:
+        except Exception as exc:
+            # Enrichment only — impact results stay valid without the caller
+            # context, but the skip must not be invisible.
+            log.warning("impact-local context lookup failed for %s: %s", sym, exc)
             continue
         for r in result.relations:
             src = r.get("src_id", "")
@@ -358,7 +390,7 @@ async def deep_query_repo(
     row = await require_indexed_repo(repo_id, ctx.tenant_id)
     mg = get_graph(ctx.tenant_id, row["local_path"], repo_name=row["name"])
 
-    result = await mg.query(question, top_k=10, depth=1)
+    result = await _mg_query(mg, question, top_k=10, depth=1)
     accumulated = result.context or ""
     rounds_detail = [{"round": 0, "query": question,
                       "entities": [e.get("id", e.get("name", "")) for e in result.entities],

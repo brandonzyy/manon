@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.6.8] - 2026-09-14
+
+### Fixed
+- **embedding 不可用时查询不再砌死或裸 500（2026-09-14 线上事故：manon 接口全部 400/500）。**
+  事故链：embedding API 余额耗尽（HTTP 429 code 1113）→ 增量同步失败置
+  index_status=error → 该仓库所有查询端点 400 "repo not indexed yet"；done 状态仓库
+  的搜索词向量化抛未处理 HTTPStatusError → 500。
+  - 门禁改为「磁盘上有 graph.json 即可查」：失败的增量同步不砌死整个仓库——
+    同步在 embedding 成功后才落盘，磁盘图恒为上次完整状态；pending 或磁盘无图仍拒
+  - search / graph / deep-query 的 embedding 故障转换为显式 503，detail 带原始
+    原因（如 `HTTP 429: 1113 余额不足`）——故障可见，不做静默降级
+  - impact / code-health 不依赖 embedding，故障期间保持可用；impact-local 的
+    上下文富化跳过时补告警日志（裸 except 无声）
+  - 回归测试 `tests/test_query_outage.py`：门禁三态（error+图放行 / error 无图拒 /
+    pending 拒）+ 503 显式失败 + pipeline 层不吞 embedding 错误
+  - 运维侧（不入库）：R760 systemd 单元 2026-09-13 01:32 被无密钥的渲染覆盖，
+    三个密钥型 Environment 丢失，watchdog 的 embedding 探针随之失效
+    （显示 unconfigured）；本次部署已从 .deploy-secrets.env 恢复
+
 ## [1.6.7] - 2026-09-11
 
 ### Added
