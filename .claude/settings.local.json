@@ -1,5 +1,9 @@
 {
+  "enabledMcpjsonServers": [
+    "keynote"
+  ],
   "enabledPlugins": {
     "claude-hud@claude-hud": true
-  }
+  },
+  "enableAllProjectMcpServers": true
 }
