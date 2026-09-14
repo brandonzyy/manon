@@ -36,6 +36,19 @@ def atomic_write_npz(path: Path, arrays: dict) -> None:
     tmp.replace(path)
 
 
+class EmbeddingModelMismatch(ValueError):
+    """Vectors whose dimension differs from the stored index — the index was
+    built with a different embedding model and needs a full rebuild."""
+
+
+def _check_dim(stored: np.ndarray | None, incoming: np.ndarray, *, what: str) -> None:
+    if stored is not None and stored.size and stored.shape[1] != incoming.shape[1]:
+        raise EmbeddingModelMismatch(
+            f"{what}: dimension mismatch (stored={stored.shape[1]}, incoming={incoming.shape[1]}) — "
+            "index built with a different embedding model; full rebuild required"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -266,6 +279,7 @@ class VectorIndex:
         if not ids:
             return
         new = np.array(vecs, dtype=np.float32)
+        _check_dim(self._entity_vecs, new, what="entity vectors")
         self._entity_ids.extend(ids)
         self._entity_vecs = (
             np.vstack([self._entity_vecs, new]) if self._entity_vecs is not None else new
@@ -275,6 +289,7 @@ class VectorIndex:
         if not ids:
             return
         new = np.array(vecs, dtype=np.float32)
+        _check_dim(self._chunk_vecs, new, what="chunk vectors")
         self._chunk_ids.extend(ids)
         self._chunk_vecs = (
             np.vstack([self._chunk_vecs, new]) if self._chunk_vecs is not None else new
@@ -309,10 +324,14 @@ class VectorIndex:
         return [(ids[i], float(scores[i])) for i in top_idx]
 
     def search_entities(self, query_vec, top_k=10):
-        return self._cosine_topk(np.array(query_vec), self._entity_vecs, self._entity_ids, top_k)
+        q = np.array(query_vec, dtype=np.float32)
+        _check_dim(self._entity_vecs, q.reshape(1, -1), what="entity vectors")
+        return self._cosine_topk(q, self._entity_vecs, self._entity_ids, top_k)
 
     def search_chunks(self, query_vec, top_k=10):
-        return self._cosine_topk(np.array(query_vec), self._chunk_vecs, self._chunk_ids, top_k)
+        q = np.array(query_vec, dtype=np.float32)
+        _check_dim(self._chunk_vecs, q.reshape(1, -1), what="chunk vectors")
+        return self._cosine_topk(q, self._chunk_vecs, self._chunk_ids, top_k)
 
     def save(self, path: Path) -> None:
         arrays = {}

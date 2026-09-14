@@ -129,3 +129,37 @@ class TestLoudOutage:
         assert exc_info.value.status_code == 503
         assert "embedding service unavailable" in exc_info.value.detail
         assert "429" in exc_info.value.detail
+
+
+class TestVectorDimGuard:
+    def test_add_mismatched_dim_raises_clear_error(self):
+        from matrixone_graph.store import EmbeddingModelMismatch, VectorIndex
+
+        vi = VectorIndex()
+        vi.add_entity_vectors(["e1"], [[0.1] * 1024])
+        with pytest.raises(EmbeddingModelMismatch, match="full rebuild"):
+            vi.add_entity_vectors(["e2"], [[0.1] * 2048])
+
+    def test_search_mismatched_dim_raises_clear_error(self):
+        from matrixone_graph.store import EmbeddingModelMismatch, VectorIndex
+
+        vi = VectorIndex()
+        vi.add_chunk_vectors(["c1"], [[0.1] * 2048])
+        with pytest.raises(EmbeddingModelMismatch, match="full rebuild"):
+            vi.search_chunks([0.1] * 1024)
+
+    @pytest.mark.asyncio
+    async def test_mg_query_dim_mismatch_becomes_409(self):
+        from matrixone_graph.store import EmbeddingModelMismatch
+
+        class _MismatchMG:
+            async def query(self, *_args, **_kwargs):
+                raise EmbeddingModelMismatch(
+                    "entity vectors: dimension mismatch (stored=2048, incoming=1024) — "
+                    "index built with a different embedding model; full rebuild required"
+                )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await services_query._mg_query(_MismatchMG(), "anything", top_k=3)
+        assert exc_info.value.status_code == 409
+        assert "rebuild-repo.py" in exc_info.value.detail
