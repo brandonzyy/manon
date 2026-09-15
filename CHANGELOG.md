@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.6.11] - 2026-09-15
+
+### Fixed
+- **安装器只动 manon 自己名下的东西，不再重写、破坏别家的配置。**
+  - `~/.claude/settings.json`：钩子按**单条**合并（只认命令路径 `~/.claude/hooks/<manon 钩子>`），
+    与 manon 同组的别人的钩子原样保留；此前按整组匹配，与 post_commit.py 同组的
+    `gitee_pr_watch.py --register` 被连组删掉。读不懂就不写——此前读失败会当空表整份写回，
+    env / permissions / 别人的钩子一并抹掉。
+  - `~/.claude.json`、Kimi `mcp.json`、ZCode `config.json`：只 upsert `manon` 这一条，
+    不再顺手塞 playwright；读不懂原样不动并提示（安装继续）。
+  - 退役 skill（tc / dao / audit / retire-checks / experience / idea）只摘 SKILL.md 指纹对得上
+    manon 发布过的那 22 版之一的目录；同名的用户 skill、改过的副本、软链一律保留。
+  - 所有写入改为原子写（同目录临时文件 + rename，保留原权限位），内容没变不写。
+  - 新模块 `manon_mcp/_safe_config.py`（纯标准库）是 install.sh / install.bat 写别家配置的唯一出口；
+    判据 `tests/test_install_safety.py`（19 条，四处修复各做定向变异验红）。
+
 ## [1.6.10] - 2026-09-15
 
 ### Fixed

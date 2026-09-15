@@ -3,8 +3,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from pathlib import Path
+
+try:
+    from manon_mcp._safe_config import UnreadableConfig, atomic_write_text, load_json_object
+except ImportError:  # 按路径单独加载本文件时（~/.claude 的钩子漂移判据就这么读）manon_mcp 不在 sys.path 上
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("manon_safe_config", Path(__file__).with_name("_safe_config.py"))
+    _safe = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+    _spec.loader.exec_module(_safe)  # type: ignore[union-attr]
+    UnreadableConfig, atomic_write_text, load_json_object = (  # type: ignore[misc]
+        _safe.UnreadableConfig, _safe.atomic_write_text, _safe.load_json_object)
 
 log = logging.getLogger("manon-mcp")
 
@@ -315,8 +326,7 @@ def _persist_api_config() -> None:
         existing["api_url"] = _config.API_URL
         if _config.API_KEY:
             existing["api_key"] = _config.API_KEY
-        cfg_file.parent.mkdir(parents=True, exist_ok=True)
-        cfg_file.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(cfg_file, json.dumps(existing, indent=2, ensure_ascii=False))
     except Exception as exc:
         log.warning("Failed to persist API config: %s", exc)
 
@@ -346,43 +356,78 @@ def _build_claude_hook_entries(
     return desired_pre, desired_post, desired_stop
 
 
+_MANON_HOOK_FILES = ("pre_search.py", "pre_agent_plan.py", "pre_enter_plan.py",
+                     "post_commit.py", "stop_dao.py")
+#: 退役钩子：settings 里指向它们的那一条摘掉（文件本身在 _install_claude_hooks 里删）。
+_RETIRED_HOOK_FILES = ("pre_edit.py", "post_exit_plan.py")
+#: manon 的钩子只按**命令里的路径**认：`~/.claude/hooks/<manon 那几个文件>`。
+_MANON_HOOK_CMD = re.compile(
+    r"[/\\]\.claude[/\\]hooks[/\\](?:"
+    + "|".join(re.escape(n) for n in _MANON_HOOK_FILES + _RETIRED_HOOK_FILES)
+    + r")(?=$|[\s\"'])")
+
+
+def _is_manon_hook(hook) -> bool:
+    return isinstance(hook, dict) and bool(_MANON_HOOK_CMD.search(str(hook.get("command", ""))))
+
+
+def _merge_manon_groups(section: list, desired: list) -> list:
+    """一个事件下的分组：摘掉 manon 自己的那几条钩子、放回想要的那几条。**只按单条钩子动**。
+
+    判例（2026-09-15）：此前按 `str(整个分组)` 匹配 manon 的文件名，与 post_commit.py 同组的
+    `gitee_pr_watch.py --register` 被连组删掉——别人的钩子静默下线，而且下线过两次。
+    manon 独占的组原地换内容、不挪位置；组里还有别人的钩子，就只留别人的。
+    """
+    out: list = []
+    slots: dict = {}
+    for group in section:
+        hooks = group.get("hooks") if isinstance(group, dict) else None
+        if not isinstance(hooks, list) or not any(_is_manon_hook(h) for h in hooks):
+            out.append(group)
+            continue
+        kept = [h for h in hooks if not _is_manon_hook(h)]
+        if kept:
+            out.append({**group, "hooks": kept})
+        elif group.get("matcher") not in slots:
+            slots[group.get("matcher")] = len(out)
+            out.append(None)
+    for want in desired:
+        slot = slots.pop(want.get("matcher"), None)
+        if slot is None:
+            out.append(want)
+        else:
+            out[slot] = want
+    return [g for g in out if g is not None]
+
+
 def _update_settings_hooks(
     settings_file: Path, desired_pre: list, desired_post: list, desired_stop: list,
 ) -> bool:
-    _manon_hook_files = (
-        "pre_search.py", "pre_edit.py", "pre_agent_plan.py",
-        "pre_enter_plan.py", "post_commit.py", "stop_dao.py",
-    )
-    settings: dict = {}
-    if settings_file.exists():
-        try:
-            settings = json.loads(settings_file.read_text(encoding="utf-8"))
-        except Exception:
-            settings = {}
+    """把 manon 的钩子合进 settings.json：**只动 manon 自己那几条**，别的键、别人的钩子原样。
 
-    hooks_cfg = settings.setdefault("hooks", {})
-    pre_tool   = hooks_cfg.setdefault("PreToolUse", [])
-    post_tool  = hooks_cfg.setdefault("PostToolUse", [])
-    stop_hooks = hooks_cfg.setdefault("Stop", [])
-
-    # Clean up retired hook files from settings
-    _retired = ("post_exit_plan.py",)
-    for section in (pre_tool, post_tool, stop_hooks):
-        section[:] = [e for e in section if not any(r in str(e) for r in _retired)]
-
-    existing_pre  = [e for e in pre_tool   if any(f in str(e) for f in _manon_hook_files)]
-    existing_post = [e for e in post_tool  if any(f in str(e) for f in _manon_hook_files)]
-    existing_stop = [e for e in stop_hooks if any(f in str(e) for f in _manon_hook_files)]
-    if existing_pre == desired_pre and existing_post == desired_post and existing_stop == desired_stop:
+    读不懂（坏 JSON、顶层或 hooks 不是对象）就不写——此前读失败会当成空表整份写回，
+    env / permissions / 别人的钩子一并抹掉。写是原子的，内容没变不写。
+    """
+    try:
+        settings = load_json_object(settings_file)
+    except UnreadableConfig as exc:
+        log.warning("不改 %s：%s", settings_file, exc)
         return False
-
-    pre_tool[:]   = [e for e in pre_tool   if not any(f in str(e) for f in _manon_hook_files)]
-    post_tool[:]  = [e for e in post_tool  if not any(f in str(e) for f in _manon_hook_files)]
-    stop_hooks[:] = [e for e in stop_hooks if not any(f in str(e) for f in _manon_hook_files)]
-    pre_tool.extend(desired_pre)
-    post_tool.extend(desired_post)
-    stop_hooks.extend(desired_stop)
-    settings_file.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    before = json.dumps(settings, sort_keys=True, ensure_ascii=False)
+    hooks_cfg = settings.setdefault("hooks", {})
+    if not isinstance(hooks_cfg, dict):
+        log.warning("不改 %s：hooks 不是对象", settings_file)
+        return False
+    for event, desired in (("PreToolUse", desired_pre), ("PostToolUse", desired_post),
+                           ("Stop", desired_stop)):
+        section = hooks_cfg.get(event, [])
+        if not isinstance(section, list):
+            log.warning("不改 %s：hooks.%s 不是列表", settings_file, event)
+            return False
+        hooks_cfg[event] = _merge_manon_groups(section, desired)
+    if json.dumps(settings, sort_keys=True, ensure_ascii=False) == before:
+        return False
+    atomic_write_text(settings_file, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
     return True
 
 
@@ -463,7 +508,7 @@ def _install_codex_mcp_block(config_file: Path, venv_python_str: str, server_py_
             "startup_timeout_sec = 30.0\n"
             "tool_timeout_sec = 120.0\n"
         )
-        config_file.write_text(existing_toml.rstrip() + "\n" + mcp_block, encoding="utf-8")
+        atomic_write_text(config_file, existing_toml.rstrip() + "\n" + mcp_block)
         log.info("Codex MCP config installed: %s", config_file)
 
 
@@ -471,7 +516,8 @@ def _install_codex_agents_md(agents_file: Path) -> None:
     """Append Manon guidance to ~/AGENTS.md if not present."""
     existing = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
     if "manon_search" not in existing:
-        agents_file.write_text((existing.rstrip() + "\n\n" + _CODEX_AGENTS_CONTENT) if existing else _CODEX_AGENTS_CONTENT, encoding="utf-8")
+        atomic_write_text(agents_file, (existing.rstrip() + "\n\n" + _CODEX_AGENTS_CONTENT)
+                          if existing else _CODEX_AGENTS_CONTENT)
         log.info("Codex AGENTS.md installed: %s", agents_file)
 
 
@@ -554,12 +600,9 @@ def _write_hook_file(hook_file: Path, manon_marker: str, marker_line: str, manon
                     break
             lines.insert(insert_idx, marker_line)
             lines.insert(insert_idx + 1, manon_line)
-        hook_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(hook_file, "\n".join(lines) + "\n")
     else:
-        hook_file.write_text(
-            "\n".join(["#!/bin/sh", marker_line, manon_line, "exit 0"]) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_text(hook_file, "\n".join(["#!/bin/sh", marker_line, manon_line, "exit 0"]) + "\n")
     return True
 
 
