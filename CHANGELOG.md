@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.10] - 2026-09-15
+
+### Fixed
+- **assurance 判据收回一份（P1-4 并入 skill）。** 09-12 的「绿格要对应一份读数」只改了
+  `~/.claude/bin` 那份实现，skill 这份没有，两个入口又读出两套数。现并入唯一实现：
+  - 契约对账豁免表：顶格 `exempt:` 按 endpoints / configs / states / envelope 分组才算
+    读者读得到；另要有执行器，或 120 天内登记过的对账报告（`contract-audit` 进一次性登记）。
+  - 变异一次性登记：结论文档要写「被测套件：<仓内路径>」且路径在仓里、「被杀：<数>」大于 0。
+  - `.assurance-ci.txt` 第二栏的执行器定义文件并入执行器面。
+  - 用例 +13（修复 13），去掉任一处证据即红。
+
+### CI
+- `l1-and-tests` 增一步跑 `skills/assurance/tests`：随 skill 发布的判据测试此前没有任何执行器。
+
 ## [1.6.9] - 2026-09-14
 
 ### Added

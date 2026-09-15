@@ -27,6 +27,10 @@ jobs:
         run: python3 scripts/check_skills.py
       - name: L1 五条棘轮 + 清单闭合（判据只此一份，本机同款；此刻环境里不许有产品依赖）
         run: python3 scripts/check_l1.py
+      # skill 随发布带着自己的判据测试（2026-09-11 起 assurance 有），此前没有任何执行器。
+      # 只用标准库 + git，放在产品依赖之前；test_two_entries 在没有 ~/.claude/bin 的机器上自跳。
+      - name: skill 判据测试（assurance）
+        run: python3 -m unittest discover -s skills/assurance/tests -p 'test_*.py'
       - name: 装产品依赖（L1 已跑完，现在才轮到它们）
         run: pip install -r requirements.txt -r manon_mcp/requirements.txt
       - name: 测试 + 覆盖率测量（P5 第一步：只测量不设门槛）

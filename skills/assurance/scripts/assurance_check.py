@@ -111,8 +111,21 @@ SELF_HOSTED_CI_DECL = ".assurance-ci.txt"
 # 而且它会**过期**：超过 ONESHOT_VALID_DAYS 翻黄。一次性不等于一次管到底——
 # 代码换过一轮之后，那份结论说的是别的代码。
 ONESHOT_DECL = ".assurance-oneshot.txt"
-ONESHOT_KEYS = {"mutation-python", "mutation-ts"}
+ONESHOT_KEYS = {"mutation-python", "mutation-ts", "contract-audit"}
 ONESHOT_VALID_DAYS = 365
+#: 各动作键的有效期（天）。契约对账按规范 §3.5 是「迭代收尾」的动作：一个季度不跑，
+#: 那份报告说的就是另一份代码了。
+ONESHOT_VALIDITY = {"mutation-python": ONESHOT_VALID_DAYS, "mutation-ts": ONESHOT_VALID_DAYS,
+                    "contract-audit": 120}
+#: 结论文档里本工具核得到的那几行。**登记指得到一篇文档不等于那一轮真跑过**——判例
+#: （2026-09-12，项目丙）：变异登记指向的那一轮用的是「最小探针」而不是仓里的测试套件，
+#: 483 个突变体 351 个没执行，格子照样绿。所以结论必须自己说出「拿哪份套件跑的」「杀了
+#: 几个」：套件路径真在仓里、被杀数大于零（零被杀的成因至少四种，输出都与「全部盖住」
+#: 一样，规范 §10.20）。契约对账报告则要带读者自己打的「策略」那一行——它证明豁免表
+#: 真的被读者读到了。
+ONESHOT_SUITE = re.compile(r"被测套件[：:]\s*(.+)")
+ONESHOT_KILLED = re.compile(r"被杀[：:]\s*(\d+)")
+CONTRACT_POLICY_LINE = re.compile(r"策略[：:]\s*\.manon-contract\.ya?ml")
 
 HOOK_MECHANISMS = {
     "lefthook":     ["lefthook.yml", "lefthook.yaml"],
@@ -384,10 +397,28 @@ class Project:
         here = "/".join(parts)
         return out + [q for q in self.glob(here) if q not in out] if here else out
 
+    def _declared_ci_definitions(self) -> list[Path]:
+        """`.assurance-ci.txt` 里声明的自建执行器定义——**声明了就是执行器面**。
+
+        判例（2026-09-12，项目丙）：依赖公告审计跑在自建机的定时器上，`pip-audit` 写在
+        `ci/r760_deps_audit.sh` 里，而那个文件不在任何 glob 上，「依赖审计」一格报缺；
+        仓里于是长出一层只为「让体检工具看得见」的转发壳。声明的第二栏本来就是「这条
+        执行器定义在哪」，存在性被核对过，它就该算执行器面。
+        """
+        out: list[Path] = []
+        for decl in self.glob(SELF_HOSTED_CI_DECL):
+            for line in self.read(decl).splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or line.count("|") < 2:
+                    continue
+                out += self.glob(line.split("|", 2)[1].strip())
+        return out
+
     def _collect_executor_text(self) -> str:
         chunks = []
         seen: set[Path] = set()
-        pool = [q for pat in EXECUTOR_GLOBS for q in self.glob(pat)] + self._manifest_registered()
+        pool = ([q for pat in EXECUTOR_GLOBS for q in self.glob(pat)]
+                + self._manifest_registered() + self._declared_ci_definitions())
         for p in pool:
             if p in seen:
                 continue
@@ -617,8 +648,33 @@ def _oneshot(proj) -> tuple[dict, list[str]]:
         if age < 0:
             bad.append(f"{key} 的日期 {day} 在未来")
             continue
-        good[key] = {"doc": doc, "date": day, "age": age, "stale": age > ONESHOT_VALID_DAYS}
+        problem = _oneshot_evidence(proj, key, doc)
+        if problem:
+            bad.append(problem)
+            continue
+        good[key] = {"doc": doc, "date": day, "age": age,
+                     "stale": age > ONESHOT_VALIDITY.get(key, ONESHOT_VALID_DAYS)}
     return good, bad
+
+
+def _oneshot_evidence(proj, key: str, doc: str) -> str | None:
+    """结论文档自己说得出的那几件事核不上，返回坏行说明；核得上返回 None。"""
+    text = proj.read(proj.root / doc)
+    if key.startswith("mutation-"):
+        suite = ONESHOT_SUITE.search(text)
+        if not suite:
+            return f"{key} 的结论 {doc} 没写「被测套件：<仓内测试路径>」——拿什么跑的核不到"
+        paths = [p.strip("`") for p in re.split(r"[、,，\s]+", suite.group(1)) if p.strip("`")]
+        if not paths or not all(proj.glob(p) for p in paths):
+            return f"{key} 的结论 {doc} 写的被测套件不在仓库里：{suite.group(1).strip()[:60]}"
+        killed = ONESHOT_KILLED.search(text)
+        if not killed or int(killed.group(1)) == 0:
+            return (f"{key} 的结论 {doc} 没写「被杀：<数>」或被杀数为零——"
+                    "零被杀与「全部盖住」输出一样，先证明这一轮真杀得死东西")
+    if key == "contract-audit" and not CONTRACT_POLICY_LINE.search(text):
+        return (f"{key} 的报告 {doc} 里没有读者打的「策略: .manon-contract.yaml」那一行"
+                "——豁免表有没有被读者读到，核不到")
+    return None
 
 
 def _with_oneshot(chk: "Check", declared: dict, key: str) -> "Check":
@@ -715,6 +771,47 @@ def _e2e_cases(proj: Project) -> tuple[str, ...]:
     return tuple(hits)
 
 
+#: 契约对账的读者（manon 的 contract_audit）只认一种形状：顶格 `exempt:`，下面按四张表
+#: 分组，每条 `id` + `reason`。判例（2026-09-12，项目丙）：`version: 1` + `exemptions:`
+#: 与扁平的 `exempt:` 列表都是静默空表——读者一条不认、强候选照报，而本格此前只核
+#: 「每条有 reason」，照样判绿。
+CONTRACT_TABLES = ("endpoints", "configs", "states", "envelope")
+CONTRACT_EXECUTOR = (r"contract[_-]audit", r"manon-contract-audit")
+
+
+def _contract_cell(proj, contract: str, oneshot: dict) -> "Check":
+    """L0 那一格：豁免表形状对、每条有 reason，**并且**有东西在跑契约对账——执行器，
+    或者一份登记过、未过期的对账报告（规范 §3.5：契约对账是迭代收尾的动作）。"""
+    txt = proj.read(proj.root / contract)
+    entries = re.findall(r"^\s*-\s+id:", txt, re.M)
+    grouped = bool(re.search(r"^exempt:\s*$", txt, re.M)) and bool(re.search(
+        r"^\s+(?:" + "|".join(CONTRACT_TABLES) + r"):\s*$", txt, re.M))
+    if entries and not grouped:
+        return Check("L0", "契约对账豁免表", NOT_RUN, contract,
+                     "豁免条目不在读者认的形状里（顶格 `exempt:`，下按 endpoints / configs / "
+                     "states / envelope 分组）——读者读到的是空表，强候选照报")
+    bad = re.findall(r"-\s+id:\s*\"?([^\"\n]+)\"?(?![\s\S]{0,400}?reason:)", txt)
+    if bad:
+        return Check("L0", "契约对账豁免表", NOT_RUN, contract,
+                     f"{len(bad)} 条豁免缺 reason，无法被下一个人核对")
+    where = proj.executed_where(*CONTRACT_EXECUTOR)
+    if where:
+        return Check("L0", "契约对账豁免表", OK, f"{contract}（执行器：{where}）")
+    record = oneshot.get("contract-audit")
+    if record and not record["stale"]:
+        return Check("L0", "契约对账豁免表", OK,
+                     f"{contract} + {record['doc']}（{record['date']}）  ← 仅确认报告存在",
+                     "本工具查不到那份报告之后又长出了什么。迭代收尾重跑一次并更新登记。")
+    if record:
+        return Check("L0", "契约对账豁免表", NOT_RUN,
+                     f"{contract} + {record['doc']}（{record['date']}，已过去 {record['age']} 天）",
+                     f"契约对账报告超过 {ONESHOT_VALIDITY['contract-audit']} 天，"
+                     f"重跑一次并更新 {ONESHOT_DECL}")
+    return Check("L0", "契约对账豁免表", NOT_RUN, contract,
+                 "豁免表在，但没有任何东西跑契约对账——接进 CI，或按规范在迭代收尾跑一次，"
+                 f"报告落进仓里并在 {ONESHOT_DECL} 登记 `contract-audit|<报告>|<日期>`")
+
+
 def run(proj: Project) -> list[Check]:
     out: list[Check] = []
     oneshot, oneshot_bad = _oneshot(proj)
@@ -724,10 +821,7 @@ def run(proj: Project) -> list[Check]:
     # ── L0 结构层 ──────────────────────────────────────────────────────
     contract = proj.find_config(files=[".manon-contract.yaml", ".manon-contract.yml"])
     if contract:
-        txt = proj.read(proj.root / contract)
-        bad = re.findall(r"-\s+id:\s*\"?([^\"\n]+)\"?(?![\s\S]{0,400}?reason:)", txt)
-        out.append(Check("L0", "契约对账豁免表", OK if not bad else NOT_RUN, contract,
-                         "" if not bad else f"{len(bad)} 条豁免缺 reason，无法被下一个人核对"))
+        out.append(_contract_cell(proj, contract, oneshot))
     else:
         out.append(Check("L0", "契约对账豁免表", MISSING, "",
                          "跑 manon init 并在仓根建 .manon-contract.yaml；死面只有退役或豁免两个去处"))
