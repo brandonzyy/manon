@@ -306,7 +306,9 @@ class OneShotDeclaration(Fixture):
     把 Stryker 钉进 devDependencies 反而是错的（此后每次构建镜像都要装它），
     于是**正确的做法在工具眼里长得和什么都没做一模一样**。"""
 
-    DOC = {"docs/变异测试首轮结论.md": "# 结论\n\n杀死率 82%\n"}
+    DOC = {"docs/变异测试首轮结论.md":
+               "# 结论\n\n被测套件：tests/test_core.py\n被杀：41\n杀死率 82%\n",
+           "tests/test_core.py": "def test_core():\n    assert True\n"}
     TODAY = dt.date.today().isoformat()
 
     def test_valid_declaration_greens_the_cell(self):
@@ -391,6 +393,92 @@ class OneShotDeclaration(Fixture):
                             f"mutation-ts|docs/变异测试首轮结论.md|{old}\n"})["变异测试 (TS)"]
         self.assertEqual(c.status, AC.NOT_RUN)
         self.assertIn("已过去", c.evidence)
+
+
+# ── 修复 13：绿格要对应一份读数，文件在场不算 ────────────────────────────
+class ReadingsNotReceipts(Fixture):
+    """判例（2026-09-12，项目丙）：体检 13/14 绿里有 4 格只是文件在场——豁免表写在读者
+    不认的键下、变异登记指向一轮只用了探针的结论、依赖审计的执行器不在任何 glob 上。
+    每条修复成对：该绿的现场 + 把证据拆掉必须红的现场。"""
+
+    TODAY = dt.date.today().isoformat()
+    GROUPED = ("exempt:\n  states:\n    - id: \"write:t.status='x'\"\n"
+               "      reason: \"读过源码，是误报\"\n")
+    AUDIT = {"scripts/contract.sh": "python3 -m core.contract_audit .\n"}
+
+    def test_豁免挂在读者不认的键下_判未达标(self):
+        c = self.assertStatus({**PY3, **self.AUDIT, ".manon-contract.yaml":
+                               "version: 1\nexemptions:\n  - id: x\n    reason: y\n"},
+                              "契约对账豁免表", AC.NOT_RUN)
+        self.assertIn("读者认的形状", c.advice)
+
+    def test_扁平的exempt列表也不是读者认的形状(self):
+        self.assertStatus({**PY3, **self.AUDIT, ".manon-contract.yaml":
+                           "exempt:\n  - id: x\n    reason: y\n"},
+                          "契约对账豁免表", AC.NOT_RUN)
+
+    def test_形状对而没有东西跑契约对账_判未达标(self):
+        c = self.assertStatus({**PY3, ".manon-contract.yaml": self.GROUPED},
+                              "契约对账豁免表", AC.NOT_RUN)
+        self.assertIn("没有任何东西跑契约对账", c.advice)
+
+    def test_形状对且有执行器_判OK并指出执行器(self):
+        c = self.assertStatus({**PY3, **self.AUDIT, ".manon-contract.yaml": self.GROUPED},
+                              "契约对账豁免表", AC.OK)
+        self.assertIn("scripts/contract.sh", c.evidence)
+
+    def test_形状对且有对账报告登记_判OK(self):
+        self.assertStatus({**PY3, ".manon-contract.yaml": self.GROUPED,
+                           "docs/契约对账.md": "契约对账\n  策略: .manon-contract.yaml\n",
+                           ".assurance-oneshot.txt":
+                               f"contract-audit|docs/契约对账.md|{self.TODAY}\n"},
+                          "契约对账豁免表", AC.OK)
+
+    def test_对账报告里没有读者那一行_登记是坏行(self):
+        cells = self.cells({**PY3, ".manon-contract.yaml": self.GROUPED,
+                            "docs/契约对账.md": "契约对账：都查过了\n",
+                            ".assurance-oneshot.txt":
+                                f"contract-audit|docs/契约对账.md|{self.TODAY}\n"})
+        self.assertEqual(cells["契约对账豁免表"].status, AC.NOT_RUN)
+        self.assertIn("一次性动作登记", cells)
+
+    def test_空豁免表只要有执行器就判OK(self):
+        self.assertStatus({**PY3, **self.AUDIT, ".manon-contract.yaml": "# 没有要豁免的\n"},
+                          "契约对账豁免表", AC.OK)
+
+    def _mutation(self, doc_body: str) -> dict:
+        return self.cells({**PY3, "tests/test_core.py": "def test_core():\n    pass\n",
+                           "docs/变异.md": doc_body,
+                           ".assurance-oneshot.txt": f"mutation-python|docs/变异.md|{self.TODAY}\n"})
+
+    def test_变异结论没写被测套件_登记是坏行(self):
+        cells = self._mutation("# 结论\n被杀：52\n")
+        self.assertIn("一次性动作登记", cells)
+        self.assertNotEqual(cells["变异测试 (Python)"].status, AC.OK)
+
+    def test_变异结论写的套件不在仓里_登记是坏行(self):
+        cells = self._mutation("被测套件：tests/test_没有这份.py\n被杀：52\n")
+        self.assertIn("一次性动作登记", cells)
+
+    def test_被杀为零_登记是坏行(self):
+        cells = self._mutation("被测套件：tests/test_core.py\n被杀：0\n")
+        self.assertIn("一次性动作登记", cells)
+        self.assertNotEqual(cells["变异测试 (Python)"].status, AC.OK)
+
+    def test_套件在且被杀大于零_判OK(self):
+        cells = self._mutation("被测套件：tests/test_core.py\n被杀：52\n")
+        self.assertNotIn("一次性动作登记", cells)
+        self.assertEqual(cells["变异测试 (Python)"].status, AC.OK)
+
+    def test_自建CI声明的定义文件算执行器面(self):
+        c = self.assertStatus({**PY3, "ci/deps.sh": "#!/bin/sh\npip-audit -r requirements.txt\n",
+                               ".assurance-ci.txt": "R 依赖审计|ci/deps.sh|ssh r cat deps.json\n"},
+                              "依赖审计 (Python)", AC.OK)
+        self.assertIn("ci/deps.sh", c.evidence)
+
+    def test_不声明就不算执行器面(self):
+        self.assertStatus({**PY3, "ci/deps.sh": "#!/bin/sh\npip-audit -r requirements.txt\n"},
+                          "依赖审计 (Python)", AC.MISSING)
 
 
 # ── 修复 7：缺陷沉降的账不止一种形状 ──────────────────────────────────
