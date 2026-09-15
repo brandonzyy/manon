@@ -98,11 +98,11 @@ exit /b %errorlevel%
 ::PS $VENV_PYTHON_NORM = $VENV_PYTHON -replace '\\', '/'; $SERVER_PY_NORM = $SERVER_PY -replace '\\', '/'
 ::PS function Write-McpJson($t) {
 ::PS     $d = Split-Path -Parent $t; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcpServers',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcpServers']['manon']={'command':vp,'args':[sv],'env':env}`nif 'playwright' not in cfg['mcpServers']: cfg['mcpServers']['playwright']={'command':'npx','args':['@playwright/mcp@latest']}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
+::PS     & $VENV_PYTHON "$SCRIPT_DIR\manon_mcp\_safe_config.py" mcp "$t" mcpServers --api-key "$API_KEY" --api-url "$API_URL" --command "$VENV_PYTHON_NORM" --arg "$SERVER_PY_NORM"
 ::PS }
 ::PS function Write-ZcodeMcpJson($t) {
 ::PS     $d = Split-Path -Parent $t; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
-::PS     & $VENV_PYTHON -c "import json,os`nt,vp,sv,url,key=r'$t','$VENV_PYTHON_NORM','$SERVER_PY_NORM','$API_URL','$API_KEY'`ncfg={}`nif os.path.exists(t):`n    with open(t,'r',encoding='utf-8') as f: cfg=json.load(f)`ncfg.setdefault('mcp',{}).setdefault('servers',{})`nenv={'MANON_API_KEY':key}`nif url!='auto': env['MANON_API_URL']=url`ncfg['mcp']['servers']['manon']={'type':'stdio','command':vp,'args':[sv],'env':env}`nwith open(t,'w',encoding='utf-8') as f: json.dump(cfg,f,indent=2,ensure_ascii=False)"
+::PS     & $VENV_PYTHON "$SCRIPT_DIR\manon_mcp\_safe_config.py" mcp "$t" mcp.servers --type stdio --api-key "$API_KEY" --api-url "$API_URL" --command "$VENV_PYTHON_NORM" --arg "$SERVER_PY_NORM"
 ::PS }
 ::PS function Install-AgentsSkills {
 ::PS     # ~/.agents/skills —— ZCode 与 Kimi Code 用户级都读的共享位，装一份覆盖两个平台
@@ -115,7 +115,7 @@ exit /b %errorlevel%
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as\scripts\" -Force
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as\references\" -Force
 ::PS     Copy-Item "$SCRIPT_DIR\skills\assurance\tests\*.py" "$as\tests\" -Force
-::PS     foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$base\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
+::PS     & $VENV_PYTHON "$SCRIPT_DIR\manon_mcp\_safe_config.py" retire-skills "$base"
 ::PS }
 ::PS # ── Configure platforms ───────────────────────────────
 ::PS head1 "Configuration"; $CONFIGURED = @()
@@ -127,7 +127,7 @@ exit /b %errorlevel%
 ::PS             & $VENV_PYTHON -c "import sys; sys.path.insert(0, r'$SCRIPT_DIR'); from manon_mcp._hooks import _install_claude_hooks; _install_claude_hooks()"
 ::PS             info "Claude Code hooks installed (search/edit/agent/commit->impact)"
 ::PS             $as_sd = "$HOME_DIR\.claude\skills\assurance"; New-Item -ItemType Directory -Path "$as_sd\scripts","$as_sd\references","$as_sd\tests" -Force | Out-Null; Copy-Item "$SCRIPT_DIR\skills\assurance\SKILL.md" "$as_sd\SKILL.md"; Copy-Item "$SCRIPT_DIR\skills\assurance\scripts\*.py" "$as_sd\scripts\"; Copy-Item "$SCRIPT_DIR\skills\assurance\references\*.md" "$as_sd\references\"; Copy-Item "$SCRIPT_DIR\skills\assurance\tests\*.py" "$as_sd\tests\"; info "Claude Code /assurance Skill installed (assurance stack: gap-fill, coverage loop, behaviour audit, simplification, retirement)"
-::PS             foreach ($old in @("tc","dao","audit","retire-checks","experience","idea")) { $od = "$HOME_DIR\.claude\skills\$old"; if (Test-Path $od) { Remove-Item -Recurse -Force $od } }
+::PS             & $VENV_PYTHON "$SCRIPT_DIR\manon_mcp\_safe_config.py" retire-skills "$HOME_DIR\.claude\skills"
 ::PS         }
 ::PS         "codex" {
 ::PS             $cf = "$HOME_DIR\.codex\config.toml"; $cd = Split-Path -Parent $cf; if (-not (Test-Path $cd)) { New-Item -ItemType Directory -Path $cd -Force | Out-Null }

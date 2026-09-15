@@ -53,34 +53,15 @@ detect_platforms() {
 #  MCP config writers (one per platform)
 # ══════════════════════════════════════════════════════
 
-# --- helper: merge manon MCP entry into a JSON file ---
+# --- helper: 把 manon 这一条 MCP 登记合进别家客户端的 JSON 配置 ---
+# 只改 <容器>.manon 这一个键，别的服务器与键原样；读不懂原文件就不写（返回 3）；
+# 写是原子的，内容没变不写。实现与判据：manon_mcp/_safe_config.py、tests/test_install_safety.py。
+# 用法：write_mcp_json <文件> [容器，点分，缺省 mcpServers] [type]
 write_mcp_json() {
-    local target_file="$1"
-    $VENV_PYTHON - "$target_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
-import json, sys, os
-target, launcher, url, key = sys.argv[1:5]
-cfg = {}
-if os.path.exists(target):
-    with open(target, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-cfg.setdefault("mcpServers", {})
-env = {"MANON_API_KEY": key}
-if url != "auto":
-    env["MANON_API_URL"] = url
-cfg["mcpServers"]["manon"] = {
-    "command": "bash",
-    "args": [launcher],
-    "env": env,
-}
-if "playwright" not in cfg["mcpServers"]:
-    cfg["mcpServers"]["playwright"] = {
-        "command": "npx",
-        "args": ["@playwright/mcp@latest"],
-    }
-os.makedirs(os.path.dirname(target), exist_ok=True)
-with open(target, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-PYEOF
+    local target_file="$1" container="${2:-mcpServers}" kind="${3:-}"
+    "$VENV_PYTHON" "$SCRIPT_DIR/manon_mcp/_safe_config.py" mcp "$target_file" "$container" \
+        --api-key "$API_KEY" --api-url "$API_URL" ${kind:+--type "$kind"} \
+        --command bash --arg "$LAUNCHER_NORM"
 }
 
 # --- Claude Code ---
@@ -89,8 +70,8 @@ configure_claude_code() {
     local skill_dir="$HOME/.claude/skills/manon"
 
     # MCP config (write to ~/.claude.json — highest priority for Claude Code)
-    write_mcp_json "$settings"
-    info "Claude Code MCP registered"
+    if write_mcp_json "$settings"; then info "Claude Code MCP registered"
+    else warn "Claude Code MCP 未登记：$settings 读不懂，原样未动"; fi
 
     # /manon Skill (Claude Code exclusive)
     mkdir -p "$skill_dir/scripts"
@@ -120,10 +101,9 @@ PYEOF
 
     # 已退役 skill 的壳主动摘掉（tc: 1.5.0；dao/audit/retire-checks/experience/idea: 1.6.0）。
     # 装过老版本的机器上它们还留着——留一个不再被任何文档指向的壳，
-    # 下一个人会以为它还在维护。
-    rm -rf "$HOME/.claude/skills/tc" "$HOME/.claude/skills/dao" \
-           "$HOME/.claude/skills/audit" "$HOME/.claude/skills/retire-checks" \
-           "$HOME/.claude/skills/experience" "$HOME/.claude/skills/idea"
+    # 下一个人会以为它还在维护。**只摘 manon 自己装的那一版**（SKILL.md 指纹对得上）：
+    # 同名目录可能是用户自己的 skill 或改过的副本，那种保留并提示。
+    "$VENV_PYTHON" "$SCRIPT_DIR/manon_mcp/_safe_config.py" retire-skills "$HOME/.claude/skills"
 }
 
 # --- Codex (OpenAI) ---
@@ -230,9 +210,8 @@ install_agents_skills() {
     cp "$SCRIPT_DIR/skills/assurance/scripts/"*.py "$assurance_dir/scripts/"
     cp "$SCRIPT_DIR/skills/assurance/tests/"*.py "$assurance_dir/tests/"
 
-    # 已退役 skill 的壳同样从共享位摘掉（与 ~/.claude/skills 一致）
-    rm -rf "$base/tc" "$base/dao" "$base/audit" \
-           "$base/retire-checks" "$base/experience" "$base/idea"
+    # 已退役 skill 的壳同样从共享位摘掉（与 ~/.claude/skills 一致，只摘指纹对得上的）
+    "$VENV_PYTHON" "$SCRIPT_DIR/manon_mcp/_safe_config.py" retire-skills "$base"
 }
 
 # --- ZCode ---
@@ -241,28 +220,8 @@ configure_zcode() {
 
     # MCP config — config.json 里还有 plugin 开关等状态，必须合并非覆盖；
     # server schema 是严格校验（未知键整条被丢弃），只写规范字段
-    $VENV_PYTHON - "$config_file" "$LAUNCHER_NORM" "$API_URL" "$API_KEY" <<'PYEOF'
-import json, sys, os
-target, launcher, url, key = sys.argv[1:5]
-cfg = {}
-if os.path.exists(target):
-    with open(target, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-env = {"MANON_API_KEY": key}
-if url != "auto":
-    env["MANON_API_URL"] = url
-cfg.setdefault("mcp", {}).setdefault("servers", {})
-cfg["mcp"]["servers"]["manon"] = {
-    "type": "stdio",
-    "command": "bash",
-    "args": [launcher],
-    "env": env,
-}
-os.makedirs(os.path.dirname(target), exist_ok=True)
-with open(target, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-PYEOF
-    info "ZCode MCP registered"
+    if write_mcp_json "$config_file" "mcp.servers" stdio; then info "ZCode MCP registered"
+    else warn "ZCode MCP 未登记：$config_file 读不懂，原样未动"; fi
 
     install_agents_skills
     info "ZCode /manon + /assurance Skills installed (via ~/.agents/skills/)"
@@ -271,8 +230,8 @@ PYEOF
 # --- Kimi Code (Moonshot) ---
 configure_kimi_code() {
     # ~/.kimi-code/mcp.json 与 Claude 同格式（顶层 mcpServers）
-    write_mcp_json "$HOME/.kimi-code/mcp.json"
-    info "Kimi Code MCP registered"
+    if write_mcp_json "$HOME/.kimi-code/mcp.json"; then info "Kimi Code MCP registered"
+    else warn "Kimi Code MCP 未登记：~/.kimi-code/mcp.json 读不懂，原样未动"; fi
 
     install_agents_skills
     info "Kimi Code /manon + /assurance Skills installed (via ~/.agents/skills/)"
