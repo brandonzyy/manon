@@ -480,20 +480,8 @@ def _install_claude_hooks() -> str | None:
         return None
 
 
-_CODEX_AGENTS_CONTENT = """# Codex AGENTS.md - Manon rules
-
-## Core Rule
-
-Use Manon MCP tools before repository-wide grep/glob exploration.
-
-## Preferred Tools
-
-- `manon_search` for semantic search
-- `manon_deep_query` for iterative analysis
-- `manon_graph` for dependency traversal
-- `manon_impact` for change impact analysis
-- `manon_init` for repository initialization
-"""
+# Manon 调用规则只此一份：install.sh / install.bat / MCP init 都经下面的函数写入。
+MANON_RULES = Path(__file__).resolve().parent / "manon_rules.md"
 
 
 def _install_codex_mcp_block(config_file: Path, venv_python_str: str, server_py_str: str, api_key: str) -> None:
@@ -513,11 +501,11 @@ def _install_codex_mcp_block(config_file: Path, venv_python_str: str, server_py_
 
 
 def _install_codex_agents_md(agents_file: Path) -> None:
-    """Append Manon guidance to ~/AGENTS.md if not present."""
+    """Append the Manon rules to Codex's global ~/.codex/AGENTS.md if not present."""
     existing = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
     if "manon_search" not in existing:
-        atomic_write_text(agents_file, (existing.rstrip() + "\n\n" + _CODEX_AGENTS_CONTENT)
-                          if existing else _CODEX_AGENTS_CONTENT)
+        rules = MANON_RULES.read_text(encoding="utf-8")
+        atomic_write_text(agents_file, (existing.rstrip() + "\n\n" + rules) if existing else rules)
         log.info("Codex AGENTS.md installed: %s", agents_file)
 
 
@@ -555,7 +543,7 @@ def _install_codex_config() -> str | None:
         server_py_str = str(server_py).replace("\\", "/")
 
         _install_codex_mcp_block(codex_dir / "config.toml", venv_python_str, server_py_str, _config.API_KEY or "")
-        _install_codex_agents_md(Path.home() / "AGENTS.md")
+        _install_codex_agents_md(codex_dir / "AGENTS.md")
         _install_codex_skill(codex_dir)
         return "Codex CLI configured"
     except Exception as exc:

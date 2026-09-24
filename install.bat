@@ -133,9 +133,8 @@ exit /b %errorlevel%
 ::PS             $cf = "$HOME_DIR\.codex\config.toml"; $cd = Split-Path -Parent $cf; if (-not (Test-Path $cd)) { New-Item -ItemType Directory -Path $cd -Force | Out-Null }
 ::PS             if ((Test-Path $cf) -and (Select-String -Path $cf -Pattern '\[mcp_servers\.manon\]' -Quiet)) { info "Codex MCP already configured" }
 ::PS             else { Add-Content -Path $cf -Encoding UTF8 -Value "`n[mcp_servers.manon]`ncommand = `"$VENV_PYTHON_NORM`"`nargs = [`"$SERVER_PY_NORM`"]`nenv = { MANON_API_KEY = `"$API_KEY`" }`nstartup_timeout_sec = 30.0`ntool_timeout_sec = 120.0"; info "Codex MCP registered" }
-::PS             $af = "$HOME_DIR\AGENTS.md"
-::PS             if ((Test-Path $af) -and (Select-String -Path $af -Pattern 'manon_search' -Quiet)) { info "Codex AGENTS.md already has Manon rules" }
-::PS             else { Add-Content -Path $af -Encoding UTF8 -Value "`n# Codex AGENTS.md -- Manon 知识图谱规则`n`n## 核心规则（MUST）`n`n代码理解、架构分析、代码搜索时，必须优先使用 Manon MCP 工具，禁止跳过图谱直接搜索文件。`n`n## 强制规则`n`n### 规则 1：搜索前必查图谱`n在使用 grep、find、文件搜索等操作前，必须先用 manon_search / manon_deep_query / manon_graph 查询图谱。`n图谱不足时才用文件搜索补充，并声明'图谱未覆盖，补充搜索'。`n`n### 规则 2：编辑代码前必查上下文`n修改代码文件前，必须先用 manon_search/manon_graph 了解上下文，同时用 git log 查看近期改动。`n`n### 规则 3：探索代码库前必查图谱`n在进行大范围代码探索或规划前，必须先用 manon_search / manon_deep_query 查询图谱。"; info "Codex AGENTS.md rules installed" }
+::PS             & $VENV_PYTHON -c "import sys; from pathlib import Path; sys.path.insert(0, r'$SCRIPT_DIR'); from manon_mcp._hooks import _install_codex_agents_md; _install_codex_agents_md(Path(r'$HOME_DIR\.codex\AGENTS.md'))"
+::PS             info "Codex Manon rules -> $HOME_DIR\.codex\AGENTS.md"
 ::PS         }
 ::PS         "zcode" {
 ::PS             Write-ZcodeMcpJson "$HOME_DIR\.zcode\cli\config.json"; info "ZCode MCP registered"

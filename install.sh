@@ -109,7 +109,7 @@ PYEOF
 # --- Codex (OpenAI) ---
 configure_codex() {
     local config_file="$HOME/.codex/config.toml"
-    local agents_file="$HOME/AGENTS.md"
+    local agents_file="$HOME/.codex/AGENTS.md"
     local codex_command="bash"
     local codex_args="\"$LAUNCHER_NORM\""
 
@@ -137,57 +137,15 @@ TOMLEOF
         info "Codex MCP registered"
     fi
 
-    # AGENTS.md — Manon rules (equivalent to Claude Code hooks)
-    if [ -f "$agents_file" ] && grep -q "manon_search" "$agents_file" 2>/dev/null; then
-        info "Codex AGENTS.md already has Manon rules"
-    else
-        cat >> "$agents_file" <<'AGENTSEOF'
-
-# Codex AGENTS.md — Manon 知识图谱规则
-
-## 核心规则（MUST）
-
-代码理解、架构分析、代码搜索时，**必须优先使用 Manon MCP 工具**，禁止跳过图谱直接搜索文件。
-
-## 工具选择
-
-| 场景 | 工具 | 说明 |
-|------|------|------|
-| 代码搜索/理解 | `manon_search` | 语义搜索实体和关系 |
-| 深度问答 | `manon_deep_query` | 多轮迭代，自动覆盖子问题 |
-| 调用关系/依赖 | `manon_graph` | symbol 级图遍历 (callers/callees/both) |
-| 改动影响 | `manon_impact` | commit 级影响传播分析 |
-| 代码健康度 | `manon_code_health` | 8 维度评分 |
-| 初始化/连接 | `manon_init` | 匹配或创建仓库 + 索引 |
-
-## 强制规则（模拟 Claude Code Hooks）
-
-### 规则 1：搜索前必查图谱
-
-在使用 grep、find、文件搜索等操作前，**必须先用 manon_search / manon_deep_query / manon_graph 查询图谱**。
-图谱不足时才用文件搜索补充，并声明"图谱未覆盖，补充搜索"。
-
-### 规则 2：编辑代码前必查上下文
-
-修改代码文件（.py/.js/.ts/.tsx/.jsx/.java/.go/.rs/.c/.cpp）前：
-- 修改函数/类/import 等关键代码，或修改超过 10 行时，**必须先用 manon_search/manon_graph 了解上下文**
-- 同时用 `git log --oneline -10 -- <file>` 查看近期改动
-- 非代码文件（.json/.yaml/.md/.toml 等）不受此限制
-
-### 规则 3：探索代码库前必查图谱
-
-在进行大范围代码探索或规划前，**必须先用 manon_search / manon_deep_query 查询图谱**。
-图谱不足时才进行文件级探索，并声明"图谱未覆盖，补充搜索"。
-
-## 执行顺序
-
-1. **先图谱，再补搜索**：不足时才用文件搜索，且声明"图谱未覆盖，补充搜索"
-2. **改代码前必查**：先 `manon_search` 或 `manon_graph` 了解上下文
-3. **查不到时**：`manon_repos_list` 返回空 → `manon_init`
-4. **改前看近史**：修改前先 `git log --oneline -10 -- <file>` 或 `manon_impact` 查最近改动
-AGENTSEOF
-        info "Codex AGENTS.md rules installed → $agents_file"
-    fi
+    # Manon 调用规则 → ~/.codex/AGENTS.md（Codex 的全局指令文件；已有 manon_search 则不动）
+    "$VENV_PYTHON" - "$SCRIPT_DIR" "$agents_file" <<'PYEOF'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from manon_mcp._hooks import _install_codex_agents_md
+_install_codex_agents_md(Path(sys.argv[2]))
+PYEOF
+    info "Codex Manon rules → $agents_file"
 }
 
 # --- shared skill install → ~/.agents/skills ---
