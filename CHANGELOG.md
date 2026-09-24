@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.6.12] - 2026-09-24
+
+### Changed
+- **Manon 调用规则只此一份：`manon_mcp/manon_rules.md`。** 口径改为「只对核心功能源码的代码任务调用」，
+  文档、配置、测试、CI/部署/运维排障、固定字符串搜索与独立小脚本不调用。
+  - install.sh、install.bat、MCP init 三个写入口都经 `_hooks._install_codex_agents_md` 读这一份写入，
+    不再各自内联模板（三份口径不同：中文长版 / 中文短版 / 英文短版）。
+  - 写入位置改为 Codex 的全局指令文件 `~/.codex/AGENTS.md`；文件里已有 `manon_search` 则不动。
+    旧版写到 `~/AGENTS.md`，Codex 在仓里干活时不读它；旧文件里的规则不迁移，需要时手动删除。
+  - 判据 `tests/test_codex_rules.py`（6 条；写回 `~/AGENTS.md`、安装器恢复内联模板两处定向变异验红）。
+
 ## [1.6.11] - 2026-09-15
 
 ### Fixed
