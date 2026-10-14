@@ -8,6 +8,10 @@ from pathlib import Path
 _ALWAYS_EXCLUDE = [
     # Version control
     "**/.git/**", "**/.svn/**", "**/.hg/**",
+    # Isolated checkouts are copies of the main worktree, never independent
+    # source roots. Indexing them duplicates entities and makes incremental
+    # sync report worktree churn as project changes.
+    "**/.worktrees/**", "**/.codex-worktrees/**",
     # Python
     "**/.venv/**", "**/venv/**", "**/__pycache__/**",
     "**/*.egg-info/**", "**/.tox/**", "**/.nox/**",
