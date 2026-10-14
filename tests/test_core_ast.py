@@ -77,7 +77,19 @@ class TestScanConfig:
     def test_always_exclude_contains_core_patterns(self):
         always = get_always_exclude()
         assert "**/.git/**" in always
+        assert "**/.worktrees/**" in always
+        assert "**/.codex-worktrees/**" in always
         assert "**/node_modules/**" in always
+
+    def test_load_scan_config_excludes_isolated_worktrees(self, tmp_path):
+        for name in (".worktrees", ".codex-worktrees"):
+            path = tmp_path / name / "copy"
+            path.mkdir(parents=True)
+            (path / "duplicate.py").write_text("x = 1", encoding="utf-8")
+
+        config, root, _ = _load_scan_config(str(tmp_path))
+        for name in (".worktrees", ".codex-worktrees"):
+            assert should_exclude(tmp_path / name, config.exclude, root)
 
 
 class TestAnalysisSignals:

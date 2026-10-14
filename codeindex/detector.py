@@ -4,7 +4,8 @@ from pathlib import Path
 
 # Universal exclude patterns - always skip these
 UNIVERSAL_EXCLUDES = {
-    'node_modules', '.git', '__pycache__', '.venv', 'venv',
+    'node_modules', '.git', '.worktrees', '.codex-worktrees', '__pycache__',
+    '.venv', 'venv',
     'dist', 'build', '.next', '.nuxt', 'target', '.gradle',
 }
 
