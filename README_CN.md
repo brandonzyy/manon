@@ -259,19 +259,19 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 
 ## 🔍 查询工具
 
-### `manon_search` — 语义代码搜索
+### `search` — 语义代码搜索
 
 将自然语言转为向量嵌入，检索最相关实体，沿图谱边展开。解决"不知道关键词"的问题。
 
-### `manon_graph` — 调用图遍历
+### `graph` — 调用图遍历
 
 方向性遍历（调用者/被调用者/双向），可配置深度。解决"改这个函数会不会影响别的"问题。
 
-### `manon_deep_query` — 多轮深度查询
+### `deep_query` — 多轮深度查询
 
 服务端 LLM 迭代查询。自动识别信息缺口并补充。一次调用覆盖跨模块架构问题。
 
-### `manon_impact` — Commit 影响分析
+### `impact` — Commit 影响分析
 
 解析 diff → 提取变更符号 → 沿调用边追踪 2 跳 → 计算风险评分（0-100）。即时 CI/CD 门控。
 
@@ -280,12 +280,12 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 
 ```
 你需要什么？
-├── 找代码（不知道关键词）    → manon_search
+├── 找代码（不知道关键词）    → search
 ├── 找代码（知道关键词）      → Grep
-├── 追踪调用关系             → manon_graph
-├── 跨模块架构理解           → manon_deep_query
-├── 评估 commit 风险         → manon_impact
-├── 修改代码前               → manon_search + manon_graph
+├── 追踪调用关系             → graph
+├── 跨模块架构理解           → deep_query
+├── 评估 commit 风险         → impact
+├── 修改代码前               → search + graph
 └── 简单文件查找             → Glob
 ```
 
@@ -295,20 +295,22 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 
 ## 🛠️ MCP 工具
 
+> **暴露面**：默认只注册核心工具 `search` / `graph` / `deep_query` / `impact` / `code_health` / `init` / `repos_list`；其余管理类工具需在 MCP env 设 `MANON_PROFILE=full`，或用 `MANON_TOOLS=<逗号分隔短名>` 精确挑选。
+
 | 类别 | 工具 | 说明 |
 |------|------|------|
-| **仓库** | `manon_init` | 自动检测并注册项目 |
-| | `manon_repos_list` | 列出仓库和索引状态 |
-| | `manon_repos_create/get/delete` | 增删查操作 |
-| **索引** | `manon_index_status` | 查看索引进度 |
+| **仓库** | `init` | 自动检测并注册项目 |
+| | `repos_list` | 列出仓库和索引状态 |
+| | `repos_create/get/delete` | 增删查操作 |
+| **索引** | `index_status` | 查看索引进度 |
 | | `manon_push_update` | 增量同步 |
-| **查询** | `manon_search` | 语义代码搜索 |
-| | `manon_graph` | 调用图遍历 |
-| | `manon_impact` | Commit 影响分析 |
-| | `manon_deep_query` | 多轮深度查询 |
-| | `manon_code_health` | 8 维度健康评分 |
-| **自动化** | `manon_setup_hooks` | 安装 git pre-push 钩子 |
-| **工具** | `manon_config/account/usage` | 配置和账户信息 |
+| **查询** | `search` | 语义代码搜索 |
+| | `graph` | 调用图遍历 |
+| | `impact` | Commit 影响分析 |
+| | `deep_query` | 多轮深度查询 |
+| | `code_health` | 8 维度健康评分 |
+| **自动化** | `setup_hooks` | 安装 git pre-push 钩子 |
+| **工具** | `config/account/usage` | 配置和账户信息 |
 
 ### 自动化（Hooks）
 
@@ -316,7 +318,7 @@ Manon 用自己的技能开发自己。以下是真实产出数据，不是合�
 |------|---------|------|
 | **git pre-push** | `git push` 后 | 自动更新图谱 + 输出健康度变化 |
 | **PreToolUse** | Grep/Glob/Agent 前 | 提醒先查图谱 |
-| **PostToolUse** | `git commit` 后 | 触发 `manon_impact` 分析 |
+| **PostToolUse** | `git commit` 后 | 触发 `impact` 分析 |
 
 ---
 

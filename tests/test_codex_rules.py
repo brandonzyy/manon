@@ -31,9 +31,9 @@ class TestInstallCodexAgentsMd:
 
     def test_已有规则不动_重复安装幂等(self, tmp_path):
         f = tmp_path / "AGENTS.md"
-        f.write_text("自己写的 manon_search 用法\n", encoding="utf-8")
+        f.write_text("自己写的 Manon 调用规则，勿动\n", encoding="utf-8")
         _hooks._install_codex_agents_md(f)
-        assert f.read_text(encoding="utf-8") == "自己写的 manon_search 用法\n"
+        assert f.read_text(encoding="utf-8") == "自己写的 Manon 调用规则，勿动\n"
         g = tmp_path / "new.md"
         _hooks._install_codex_agents_md(g)
         once = g.read_text(encoding="utf-8")
@@ -41,8 +41,8 @@ class TestInstallCodexAgentsMd:
         assert g.read_text(encoding="utf-8") == once
 
     def test_正本自己带判重标记(self):
-        # 判重看 manon_search；正本里没有它，每次安装都会再追加一份
-        assert "manon_search" in _hooks.MANON_RULES.read_text(encoding="utf-8")
+        # 判重看正本标题「Manon 调用规则」，不绑工具名（工具改名不该破坏幂等）
+        assert "Manon 调用规则" in _hooks.MANON_RULES.read_text(encoding="utf-8")
 
 
 class TestSingleSource:

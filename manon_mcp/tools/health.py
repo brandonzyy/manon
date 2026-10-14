@@ -60,7 +60,7 @@ def register_health_tools(mcp, deps: ToolDependencies):
     client = deps.client
     hooks = deps.hooks
 
-    @mcp.tool()
+    @mcp.tool(name="code_health")
     def manon_code_health(repo_id: str) -> str:
         """分析代码库的健康状况。"""
         repo_id = _resolve(repo_id)
@@ -102,7 +102,7 @@ def register_health_tools(mcp, deps: ToolDependencies):
 
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(name="setup_hooks")
     def manon_setup_hooks(project_path: str) -> str:
         """为项目安装 git pre-push hook。"""
         resolved = Path(project_path).resolve()

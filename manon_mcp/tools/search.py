@@ -35,7 +35,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
     """Register search/graph/impact/deep-query tools."""
     client = deps.client
 
-    @mcp.tool()
+    @mcp.tool(name="search")
     def manon_search(repo_id: str, query: str, top_k: int = 10, depth: int = 1) -> str:
         """语义搜索代码库。"""
         repo_id = _resolve(repo_id)
@@ -47,7 +47,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
             return f"no result for '{query}'"
         return client._format_search(result)
 
-    @mcp.tool()
+    @mcp.tool(name="graph")
     def manon_graph(repo_id: str, symbol: str, depth: int = 1, direction: str = "both") -> str:
         """查询代码符号的调用关系和依赖图。"""
         repo_id = _resolve(repo_id)
@@ -57,7 +57,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
             return client._truncate(result["context"])
         return client._format_graph(result)
 
-    @mcp.tool()
+    @mcp.tool(name="impact")
     def manon_impact(repo_id: str, commit: str = "HEAD", max_depth: int = 2) -> str:
         """分析某次 commit 的影响范围。"""
         repo_id = _resolve(repo_id)
@@ -68,7 +68,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
         result = client._get(f"/api/v1/repos/{repo_id}/impact", commit=commit, max_depth=max_depth)
         return client._format_impact(result)
 
-    @mcp.tool()
+    @mcp.tool(name="deep_query")
     def manon_deep_query(repo_id: str, question: str, max_rounds: int = 3) -> str:
         """深度查询代码知识图谱。"""
         repo_id = _resolve(repo_id)
@@ -100,7 +100,7 @@ def register_search_tools(mcp, deps: ToolDependencies):
                 lines.append(f"  Round {round_info['round']}: follow-up {round_info['queries']}")
         return client._truncate("\n".join(lines))
 
-    @mcp.tool()
+    @mcp.tool(name="merge_dynamic")
     def manon_merge_dynamic(repo_id: str, deps_path: str = "dynamic-deps.json") -> str:
         """合并运行时追踪的动态调用边到知识图谱。"""
         repo_id = _resolve(repo_id)

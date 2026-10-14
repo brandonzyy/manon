@@ -213,7 +213,7 @@ async def initialize_project(
 def register_init_tools(mcp, deps: ToolDependencies):
     """Register init/configure tools."""
 
-    @mcp.tool()
+    @mcp.tool(name="init")
     async def manon_init(project_path: str, project_name: str = "", ctx: Context = None) -> str:
         """初始化当前项目的 Manon 连接。"""
         return await initialize_project(
@@ -228,13 +228,13 @@ def register_init_tools(mcp, deps: ToolDependencies):
             build_hooks_lines=deps.build_hooks_lines,
         )
 
-    @mcp.tool()
+    @mcp.tool(name="directory_signals")
     def manon_directory_signals(project_path: str) -> str:
         """获取项目目录结构信号。"""
         signals = collect_directory_signals(project_path)
         return json.dumps(signals, ensure_ascii=False, indent=2)
 
-    @mcp.tool()
+    @mcp.tool(name="configure_excludes")
     def manon_configure_excludes(project_path: str, exclude_patterns: list[str]) -> str:
         """为项目设置自定义排除模式。"""
         proj = get_project(project_path)

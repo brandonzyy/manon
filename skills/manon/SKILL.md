@@ -11,28 +11,32 @@ user_invocable: true
 - 工具返回的 `<!-- DISPLAY_VERBATIM -->` 内容必须原样输出给用户
 - 扫描脚本必须用 `MANON_PYTHON`，不用系统 python
 
+**暴露面**：MCP 默认只注册核心工具（search / graph / deep_query / impact / code_health / init / repos_list）。
+Step 0 与 Step 3-4 还要 `index_status` / `scan_files` / `upload_batch`——接入新仓或刷新索引前，
+先把该 MCP 的 env 设为 `MANON_PROFILE=full` 再开会话；日常查图无需如此。
+
 ---
 
 ## Step 0: 已注册的仓直接用
 
 `~/.manon/projects.json` 里已有当前仓（或它的主工作树）就**跳过 Step 1-5**：
 repo_id 已经在那儿，图谱由 git push 钩子自更新，最近一次结论在
-`~/.manon/update_status.json`。只跑一次 `manon_index_status(repo_id)` 看新鲜度，
+`~/.manon/update_status.json`。只跑一次 `index_status(repo_id)` 看新鲜度，
 然后进 Step 6。
 
-Step 1-6 只在**第一次接入一个仓**时走。**隔离树不是新仓**——`manon_init` 会把它
+Step 1-6 只在**第一次接入一个仓**时走。**隔离树不是新仓**——`init` 会把它
 折回主工作树复用同一个 repo_id，别为每棵树单独建（那样建出来的图谱只有主树那份
 会被 push 钩子更新，其余建完即冻，而读出来看不出陈旧）。
 
 ## Step 1: Init
-`manon_init(project_path)` → 提取 `repo_id`
+`init(project_path)` → 提取 `repo_id`
 
 ## Step 2: Smart Analysis
 - 如果输出含 `<!-- SMART_ANALYSIS_DONE -->` → 跳到 Step 3
 - 如果输出含 `<!-- SMART_ANALYSIS_NEEDED -->` → 执行：
-  1. `manon_directory_signals(project_path)` 获取目录信号
+  1. `directory_signals(project_path)` 获取目录信号
   2. 根据【目录角色规则】判断每个目录 index/skip
-  3. `manon_configure_excludes(project_path, ["**/skip_dir/**", ...])`
+  3. `configure_excludes(project_path, ["**/skip_dir/**", ...])`
   4. 向用户展示分析结果
 
 ## Step 3: Scan & Upload
@@ -41,14 +45,14 @@ Step 1-6 只在**第一次接入一个仓**时走。**隔离树不是新仓**—
    - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
    - Windows bash 同样用此格式，**不要用** `set MANON_DIR=...`（CMD 语法，bash 里不生效）
    - 如报错（文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
-3. `manon_scan_files(repo_id)`
-4. 循环 `manon_upload_batch(repo_id)` 直到 status == "done"
+3. `scan_files(repo_id)`
+4. 循环 `upload_batch(repo_id)` 直到 status == "done"
 
 ## Step 4: Index Status
-`manon_index_status(repo_id)` → **表格形式完整呈现**，不总结不省略
+`index_status(repo_id)` → **表格形式完整呈现**，不总结不省略
 
 ## Step 5: Code Health
-`manon_code_health(repo_id)` → **表格形式完整呈现**，不总结不省略
+`code_health(repo_id)` → **表格形式完整呈现**，不总结不省略
 
 ## Step 6: Activate
 告知用户 Manon 已激活，并说明 hooks 功能：

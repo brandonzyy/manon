@@ -105,7 +105,7 @@ def test_逃生口留痕且不折叠(repo: Path, monkeypatch, capsys) -> None:
 @pytest.mark.asyncio
 async def test_init_在隔离树里不建新仓_而是接主树那一个(
         main_path: str, iso_path: str, monkeypatch) -> None:
-    """整条路径的判据：从隔离树调 `manon_init`，落到主树的 repo_id 上。
+    """整条路径的判据：从隔离树调 `init`，落到主树的 repo_id 上。
 
     此前它按路径认仓，隔离树是新路径，于是走建仓那一支——一次也不报错。
     路径都由同步夹具算好：async 用例里调 `Path.resolve()` 会阻塞事件循环。

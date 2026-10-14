@@ -63,7 +63,7 @@ def _truncate(text: str, limit: int = 0) -> str:
     lim = limit or MAX_RESPONSE_CHARS
     if len(text) <= lim:
         return text
-    return text[:lim] + f"\n\n... (已截断，共 {len(text)} 字符。用 manon_deep_query 获取完整分析)"
+    return text[:lim] + f"\n\n... (已截断，共 {len(text)} 字符。用 deep_query 获取完整分析)"
 
 
 def _format_search(result: dict) -> str:

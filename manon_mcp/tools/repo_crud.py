@@ -102,7 +102,7 @@ def register_repo_crud_tools(mcp, deps: ToolDependencies):
     """Register repo list/create/get/delete/scan/upload tools."""
     client = deps.client
 
-    @mcp.tool()
+    @mcp.tool(name="repos_list")
     def manon_repos_list() -> str:
         """列出当前租户的所有代码仓库及其索引状态。"""
         repos = client._get("/api/v1/repos")
@@ -115,37 +115,37 @@ def register_repo_crud_tools(mcp, deps: ToolDependencies):
             lines.append(f"  {icon} {repo['id']}  {repo['name']:<20s}  {repo['index_status']}{src}")
         return "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(name="repos_create")
     def manon_repos_create(name: str, branch: str = "main", local_path: str = "") -> str:
         """创建新的代码仓库。"""
         return create_repo(name=name, branch=branch, local_path=local_path, client=deps.client)
 
-    @mcp.tool()
+    @mcp.tool(name="repos_get")
     def manon_repos_get(repo_id: str) -> str:
         """查看仓库详情。"""
         return get_repo(repo_id=_resolve(repo_id), client=deps.client)
 
-    @mcp.tool()
+    @mcp.tool(name="repos_delete")
     def manon_repos_delete(repo_id: str) -> str:
         """删除仓库及其所有索引数据。"""
         return delete_repo(repo_id=_resolve(repo_id), client=deps.client)
 
-    @mcp.tool()
+    @mcp.tool(name="scan_files")
     def manon_scan_files(repo_id: str) -> str:
         """从磁盘缓存加载扫描结果到 MCP 内存。"""
         return scan_files(repo_id=_resolve(repo_id), sync_module=deps.sync)
 
-    @mcp.tool()
+    @mcp.tool(name="upload_batch")
     def manon_upload_batch(repo_id: str) -> str:
         """从扫描缓存中取下一批文件上传到服务端。"""
         return upload_batch(repo_id=_resolve(repo_id), sync_module=deps.sync)
 
-    @mcp.tool()
+    @mcp.tool(name="upload_coverage")
     def manon_upload_coverage(repo_id: str) -> str:
         """上传本地 coverage_map.json 到服务端，用于 TC 测试覆盖度计算。"""
         return upload_coverage(repo_id=_resolve(repo_id), client=deps.client)
 
-    @mcp.tool()
+    @mcp.tool(name="index_status")
     def manon_index_status(repo_id: str) -> str:
         """查看仓库的索引状态和统计信息。"""
         repo_id = _resolve(repo_id)

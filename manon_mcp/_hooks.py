@@ -60,8 +60,8 @@ _MANON_SCOPE = '''\
 """会话钩子的作用面 —— 当前目录属于哪个 manon 已注册的仓。
 
 Manon-first 那几个钩子原本对**任何仓**生效，而本机 12 个 git 仓里只有 7 个注册过。
-后果分两头：pre_search 在没有索引的仓里也拦住 Grep/Glob，那里根本没有 manon_search
-可退回；post_commit 在每个仓提交后都注入一句 "You MUST run manon_impact"，
+后果分两头：pre_search 在没有索引的仓里也拦住 Grep/Glob，那里根本没有 search
+可退回；post_commit 在每个仓提交后都注入一句 "You MUST run impact"，
 那条命令在没注册的仓里跑不出结果——**在做不到的地方下 MUST，磨损的是所有 MUST 的分量。**
 
 注册表就用 manon 自己写的 ~/.manon/projects.json，不另立一份名单：
@@ -143,7 +143,7 @@ _PRE_SEARCH_HOOK = '''\
 """PreToolUse hook: Grep/Glob 之前先走 Manon —— 只在 manon 已注册的仓里。
 
 作用面（2026-08-27 收窄）：原先对所有仓无条件退 2，包括根本没有索引的仓，
-那里没有 manon_search 可退回，拦下来只剩「拦」。
+那里没有 search 可退回，拦下来只剩「拦」。
 
 它拦不住 Bash(grep)：钩子按工具名匹配，而 Bash 是另一个工具。
 所以这是一条提示级约束，不是强制——写在这里省得下一个人把它当成强制。
@@ -166,7 +166,7 @@ hit = repo_of(data.get("cwd"))
 if hit is None:
     sys.exit(0)
 
-print("Hook rule: call manon_search, manon_deep_query, or manon_graph before "
+print("Hook rule: call Manon search, deep_query, or graph before "
       "Grep/Glob (repo_id=%s)." % hit[1], file=sys.stderr)
 sys.exit(2)
 '''
@@ -174,11 +174,11 @@ sys.exit(2)
 
 
 _POST_COMMIT_HOOK = '''\
-"""PostToolUse hook: 提交成功后提醒跑 manon_impact —— 只在 manon 已注册的仓里。
+"""PostToolUse hook: 提交成功后提醒跑 impact —— 只在 manon 已注册的仓里。
 
 两处收窄（2026-08-27）：
 
-1. 作用面。原先在任何仓提交后都注入这段话，而 manon_impact 需要 repo_id，
+1. 作用面。原先在任何仓提交后都注入这段话，而 impact 需要 repo_id，
    本机 12 个仓里只有 7 个注册过。在跑不出结果的仓里下一句 MUST，
    得到的不是执行，是对 MUST 这个词的贬值——下一条真需要 MUST 的指令跟着一起贬。
 2. 措辞。原先写 "CRITICAL ... You MUST immediately ... Do NOT proceed with other
@@ -217,7 +217,7 @@ print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": (
-            "提交成功。下一步跑 manon_impact(repo_id=%r) 看这次改动波及哪些"
+            "提交成功。下一步跑 impact(repo_id=%r) 看这次改动波及哪些"
             "下游调用方，再决定要不要跟着改。" % hit[1]
         ),
     }
@@ -269,7 +269,7 @@ print(json.dumps({
         f"MANON_DAO_MSG=\\"<commit message>\\" "
         f"python \\"{skill_dir}/scripts/dao-commit.py\\" "
         f"\\"{project_path}\\" \\"{issue_id}\\" \\"{skill_dir}\\" \\"{repo_id}\\"\\n"
-        f"Then: manon_impact(repo_id=\'{repo_id}\', commit=\'HEAD\') and sync graph."
+        f"Then: impact(repo_id=\'{repo_id}\', commit=\'HEAD\') and sync graph."
     ),
 }))
 '''
@@ -307,8 +307,8 @@ agent_type = (data.get("tool_input") or {}).get("subagent_type", "")
 hit = repo_of(data.get("cwd"))
 if (agent_type in ("Explore", "general-purpose") and hit is not None
         and not manon_queried(hit[0])):
-    print("Hook rule: query Manon (manon_search / manon_deep_query / manon_graph / "
-          "manon_code_health, repo_id=%s) before spawning Explore/general-purpose "
+    print("Hook rule: query Manon (search / deep_query / graph / "
+          "code_health, repo_id=%s) before spawning Explore/general-purpose "
           "agents for repository exploration." % hit[1], file=sys.stderr)
     sys.exit(2)
 
@@ -503,7 +503,7 @@ def _install_codex_mcp_block(config_file: Path, venv_python_str: str, server_py_
 def _install_codex_agents_md(agents_file: Path) -> None:
     """Append the Manon rules to Codex's global ~/.codex/AGENTS.md if not present."""
     existing = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
-    if "manon_search" not in existing:
+    if "Manon 调用规则" not in existing:  # 判重看正本标题，不绑工具名
         rules = MANON_RULES.read_text(encoding="utf-8")
         atomic_write_text(agents_file, (existing.rstrip() + "\n\n" + rules) if existing else rules)
         log.info("Codex AGENTS.md installed: %s", agents_file)
@@ -514,7 +514,7 @@ def _install_codex_skill(codex_dir: Path) -> None:
     skills_dir = codex_dir / "skills" / "manon"
     skill_file = skills_dir / "SKILL.md"
     agents_yaml = skills_dir / "agents" / "openai.yaml"
-    if skill_file.exists() and "manon_init" in skill_file.read_text(encoding="utf-8"):
+    if skill_file.exists() and "Manon 初始化" in skill_file.read_text(encoding="utf-8"):
         return
     skills_dir.mkdir(parents=True, exist_ok=True)
     (skills_dir / "agents").mkdir(parents=True, exist_ok=True)
@@ -522,7 +522,7 @@ def _install_codex_skill(codex_dir: Path) -> None:
     if claude_skill_src.exists():
         skill_content = claude_skill_src.read_text(encoding="utf-8").replace("user_invocable: true\n", "")
     else:
-        skill_content = "---\nname: manon\ndescription: /manon -- enter Manon mode for semantic code search and graph analysis.\n---\n\n# Manon\n\nUse `manon_init` first, then query the repository with `manon_search`, `manon_deep_query`, `manon_graph`, and `manon_impact`.\n"
+        skill_content = "---\nname: manon\ndescription: /manon -- enter Manon mode for semantic code search and graph analysis.\n---\n\n# Manon 初始化\n\nUse `init` first, then query the repository with `search`, `deep_query`, `graph`, and `impact`.\n"
     skill_file.write_text(skill_content, encoding="utf-8")
     agents_yaml.write_text('interface:\n  display_name: "Manon"\n  short_description: "Semantic code search and graph analysis"\n  default_prompt: "/manon"\n', encoding="utf-8")
     log.info("Codex skill installed: %s", skills_dir)

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Manon MCP E2E Test — tests all 14 tools via Claude Code -p mode
+# Manon MCP E2E Test — exercises the full tool surface via Claude Code -p mode.
+# Requires tests/e2e/mcp-config.json (user-provided) with MANON_PROFILE=full in env, since admin tools are not registered on the default core profile.
 set -euo pipefail
 
 # Prevent nested Claude Code session errors
@@ -59,42 +60,42 @@ echo " Manon MCP E2E Test Suite"
 echo "========================================="
 echo ""
 
-# ── 1. manon_config ──
-if output=$(run_test "01_config" "调用 manon_config 查看配置，只返回工具的原始输出"); then
+# ── 1. config ──
+if output=$(run_test "01_config" "调用 config 查看配置，只返回工具的原始输出"); then
     if echo "$output" | grep -qi "LLM\|模型\|llm_model\|embedding"; then
-        log_pass "manon_config"
+        log_pass "config"
     else
-        log_fail "manon_config" "unexpected output"
+        log_fail "config" "unexpected output"
     fi
 else
-    log_fail "manon_config" "command failed"
+    log_fail "config" "command failed"
 fi
 echo ""
 
-# ── 2. manon_repos_list ──
-if output=$(run_test "02_repos_list" "调用 manon_repos_list 列出所有仓库，只返回工具的原始输出"); then
-    log_pass "manon_repos_list"
+# ── 2. repos_list ──
+if output=$(run_test "02_repos_list" "调用 repos_list 列出所有仓库，只返回工具的原始输出"); then
+    log_pass "repos_list"
 else
-    log_fail "manon_repos_list" "command failed"
+    log_fail "repos_list" "command failed"
 fi
 echo ""
 
-# ── 3. manon_init ──
+# ── 3. init ──
 if output=$(run_test "03_init" \
-    "调用 manon_init，project_path 设为 '$DONNIE_DIR'。只返回工具的原始输出，不要额外解释。"); then
+    "调用 init，project_path 设为 '$DONNIE_DIR'。只返回工具的原始输出，不要额外解释。"); then
     # Extract repo_id from output
     REPO_ID=$(echo "$output" | grep -oP 'id=\K[a-f0-9-]+' | head -1)
     if [ -z "$REPO_ID" ]; then
         REPO_ID=$(echo "$output" | grep -oP '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
     fi
     if [ -n "$REPO_ID" ]; then
-        log_pass "manon_init (repo_id=$REPO_ID)"
+        log_pass "init (repo_id=$REPO_ID)"
     else
-        log_fail "manon_init" "could not extract repo_id"
+        log_fail "init" "could not extract repo_id"
         echo "Output was: $output"
     fi
 else
-    log_fail "manon_init" "command failed"
+    log_fail "init" "command failed"
 fi
 echo ""
 
@@ -105,29 +106,29 @@ if [ -z "$REPO_ID" ]; then
     exit 1
 fi
 
-# ── 4. manon_index_status ──
+# ── 4. index_status ──
 if output=$(run_test "04_index_status" \
-    "调用 manon_index_status，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
+    "调用 index_status，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "状态\|status\|done\|indexing\|pending"; then
-        log_pass "manon_index_status"
+        log_pass "index_status"
     else
-        log_fail "manon_index_status" "unexpected output"
+        log_fail "index_status" "unexpected output"
     fi
 else
-    log_fail "manon_index_status" "command failed"
+    log_fail "index_status" "command failed"
 fi
 echo ""
 
-# ── 5. manon_repos_get ──
+# ── 5. repos_get ──
 if output=$(run_test "05_repos_get" \
-    "调用 manon_repos_get，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
+    "调用 repos_get，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "id\|name\|index_status"; then
-        log_pass "manon_repos_get"
+        log_pass "repos_get"
     else
-        log_fail "manon_repos_get" "unexpected output"
+        log_fail "repos_get" "unexpected output"
     fi
 else
-    log_fail "manon_repos_get" "command failed"
+    log_fail "repos_get" "command failed"
 fi
 echo ""
 
@@ -145,55 +146,55 @@ for i in $(seq 1 12); do
 done
 echo ""
 
-# ── 6. manon_search ──
+# ── 6. search ──
 if output=$(run_test "06_search" \
-    "调用 manon_search，repo_id='$REPO_ID'，query='electron main process'。只返回工具的原始输出。"); then
+    "调用 search，repo_id='$REPO_ID'，query='electron main process'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "实体\|entity\|找到\|score\|chunk\|代码\|未找到"; then
-        log_pass "manon_search"
+        log_pass "search"
     else
-        log_fail "manon_search" "no results found"
+        log_fail "search" "no results found"
     fi
 else
-    log_fail "manon_search" "command failed"
+    log_fail "search" "command failed"
 fi
 echo ""
 
-# ── 7. manon_graph ──
+# ── 7. graph ──
 if output=$(run_test "07_graph" \
-    "调用 manon_graph，repo_id='$REPO_ID'，symbol='BrowserWindow'。只返回工具的原始输出。"); then
+    "调用 graph，repo_id='$REPO_ID'，symbol='BrowserWindow'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "图谱\|实体\|关系\|graph\|entity\|0 个"; then
-        log_pass "manon_graph"
+        log_pass "graph"
     else
-        log_fail "manon_graph" "no graph data"
+        log_fail "graph" "no graph data"
     fi
 else
-    log_fail "manon_graph" "command failed"
+    log_fail "graph" "command failed"
 fi
 echo ""
 
-# ── 8. manon_impact ──
+# ── 8. impact ──
 if output=$(run_test "08_impact" \
-    "调用 manon_impact，repo_id='$REPO_ID'，commit='HEAD'。只返回工具的原始输出。"); then
+    "调用 impact，repo_id='$REPO_ID'，commit='HEAD'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "影响\|impact\|commit\|变更\|changed"; then
-        log_pass "manon_impact"
+        log_pass "impact"
     else
-        log_fail "manon_impact" "unexpected output"
+        log_fail "impact" "unexpected output"
     fi
 else
-    log_fail "manon_impact" "command failed"
+    log_fail "impact" "command failed"
 fi
 echo ""
 
-# ── 9. manon_deep_query ──
+# ── 9. deep_query ──
 if output=$(run_test "09_deep_query" \
-    "调用 manon_deep_query，repo_id='$REPO_ID'，question='donnie 的架构是怎样的'。只返回工具的原始输出。"); then
+    "调用 deep_query，repo_id='$REPO_ID'，question='donnie 的架构是怎样的'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "架构\|module\|组件\|electron\|main\|renderer\|查询轮次\|Round"; then
-        log_pass "manon_deep_query"
+        log_pass "deep_query"
     else
-        log_fail "manon_deep_query" "no architecture info"
+        log_fail "deep_query" "no architecture info"
     fi
 else
-    log_fail "manon_deep_query" "command failed"
+    log_fail "deep_query" "command failed"
 fi
 echo ""
 
@@ -210,51 +211,51 @@ else
 fi
 echo ""
 
-# ── 11. manon_account ──
+# ── 11. account ──
 if output=$(run_test "11_account" \
-    "调用 manon_account 查看账户信息。只返回工具的原始输出。"); then
+    "调用 account 查看账户信息。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "租户\|tenant\|配额\|quota\|仓库"; then
-        log_pass "manon_account"
+        log_pass "account"
     else
-        log_fail "manon_account" "unexpected output"
+        log_fail "account" "unexpected output"
     fi
 else
-    log_fail "manon_account" "command failed"
+    log_fail "account" "command failed"
 fi
 echo ""
 
-# ── 12. manon_usage ──
+# ── 12. usage ──
 if output=$(run_test "12_usage" \
-    "调用 manon_usage 查看用量统计。只返回工具的原始输出。"); then
-    log_pass "manon_usage"
+    "调用 usage 查看用量统计。只返回工具的原始输出。"); then
+    log_pass "usage"
 else
-    log_fail "manon_usage" "command failed"
+    log_fail "usage" "command failed"
 fi
 echo ""
 
-# ── 13. manon_embedding ──
+# ── 13. embedding ──
 if output=$(run_test "13_embedding" \
-    "调用 manon_embedding，texts 参数传 ['hello world', 'test embedding']。只返回工具的原始输出。"); then
+    "调用 embedding，texts 参数传 ['hello world', 'test embedding']。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "向量\|维度\|vector\|dimension\|生成"; then
-        log_pass "manon_embedding"
+        log_pass "embedding"
     else
-        log_fail "manon_embedding" "no embedding data"
+        log_fail "embedding" "no embedding data"
     fi
 else
-    log_fail "manon_embedding" "command failed"
+    log_fail "embedding" "command failed"
 fi
 echo ""
 
-# ── 14. manon_repos_delete (cleanup) ──
+# ── 14. repos_delete (cleanup) ──
 if output=$(run_test "14_repos_delete" \
-    "调用 manon_repos_delete，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
+    "调用 repos_delete，repo_id='$REPO_ID'。只返回工具的原始输出。"); then
     if echo "$output" | grep -qi "删除\|delete\|已删除"; then
-        log_pass "manon_repos_delete"
+        log_pass "repos_delete"
     else
-        log_fail "manon_repos_delete" "unexpected output"
+        log_fail "repos_delete" "unexpected output"
     fi
 else
-    log_fail "manon_repos_delete" "command failed"
+    log_fail "repos_delete" "command failed"
 fi
 echo ""
 

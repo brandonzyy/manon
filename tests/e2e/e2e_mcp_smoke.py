@@ -45,7 +45,7 @@ def _tool_text(result) -> str:
 def _extract_repo_id(text: str) -> str:
     match = re.search(r"\(([0-9a-f]{8})\)", text)
     if not match:
-        raise RuntimeError(f"repo_id not found in manon_init output:\n{text}")
+        raise RuntimeError(f"repo_id not found in init output:\n{text}")
     return match.group(1)
 
 
@@ -240,6 +240,7 @@ async def _run() -> None:
             env={
                 "MANON_API_URL": f"http://127.0.0.1:{saas_port}",
                 "MANON_API_KEY": api_key,
+                "MANON_PROFILE": "full",  # e2e covers admin tools too
             },
         )
         _log("starting MCP stdio session")
@@ -248,14 +249,14 @@ async def _run() -> None:
                 await session.initialize()
                 _log("MCP session initialized")
 
-                _log("calling manon_init")
+                _log("calling init")
                 init_result = await session.call_tool(
-                    "manon_init",
+                    "init",
                     {"project_path": str(ROOT)},
                     read_timeout_seconds=timedelta(seconds=60),
                 )
                 init_text = _tool_text(init_result)
-                _log("manon_init completed")
+                _log("init completed")
                 repo_id = _extract_repo_id(init_text)
                 manon_dir = _extract_marker(init_text, "MANON_DIR")
                 manon_python = _extract_marker(init_text, "MANON_PYTHON")
@@ -275,7 +276,7 @@ async def _run() -> None:
 
                 _log("loading scan cache into MCP")
                 scan_result = await session.call_tool(
-                    "manon_scan_files",
+                    "scan_files",
                     {"repo_id": repo_id},
                     read_timeout_seconds=timedelta(seconds=60),
                 )
@@ -287,7 +288,7 @@ async def _run() -> None:
                 _log("uploading scan batches")
                 for batch_num in range(1, 201):
                     upload_result = await session.call_tool(
-                        "manon_upload_batch",
+                        "upload_batch",
                         {"repo_id": repo_id},
                         read_timeout_seconds=timedelta(seconds=120),
                     )
@@ -303,7 +304,7 @@ async def _run() -> None:
                 _log("waiting for index status=done")
                 for attempt in range(1, 61):
                     index_status_result = await session.call_tool(
-                        "manon_index_status",
+                        "index_status",
                         {"repo_id": repo_id},
                         read_timeout_seconds=timedelta(seconds=30),
                     )
@@ -315,39 +316,39 @@ async def _run() -> None:
                 else:
                     raise RuntimeError(f"repo did not reach done status:\n{index_status_text}")
 
-                _log("calling manon_search")
+                _log("calling search")
                 search_result = await session.call_tool(
-                    "manon_search",
+                    "search",
                     {"repo_id": repo_id, "query": "MatrixoneGraph", "top_k": 5, "depth": 1},
                     read_timeout_seconds=timedelta(seconds=30),
                 )
                 search_text = _tool_text(search_result)
-                _assert_nonempty_tool_output("manon_search", search_text)
-                _log("manon_search passed")
+                _assert_nonempty_tool_output("search", search_text)
+                _log("search passed")
 
-                _log("calling manon_graph")
+                _log("calling graph")
                 graph_result = await session.call_tool(
-                    "manon_graph",
+                    "graph",
                     {"repo_id": repo_id, "symbol": "MatrixoneGraph", "depth": 1, "direction": "both"},
                     read_timeout_seconds=timedelta(seconds=30),
                 )
                 graph_text = _tool_text(graph_result)
-                _assert_nonempty_tool_output("manon_graph", graph_text)
-                _log("manon_graph passed")
+                _assert_nonempty_tool_output("graph", graph_text)
+                _log("graph passed")
 
-                _log("calling manon_impact")
+                _log("calling impact")
                 impact_result = await session.call_tool(
-                    "manon_impact",
+                    "impact",
                     {"repo_id": repo_id, "commit": "HEAD", "max_depth": 2},
                     read_timeout_seconds=timedelta(seconds=60),
                 )
                 impact_text = _tool_text(impact_result)
-                _assert_nonempty_tool_output("manon_impact", impact_text)
-                _log("manon_impact passed")
+                _assert_nonempty_tool_output("impact", impact_text)
+                _log("impact passed")
 
-                _log("calling manon_deep_query")
+                _log("calling deep_query")
                 deep_query_result = await session.call_tool(
-                    "manon_deep_query",
+                    "deep_query",
                     {
                         "repo_id": repo_id,
                         "question": "What is MatrixoneGraph and where is it used?",
@@ -356,8 +357,8 @@ async def _run() -> None:
                     read_timeout_seconds=timedelta(seconds=90),
                 )
                 deep_query_text = _tool_text(deep_query_result)
-                _assert_nonempty_tool_output("manon_deep_query", deep_query_text)
-                _log("manon_deep_query passed")
+                _assert_nonempty_tool_output("deep_query", deep_query_text)
+                _log("deep_query passed")
 
                 print(json.dumps({
                     "repo_id": repo_id,
