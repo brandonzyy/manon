@@ -11,7 +11,7 @@ Sub-modules:
   _client  — HTTP helpers, response formatters
   _sync    — scan cache loader and batch uploader
   _hooks   — git / Claude Code hook installation
-  tools/   — all 19 MCP tool definitions
+  tools/   — MCP tool definitions (exposed surface set by MANON_PROFILE / MANON_TOOLS)
 """
 from __future__ import annotations
 

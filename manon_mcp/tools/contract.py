@@ -22,7 +22,7 @@ log = logging.getLogger("manon-mcp")
 def register_contract_tools(mcp, deps: ToolDependencies):
     """Register the contract audit tool."""
 
-    @mcp.tool()
+    @mcp.tool(name="contract_audit")
     def manon_contract_audit(repo_id: str, tables: str = "", limit: int = 8) -> str:
         """契约对账：端点/配置/状态值/守卫包络四张表，列出图谱看不见的死面**候选**。
 

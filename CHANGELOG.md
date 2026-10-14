@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.13] - 2026-10-15
+
+### Changed
+- **MCP 默认只注册 7 个核心工具**：`search` / `graph` / `deep_query` / `impact` / `code_health` /
+  `init` / `repos_list`（原 24 个全量注册）。管理类工具（仓库增删、扫描上传、账户用量等）
+  需在 MCP env 设 `MANON_PROFILE=full`，或用 `MANON_TOOLS=<逗号分隔短名>` 精确挑选；
+  未知 profile 值回落 full 并写日志，打错字不会裁空工具面。
+- **工具注册名去 `manon_` 前缀**：客户端看到的 `mcp__manon__manon_search` 变为 `mcp__manon__search`，
+  消除双重前缀；函数名与内部调用不变，仅 `@mcp.tool(name=...)` 生效。
+- **参数 schema 剥离 pydantic 自动生成的 `title`**：客户端上下文里每个参数不再重复一份形参名。
+- 判重标记与规范文本同步：`_install_codex_agents_md` 判重改看正本标题「Manon 调用规则」，
+  Codex skill 判重改看「Manon 初始化」，工具名引用全部换短名（`manon_rules.md`、hook 模板消息、
+  `skills/manon/SKILL.md`、双语 README）；SKILL.md 增补「接入新仓前先设 `MANON_PROFILE=full`」。
+
 ## [1.6.12] - 2026-09-24
 
 ### Changed

@@ -1,4 +1,4 @@
-"""Helper functions for the `manon_init` tool."""
+"""Helper functions for the `init` tool."""
 from __future__ import annotations
 
 import logging
@@ -35,7 +35,7 @@ def _init_existing_project(
     client,
     progress_cb=None,
 ) -> tuple[str, list[str], list[str]]:
-    """Handle `manon_init` for an already-registered local project."""
+    """Handle `init` for an already-registered local project."""
     repo_id = proj["repo_id"]
     lines = [f"  {proj['name']} ({repo_id[:8]})"]
     graph_lines: list[str] = []

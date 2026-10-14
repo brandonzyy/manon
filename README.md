@@ -259,19 +259,19 @@ Code is written with graph context (hooks enforce graph-first) → `/assurance` 
 
 ## 🔍 Query Tools
 
-### `manon_search` — Semantic Code Search
+### `search` — Semantic Code Search
 
 Converts natural language to vector embeddings, retrieves closest entities, expands along graph edges. Solves the "don't know the keyword" problem.
 
-### `manon_graph` — Call Graph Traversal
+### `graph` — Call Graph Traversal
 
 Directional traversal (callers/callees/both) with configurable depth. Solves the "will changing this break something" problem.
 
-### `manon_deep_query` — Multi-Round Deep Query
+### `deep_query` — Multi-Round Deep Query
 
 Server-side LLM iterative querying. Auto-identifies gaps, generates follow-up queries. One call covers cross-module architecture questions.
 
-### `manon_impact` — Commit Impact Analysis
+### `impact` — Commit Impact Analysis
 
 Parses diffs → extracts changed symbols → traces callers 2 hops → computes risk score (0-100). Instant CI/CD gating.
 
@@ -280,12 +280,12 @@ Parses diffs → extracts changed symbols → traces callers 2 hops → computes
 
 ```
 What do you need?
-├── Find code (don't know keyword)  → manon_search
+├── Find code (don't know keyword)  → search
 ├── Find code (know the keyword)    → Grep
-├── Trace call relationships        → manon_graph
-├── Cross-module architecture       → manon_deep_query
-├── Assess commit risk              → manon_impact
-├── Before modifying code           → manon_search + manon_graph
+├── Trace call relationships        → graph
+├── Cross-module architecture       → deep_query
+├── Assess commit risk              → impact
+├── Before modifying code           → search + graph
 └── Simple file lookup              → Glob
 ```
 
@@ -295,20 +295,22 @@ What do you need?
 
 ## 🛠️ MCP Tools
 
+> **Exposed surface**: only the core tools `search` / `graph` / `deep_query` / `impact` / `code_health` / `init` / `repos_list` are registered by default; admin tools require `MANON_PROFILE=full` in the MCP env, or `MANON_TOOLS=<comma-separated short names>`.
+
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Repo** | `manon_init` | Auto-detect and register project |
-| | `manon_repos_list` | List repos and index status |
-| | `manon_repos_create/get/delete` | CRUD operations |
-| **Index** | `manon_index_status` | Check indexing progress |
+| **Repo** | `init` | Auto-detect and register project |
+| | `repos_list` | List repos and index status |
+| | `repos_create/get/delete` | CRUD operations |
+| **Index** | `index_status` | Check indexing progress |
 | | `manon_push_update` | Incremental sync |
-| **Query** | `manon_search` | Semantic code search |
-| | `manon_graph` | Call graph traversal |
-| | `manon_impact` | Commit impact analysis |
-| | `manon_deep_query` | Multi-round deep query |
-| | `manon_code_health` | 8-dimension health scoring |
-| **Auto** | `manon_setup_hooks` | Install git pre-push hook |
-| **Util** | `manon_config/account/usage` | Configuration and account info |
+| **Query** | `search` | Semantic code search |
+| | `graph` | Call graph traversal |
+| | `impact` | Commit impact analysis |
+| | `deep_query` | Multi-round deep query |
+| | `code_health` | 8-dimension health scoring |
+| **Auto** | `setup_hooks` | Install git pre-push hook |
+| **Util** | `config/account/usage` | Configuration and account info |
 
 ### Automation (Hooks)
 
@@ -316,7 +318,7 @@ What do you need?
 |------|------|------|
 | **git pre-push** | After `git push` | Auto-update graph + output health score delta |
 | **PreToolUse** | Before Grep/Glob/Agent | Remind to check graph first |
-| **PostToolUse** | After `git commit` | Trigger `manon_impact` analysis |
+| **PostToolUse** | After `git commit` | Trigger `impact` analysis |
 
 ---
 

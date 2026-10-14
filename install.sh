@@ -137,7 +137,7 @@ TOMLEOF
         info "Codex MCP registered"
     fi
 
-    # Manon 调用规则 → ~/.codex/AGENTS.md（Codex 的全局指令文件；已有 manon_search 则不动）
+    # Manon 调用规则 → ~/.codex/AGENTS.md（Codex 的全局指令文件；已有正本则不动，判重看标题）
     "$VENV_PYTHON" - "$SCRIPT_DIR" "$agents_file" <<'PYEOF'
 import sys
 from pathlib import Path

@@ -17,7 +17,7 @@ def register_utility_tools(mcp, deps: ToolDependencies):
     client = deps.client
     config = deps.config
 
-    @mcp.tool()
+    @mcp.tool(name="config")
     def manon_config() -> str:
         """查看当前 Manon 配置和连接状态。"""
         log.info("manon_config called")
@@ -41,7 +41,7 @@ def register_utility_tools(mcp, deps: ToolDependencies):
             threading.Thread(target=config._check_version, daemon=True).start()
         return "<!-- DISPLAY_VERBATIM -->\n" + "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(name="account")
     def manon_account() -> str:
         """查看账户信息：套餐、配额使用情况、近 30 天用量。"""
         try:
@@ -57,19 +57,19 @@ def register_utility_tools(mcp, deps: ToolDependencies):
         ]
         return "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(name="usage")
     def manon_usage(days: int = 30) -> str:
         """查看 API 用量统计。"""
         result = client._get("/api/v1/usage", days=days)
         return json.dumps(result, indent=2, ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(name="embedding")
     def manon_embedding(texts: list[str]) -> str:
         """将文本转换为向量嵌入。"""
         result = client._post("/api/v1/embedding", {"inputs": texts})
         return f"generated {result['count']} vectors (dimension: {len(result['embeddings'][0])})"
 
-    @mcp.tool()
+    @mcp.tool(name="update")
     def manon_update() -> str:
         """检查并更新 Manon 到最新版本。"""
         install_dir = Path(__file__).resolve().parent.parent.parent
