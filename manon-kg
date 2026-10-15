@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# manon-kg — manon 本地项目图谱 CLI（scout 维护入口）。
+# 用法: manon-kg sync [--full] [-j] | manon-kg query TEXT [-j] | manon-kg status | manon-kg clear
+# 在项目根目录运行；索引落在 <项目>/.manon/graph/，增量判定为 SHA256 内容哈希。
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$REPO_ROOT/.venv/bin/python" -m matrixone_graph.cli "$@"

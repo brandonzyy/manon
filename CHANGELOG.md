@@ -530,3 +530,17 @@
 ## [0.2.0] - 2026-02-23
 
 Initial release with MCP integration and knowledge graph support.
+
+## [1.7.0] - 2026-10-15
+
+### Added
+- **`kg sync`：项目本地增量索引**。`manon-kg sync` 在项目根把增量图谱落进 `<项目>/.manon/graph/`（graph.json/vectors/chunks/meta），增量判定沿用 `core/ast/scanner` 的 SHA256 内容哈希（mtime+size 快路径），按文件替换实体/边/chunks 并做 stale reconcile 与 phantom 清理。回归：`tests/test_kg_sync.py`（建图/幂等/新符号/删除清理/全量重建五例）。
+- **`manon-kg` CLI 入口**：任意 cwd 可用的包装脚本（PYTHONPATH 注入仓根 + venv 解释器），cli.py 补 `__main__` 守卫——此前 `-m` 执行静默无操作。
+- **scout 维护约定**：常驻测绘兵每个任务后 `kg sync`，定位查询用 `kg query`；写入 `.project-map.md` 的入口表与图谱互为两层（map=任务入口缓存，图谱=符号级真源）。
+
+### Changed
+- **embedding 硬编码硅基流动 BAAI/bge-m3**（`MANON_EMBEDDING_API_KEY` 只注入 key）；key 缺失时跳过向量并以词法兜底（实体限定名/chunk 词重叠评分 + depth 跳数邻域），`kg query/status` 读 `.manon/graph` 而非 `.codeindex/kg`。
+- **cli.py 不再依赖 saas**：`kg sync` 所需的 parse 重建/reexport 重定向从 `saas/routers/indexing.py` 移植为本地纯实现；`prune_phantoms`/reconcile 对齐 saas `_load_and_process_batch` 语义。
+
+### Fixed
+- `python -m matrixone_graph.cli` 此前无 `__main__` 守卫，静默无操作。
