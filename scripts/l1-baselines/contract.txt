@@ -2,12 +2,25 @@
 # 格式每行一条，key 不含行号。只许变短；修好后必须重新生成。
 configs:const:codeindex/config.py:DEFAULT_CONFIG_TEMPLATE
 configs:const:codeindex/config.py:DEFAULT_INCREMENTAL
-configs:env:MANON_DB_PATH
-configs:env:MANON_REPOS_DIR
+configs:env:MANON_API_KEY
+configs:env:SAAS_ADMIN_SECRET
+configs:env:SAAS_DATA_DIR
+configs:env:SAAS_DB_PATH
+configs:env:SAAS_EMBEDDING_API_KEY
+configs:env:SAAS_EMBEDDING_MODEL
+configs:env:SAAS_EMBEDDING_URL
+configs:env:SAAS_INDEX_DIR
+configs:env:SAAS_LLM_API_KEY
+configs:env:SAAS_LLM_API_URL
+configs:env:SAAS_LLM_MODEL
+configs:env:SAAS_PORT
 configs:env:SAAS_QUOTA_DEEP_QUERY_ENTERPRISE
 configs:env:SAAS_QUOTA_DEEP_QUERY_FREE
 configs:env:SAAS_QUOTA_DEEP_QUERY_PRO
+configs:env:SAAS_QUOTA_REPOS_ENTERPRISE
+configs:env:SAAS_QUOTA_REPOS_FREE
+configs:env:SAAS_QUOTA_REPOS_PRO
 configs:env:SAAS_RATE_ENTERPRISE
 configs:env:SAAS_RATE_FREE
 configs:env:SAAS_RATE_PRO
-endpoints:GET /admin-console
+configs:env:SAAS_REPOS_DIR

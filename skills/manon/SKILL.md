@@ -1,72 +1,17 @@
 ---
 name: manon
-description: /manon -- 进入 Manon 模式
+description: manon 本地图谱的维护与查询入口（sync / query / graph / impact / deep-query / health）
 user_invocable: true
 ---
 
-# Manon 初始化
+# Manon 本地图谱
+
+项目根目录下通过 `~/manon/manon-kg` CLI 使用（存储在 `<项目>/.manon/graph/`）。
 
 **核心规则**：
-- 必须按顺序执行 Step 1-6，不跳步
-- 工具返回的 `<!-- DISPLAY_VERBATIM -->` 内容必须原样输出给用户
-- 扫描脚本必须用 `MANON_PYTHON`，不用系统 python
-
-**暴露面**：MCP 默认只注册核心工具（search / graph / deep_query / impact / code_health / init / repos_list）。
-Step 0 与 Step 3-4 还要 `index_status` / `scan_files` / `upload_batch`——接入新仓或刷新索引前，
-先把该 MCP 的 env 设为 `MANON_PROFILE=full` 再开会话；日常查图无需如此。
-
----
-
-## Step 0: 已注册的仓直接用
-
-`~/.manon/projects.json` 里已有当前仓（或它的主工作树）就**跳过 Step 1-5**：
-repo_id 已经在那儿，图谱由 git push 钩子自更新，最近一次结论在
-`~/.manon/update_status.json`。只跑一次 `index_status(repo_id)` 看新鲜度，
-然后进 Step 6。
-
-Step 1-6 只在**第一次接入一个仓**时走。**隔离树不是新仓**——`init` 会把它
-折回主工作树复用同一个 repo_id，别为每棵树单独建（那样建出来的图谱只有主树那份
-会被 push 钩子更新，其余建完即冻，而读出来看不出陈旧）。
-
-## Step 1: Init
-`init(project_path)` → 提取 `repo_id`
-
-## Step 2: Smart Analysis
-- 如果输出含 `<!-- SMART_ANALYSIS_DONE -->` → 跳到 Step 3
-- 如果输出含 `<!-- SMART_ANALYSIS_NEEDED -->` → 执行：
-  1. `directory_signals(project_path)` 获取目录信号
-  2. 根据【目录角色规则】判断每个目录 index/skip
-  3. `configure_excludes(project_path, ["**/skip_dir/**", ...])`
-  4. 向用户展示分析结果
-
-## Step 3: Scan & Upload
-1. 从 Step 1 输出提取 `MANON_PYTHON`
-2. Bash: `MANON_DIR="<MANON_DIR>" "<MANON_PYTHON>" "<SKILL_DIR>/scripts/manon-scan.py" <repo_id>`
-   - `<SKILL_DIR>` = 本 skill 所在目录（`~/.claude/skills/manon`）
-   - Windows bash 同样用此格式，**不要用** `set MANON_DIR=...`（CMD 语法，bash 里不生效）
-   - 如报错（文件不存在）→ 运行 `bash "<MANON_DIR>/install.sh"` 后重试
-3. `scan_files(repo_id)`
-4. 循环 `upload_batch(repo_id)` 直到 status == "done"
-
-## Step 4: Index Status
-`index_status(repo_id)` → **表格形式完整呈现**，不总结不省略
-
-## Step 5: Code Health
-`code_health(repo_id)` → **表格形式完整呈现**，不总结不省略
-
-## Step 6: Activate
-告知用户 Manon 已激活，并说明 hooks 功能：
-- **git push hook** - push 后自动更新图谱 + 打印健康评分
-- **Claude Code hooks** - 强制 Manon 优先（Grep/Glob/Explore 前必须先查图谱，commit 后提示 impact）
-
----
-
-## 目录角色规则（用于 Step 2）
-
-**排除（skip）**：
-`scripts/` `tools/` `bin/` `examples/` `demo/` `docs/` `assets/` `static/` `public/` `data/` `fixtures/` `config/`
-
-**索引（index）**：
-`src/` `lib/` `core/` `app/` `pkg/` `internal/` + 有 `__init__.py`/`package.json`/`Cargo.toml` 的目录
-
-**不确定时**：源码文件占比 > 30% → index
+- 每次任务后必须 `~/manon/manon-kg sync`，把结构变化并入图谱（增量，SHA256 判定）。
+- 定位代码先 `~/manon/manon-kg query "关键词" -j`，再按命中 `路径:行号` 截读，不通读整文件。
+- 深层理解用 `~/manon/manon-kg deep-query "问题" --max-rounds 2 -j`（LLM 多轮规划）。
+- 改公共函数/跨模块前，先 `~/manon/manon-kg graph 符号名 --direction callers` 看调用方，
+  或 `~/manon/manon-kg impact --commit HEAD` 看影响传播。
+- 工具语义与适用边界见《Manon 调用规则》（`~/.claude/specs/Manon调用规则.md`）。

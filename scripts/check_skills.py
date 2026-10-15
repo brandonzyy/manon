@@ -20,7 +20,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = ROOT / "skills"
 INSTALLERS = {  # install.sh 用 / 引路径，install.bat 的 ::PS 段用 \
     "install.sh": (ROOT / "install.sh").read_text(encoding="utf-8"),
-    "install.bat": (ROOT / "install.bat").read_text(encoding="utf-8"),
 }
 names = sorted(p.name for p in SKILLS.iterdir() if p.is_dir())
 bad = []
@@ -43,7 +42,7 @@ def _pats(n: str, rel: pathlib.PurePosixPath) -> tuple[str, ...] | None:
         return (f'skills/{n}/tests/"*.py', f'skills\\{n}\\tests\\*.py')
     return None
 
-# 不变量 1：两个安装脚本的装块都覆盖每个文件（install.bat 曾连装三个版本都没人发现）
+# 不变量 1：安装脚本的装块覆盖每个文件（install.bat 曾连装三个版本都没人发现）
 for installer, text in INSTALLERS.items():
     for n in names:
         d = SKILLS / n

@@ -32,11 +32,11 @@ jobs:
       - name: skill 判据测试（assurance）
         run: python3 -m unittest discover -s skills/assurance/tests -p 'test_*.py'
       - name: 装产品依赖（L1 已跑完，现在才轮到它们）
-        run: pip install -r requirements.txt -r manon_mcp/requirements.txt
+        run: pip install -r requirements.txt
       - name: 测试 + 覆盖率测量（P5 第一步：只测量不设门槛）
         run: >
           python3 -m pytest tests/ -q
-          --cov=core --cov=manon_mcp --cov=codeindex --cov=matrixone_graph
+          --cov=core --cov=codeindex --cov=matrixone_graph
           --cov-report=term --cov-report=json:coverage.json
 
   secrets:

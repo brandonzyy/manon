@@ -96,26 +96,3 @@ class TestMergeDynamic:
 
 
 # ── saas models ───────────────────────────────────────
-
-class TestSaasModels:
-    def test_import_models(self):
-        from saas.models import (
-            IndexStatus, SyncAstRequest, FileSyncData,
-            RepoCreate, RepoOut, SearchResult, DeepQueryRequest,
-            MergeDynamicRequest,
-        )
-        # Verify defaults
-        m = MergeDynamicRequest()
-        assert m.edges == {}
-        assert m.raw_edges == []
-
-    def test_file_sync_data(self):
-        from saas.models import FileSyncData
-        f = FileSyncData(rel_path="a.py", hash="abc", parse_result={})
-        assert f.rel_path == "a.py"
-
-    def test_repo_create(self):
-        from saas.models import RepoCreate
-        r = RepoCreate(name="test")
-        assert r.name == "test"
-        assert r.branch == "main"

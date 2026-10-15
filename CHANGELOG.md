@@ -531,6 +531,21 @@
 
 Initial release with MCP integration and knowledge graph support.
 
+## [2.0.0] - 2026-10-16
+
+### Removed（破坏性：MCP 与 SaaS 全面退役，纯本地架构）
+- **`manon_mcp/` 整体删除**：MCP stdio 服务、工具注册、钩子、安装配置写入全部退役；消费方已迁移到 `manon-kg` CLI（v1.7.x）。
+- **`saas/` 整体删除**：自建后端（:3700）、租户/配额/计费、admin CLI、R760 部署脚本（deploy-r760.py，gitignore 未跟踪文件另从盘上清除）、docker-compose 死文件。服务端停服与部署清理见运维记录。
+- **测试同步退役**：MCP/saas/e2e 相关 22 个测试文件删除；`tests/test_worktree_repo_reuse.py` 随 MCP init 流程退役（main_worktree 核心逻辑保留在 core/ast/project.py）。
+- **过时文档删除**：ARCHITECTURE（路径已失真）、DEPLOYMENT、查询工具评估两篇、tmp 草稿、install.bat。
+
+### Changed
+- **查询四件全落 `manon-kg` CLI**（v1.7.1 完成，本版成体系）：sync/query/deep-query/graph/impact/health/status/clear。
+- **requirements 收敛为本地集**：移除 fastapi/uvicorn/websockets/pydantic-settings/aiosqlite/mcp/questionary 之外多余项；单文件依赖清单（manon_mcp/requirements.txt 已删）。
+- **CI**：覆盖率与依赖安装去掉 manon_mcp；L1 baselines regenerate（lint 73 / typing 20 / dead 6 / contract 24 / deps 0）。
+- **check_skills**：INSTALLERS 移除 install.bat；skills 安装改为 `install.sh --install-skills`（可选，装到 ~/.agents/skills）。
+- **文档重写**：README/README_CN/CLAUDE.md 纯本地定位；manon skill 改 CLI 用法。
+
 ## [1.7.1] - 2026-10-15
 
 ### Added

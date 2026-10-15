@@ -59,7 +59,7 @@ REGEN = f"{L1_PY} scripts/check_l1.py --regenerate"
 # 哨兵按 (import 名, 发行名) 成对写：发行名必须在产品依赖表里、且不许出现在
 # requirements-l1.txt 里，由 tests/test_check_l1_env.py 判——哨兵指错人时那份
 # 用例红，而不是这道门禁开始乱拒。
-PRODUCT_ONLY = (("yaml", "pyyaml"), ("numpy", "numpy"), ("fastapi", "fastapi"))
+PRODUCT_ONLY = (("yaml", "pyyaml"), ("numpy", "numpy"))
 ALLOW_DIRTY = "MANON_L1_ALLOW_DIRTY"
 
 _Find = Callable[[str], object | None]
