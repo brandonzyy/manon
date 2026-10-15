@@ -45,7 +45,8 @@ def _kg_path(repo: Path) -> Path:
 def _mg(repo: Path):
     from matrixone_graph import MatrixoneGraph
 
-    mg = MatrixoneGraph(repo)
+    mg = MatrixoneGraph(repo, embedding_url=EMBED_URL, embedding_model=EMBED_MODEL,
+                        embedding_api_key=_embedding_api_key())
     mg.kg_path = _kg_path(repo)
     return mg
 
