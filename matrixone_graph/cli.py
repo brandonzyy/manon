@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import click
@@ -97,74 +98,170 @@ def _apply_reexport_map(graph, reexport_map: dict) -> int:
     return redirected
 
 
-def _lexical_query(mg, text: str, top_k: int, depth: int):
-    """无向量时的词法兜底：实体限定名 / chunk 文本的词重叠评分 + 一跳关系。"""
-    import networkx as nx
-
-    from matrixone_graph.pipeline import QueryResult, _get_cached_kg
-    from matrixone_graph.store import Chunk
-
-    graph, _vec, chunks = _get_cached_kg(mg.kg_path)
-    toks = [t for t in re.split(r"[^a-z0-9_\u4e00-\u9fff]+", text.lower()) if len(t) >= 2]
-
-    def _score(s: str) -> float:
-        ls = s.lower()
-        return float(sum(t in ls for t in toks))
-
-    hits: list[tuple[float, str, dict]] = []
-    for eid, d in graph._g.nodes(data=True):
-        s = 2 * _score(eid) + 2 * _score(str(d.get("name", ""))) + _score(str(d.get("description", "")))
-        if s > 0:
-            hits.append((s, eid, d))
-    hits.sort(key=lambda x: (-x[0], x[1]))
-    top = hits[:top_k]
-
-    entities = [{
-        "id": eid, "kind": d.get("kind", "?"),
-        "name": d.get("name", str(eid).split(".")[-1]),
-        "file_path": d.get("file_path", "?"), "line_start": d.get("line_start", 0),
-        "description": d.get("description", ""), "score": round(s, 3),
-    } for s, eid, d in top]
-
-    top_ids = {eid for _, eid, _ in top}
-    neighborhood = set(top_ids)
-    if depth > 1:
-        for eid in top_ids:
-            if eid in graph._g:  # type: ignore[attr-defined]
-                neighborhood.update(nx.ego_graph(graph._g, eid, radius=depth, undirected=True))
-    relations: list[dict] = []
-    seen: set[tuple] = set()
-    for eid, _d in graph._g.nodes(data=True):
-        if eid not in neighborhood:
-            continue
-        for src, tgt, data in list(graph._g.out_edges(eid, data=True)) + list(graph._g.in_edges(eid, data=True)):
-            key = (src, data.get("kind", "call"), tgt)
-            if key in seen:
-                continue
-            seen.add(key)
-            relations.append({"src_id": src, "kind": data.get("kind", "call"), "tgt_id": tgt})
-    relations = relations[:20]
-
-    chits: list[tuple[float, Chunk]] = []
-    for c in chunks.values():
-        s = _score(c.content) + _score(str(getattr(c, "symbol_name", "") or ""))
-        if s > 0:
-            chits.append((s, c))
-    chits.sort(key=lambda x: -x[0])
-    chunk_list = [{
-        "file_path": c.file_path, "line_start": c.line_start, "line_end": c.line_end,
-        "symbol_name": getattr(c, "symbol_name", ""), "content": c.content,
-        "score": round(s, 3),
-    } for s, c in chits[:5]]
-
-    context = f"词法匹配（无向量模式）: {len(entities)} 实体 / {len(relations)} 关系 / {len(chunk_list)} 片段"
-    return QueryResult(entities=entities, relations=relations, chunks=chunk_list, context=context)
-
-
 @click.group("kg")
 def kg():
     """Knowledge graph: index, query, status, clear."""
     pass
+
+
+# ── deep-query：LLM 引导的多轮图谱问答（移植自 saas/services/query.py，LLM 硬编码 verispring deepseek-flash）──
+DEEPQUERY_LLM_URL = "https://api.verispring.cn/v1/chat/completions"
+DEEPQUERY_LLM_MODEL = "deepseek-flash"
+
+_DEEPQUERY_SYSTEM = """You are a code-graph query planner.
+Return JSON with:
+- sub_questions
+- covered
+- missing
+- queries
+- reason
+
+If the current context is already enough, return an empty queries list.
+"""
+
+
+async def _llm_chat(messages: list[dict], *, max_tokens: int = 4096, timeout: float = 120.0) -> str:
+    """Chat completion → content 字符串（OpenAI 兼容）。key 经 VERISPRING_API_KEY 注入。"""
+    import httpx
+
+    key = os.environ.get("VERISPRING_API_KEY", "")
+    if not key:
+        raise RuntimeError("deep-query 需要 VERISPRING_API_KEY（LLM=verispring deepseek-flash）")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
+        resp = await c.post(
+            DEEPQUERY_LLM_URL,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            # deepseek-flash 接受 thinking disabled；GLM-5.x 会报错——换模型需移除
+            json={"model": DEEPQUERY_LLM_MODEL, "max_tokens": max_tokens, "messages": messages,
+                  "thinking": {"type": "disabled"}},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    msg = data.get("choices", [{}])[0].get("message", {})
+    return msg.get("content") or msg.get("reasoning_content") or ""
+
+
+def _parse_json(text: str) -> dict | list:
+    """Extract JSON from LLM output（移植自 saas/services/llm.py:58）."""
+    cleaned = re.sub(r"```(?:json)?\s*", "", text)
+    cleaned = re.sub(r"```", "", cleaned).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = cleaned.find(start_char)
+        if start == -1:
+            continue
+        end = cleaned.rfind(end_char)
+        if end > start:
+            try:
+                return json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                continue
+    raise ValueError(f"No valid JSON found in LLM output: {text[:200]}")
+
+
+def _parse_follow_ups(raw: list) -> list[str]:
+    follow_ups: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            follow_ups.append(item.strip())
+        elif isinstance(item, dict):
+            val = item.get("query") or item.get("q") or item.get("text") or ""
+            if isinstance(val, str) and val.strip():
+                follow_ups.append(val.strip())
+    return follow_ups
+
+
+def _hits_to_log(result) -> dict:
+    return {
+        "entities": [{"id": e.get("id", ""), "name": e.get("name", ""),
+                      "file_path": e.get("file_path", ""), "score": e.get("score", 0)}
+                     for e in result.entities[:10]],
+        "chunks": [{"id": c.get("id", ""), "file_path": c.get("file_path", "")}
+                   for c in result.chunks[:10]],
+    }
+
+
+@kg.command("deep-query")
+@click.argument("question")
+@click.option("--max-rounds", default=3, type=int, help="LLM 引导的追加查询轮数上限")
+@click.option("-j", "--json-output", is_flag=True, help="Output raw JSON")
+def deep_query(question: str, max_rounds: int, json_output: bool):
+    """LLM 引导的多轮图谱问答（需要 VERISPRING_API_KEY 与已建向量索引）."""
+    from matrixone_graph.pipeline import _load_meta
+
+    repo = Path(".").resolve()
+    kg_path = _kg_path(repo)
+    if not _embedding_api_key():
+        raise click.ClickException("deep-query 依赖向量检索：先配置 MANON_EMBEDDING_API_KEY 并 kg sync")
+    if _load_meta(kg_path).get("vectors") != "embedded":
+        raise click.ClickException("索引无向量：配置 key 后重新 kg sync")
+    if not os.environ.get("VERISPRING_API_KEY", ""):
+        raise click.ClickException("deep-query 需要 VERISPRING_API_KEY（LLM=verispring deepseek-flash）")
+
+    mg = _mg(repo)
+
+    async def _run():
+        result = await mg.query(question, top_k=10, depth=1)
+        accumulated = result.context or ""
+        rounds_detail = [{"round": 0, "query": question,
+                          "entities": [e.get("id", e.get("name", "")) for e in result.entities],
+                          "covered": False}]
+        training = [{"round": 0, "query": question, **_hits_to_log(result)}]
+        rounds = [{"round": 0, "query": question, "context_chars": len(accumulated)}]
+        parsed: dict = {}
+        for i in range(max_rounds):
+            analysis = None
+            try:
+                analysis = await _llm_chat([
+                    {"role": "system", "content": _DEEPQUERY_SYSTEM},
+                    {"role": "user", "content": f"Question:\n{question}\n\nContext:\n{accumulated[:12000]}"},
+                ])
+                parsed = _parse_json(analysis)
+                if isinstance(parsed, list):
+                    parsed = {}
+            except Exception as exc:
+                console.print(f"[yellow]deep-query LLM 第 {i + 1} 轮失败: {exc}[/yellow]")
+                break
+            follow_ups = _parse_follow_ups(parsed.get("queries", []))
+            if not follow_ups:
+                if len(rounds_detail) == 1:
+                    rounds_detail[0]["covered"] = True
+                break
+            async def _run_query(q: str):
+                return q, await mg.query(q, top_k=5, depth=1)
+            results = await asyncio.gather(*[_run_query(q) for q in follow_ups[:3]], return_exceptions=True)
+            for q, fr in (r for r in results if isinstance(r, tuple)):
+                if fr.context:
+                    accumulated += f"\n\n## Follow-up: {q}\n{fr.context}"
+                rounds_detail.append({"round": i + 1, "query": q, "covered": True})
+            rounds.append({"round": i + 1, "queries": follow_ups, "context_chars": len(accumulated)})
+
+        sub_questions = parsed.get("sub_questions", []) if isinstance(parsed, dict) else []
+        covered = parsed.get("covered", []) if isinstance(parsed, dict) else []
+        coverage = len(covered) / len(sub_questions) if sub_questions else 1.0
+        return {"context": accumulated, "rounds": rounds, "sub_questions": sub_questions,
+                "covered": covered, "missing": parsed.get("missing", []) if isinstance(parsed, dict) else [],
+                "coverage_ratio": round(coverage, 3), "llm_analysis": parsed if isinstance(parsed, dict) else {}}, training
+
+    payload, training = asyncio.run(_run())
+    try:
+        (repo / MANON_DIR / "deep-query-last.json").write_text(
+            json.dumps({"question": question, "timestamp": time.time(),
+                        "rounds": training, "llm_analysis": payload.get("llm_analysis", {})},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    if json_output:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(payload["context"] or "[yellow]No context accumulated.[/yellow]")
+        if payload["sub_questions"]:
+            console.print(f"\n覆盖 {len(payload['covered'])}/{len(payload['sub_questions'])} 个子问题"
+                          f"（缺失: {', '.join(payload['missing']) or '无'}）")
 
 
 @kg.command()
@@ -182,6 +279,8 @@ def sync(full: bool, json_output: bool):
 
     repo = Path(".").resolve()
     kg_path = _kg_path(repo)
+    if not _embedding_api_key():
+        raise click.ClickException("sync 需要 MANON_EMBEDDING_API_KEY（硅基流动 bge-m3，向量为查询必需）")
 
     meta = {} if full else _load_meta(kg_path)
     meta.setdefault("version", 1)
@@ -272,27 +371,25 @@ def sync(full: bool, json_output: bool):
     meta.setdefault("reexport_map", {}).update(new_reexports)
     redirected = _apply_reexport_map(graph, meta.get("reexport_map", {}))
 
-    # embedding：硬编码硅基流动 bge-m3；key 未配置则跳过向量
+    # embedding：硬编码硅基流动 bge-m3（key 在命令入口已校验）
+    from matrixone_graph.embed import EmbeddingClient
+
     api_key = _embedding_api_key()
+
+    async def _embed_and_add():
+        embedder = EmbeddingClient(base_url=EMBED_URL, model=EMBED_MODEL, api_key=api_key)
+        try:
+            if all_entities:
+                ent_vecs = await embedder.embed([e.description for e in all_entities])
+                vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
+            if new_chunks:
+                chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
+                vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
+        finally:
+            await embedder.close()
+
+    asyncio.run(_embed_and_add())
     vectors_mode = "embedded"
-    if api_key:
-        from matrixone_graph.embed import EmbeddingClient
-
-        async def _embed_and_add():
-            embedder = EmbeddingClient(base_url=EMBED_URL, model=EMBED_MODEL, api_key=api_key)
-            try:
-                if all_entities:
-                    ent_vecs = await embedder.embed([e.description for e in all_entities])
-                    vec_index.add_entity_vectors([e.id for e in all_entities], ent_vecs)
-                if new_chunks:
-                    chunk_vecs = await embedder.embed([c.content[:1000] for c in new_chunks])
-                    vec_index.add_chunk_vectors([c.id for c in new_chunks], chunk_vecs)
-            finally:
-                await embedder.close()
-
-        asyncio.run(_embed_and_add())
-    else:
-        vectors_mode = "skipped"
 
     _save_chunks(kg_path, all_chunks)
     graph.save(kg_path / GRAPH_FILE)
@@ -323,35 +420,36 @@ def sync(full: bool, json_output: bool):
 
 @kg.command()
 @click.argument("text")
-@click.option("--embedding-url", default=None, help="Embedding endpoint URL")
 @click.option("--top-k", default=10, type=int, help="Number of results")
 @click.option("--depth", default=1, type=int, help="Graph traversal depth")
 @click.option("-j", "--json-output", is_flag=True, help="Output raw JSON")
-def query(text: str, embedding_url: str | None, top_k: int, depth: int, json_output: bool):
-    """Query the knowledge graph（有向量走语义，无向量走词法兜底）."""
+def query(text: str, top_k: int, depth: int, json_output: bool):
+    """语义查询知识图谱（需要 MANON_EMBEDDING_API_KEY，先 kg sync 建向量）."""
+    import click
+
     from matrixone_graph.pipeline import _load_meta
 
     repo = Path(".").resolve()
     kg_path = _kg_path(repo)
     meta = _load_meta(kg_path)
     api_key = _embedding_api_key()
+    if not api_key:
+        raise click.ClickException("语义查询需要 MANON_EMBEDDING_API_KEY（硅基流动 bge-m3）；配置后重新 kg sync")
+    if meta.get("vectors") != "embedded":
+        raise click.ClickException("索引无向量：配置 key 后重新 kg sync（换过 embedding 模型用 --full 全量重建）")
 
-    if api_key and meta.get("vectors") == "embedded":
-        from matrixone_graph import MatrixoneGraph
+    from matrixone_graph.embed import EmbeddingClient
+    from matrixone_graph.pipeline import query as kg_query
 
-        inst = MatrixoneGraph(repo, embedding_url=_get_embedding_url(embedding_url) if embedding_url else EMBED_URL,
-                              embedding_model=EMBED_MODEL, embedding_api_key=api_key)
-        inst.kg_path = kg_path
+    embedder = EmbeddingClient(base_url=EMBED_URL, model=EMBED_MODEL, api_key=api_key)
 
-        async def _do():
-            try:
-                return await inst.query(text, top_k=top_k, depth=depth)
-            finally:
-                await inst.close()
+    async def _do():
+        try:
+            return await kg_query(repo, text, embedder, top_k=top_k, depth=depth, kg_path=kg_path)
+        finally:
+            await embedder.close()
 
-        result = asyncio.run(_do())
-    else:
-        result = _lexical_query(_mg(repo), text, top_k, depth)
+    result = asyncio.run(_do())
 
     if json_output:
         click.echo(json.dumps({
@@ -393,6 +491,93 @@ def clear():
     shutil.rmtree(_kg_path(repo), ignore_errors=True)
     (repo / MANON_DIR / "hashes.json").unlink(missing_ok=True)
     console.print("[green]Knowledge graph index cleared.[/green]")
+
+
+@kg.command()
+@click.argument("symbol")
+@click.option("--direction", type=click.Choice(["both", "callers", "callees"]), default="both")
+@click.option("--depth", default=1, type=int, help="遍历跳数")
+@click.option("-j", "--json-output", is_flag=True)
+def graph(symbol: str, direction: str, depth: int, json_output: bool):
+    """按符号遍历调用关系（callers/callees/both）。"""
+    from collections import deque
+
+    repo = Path(".").resolve()
+    mg = _mg(repo)
+    g = mg._load_graph()
+
+    matched = [eid for eid in g._g.nodes  # type: ignore[attr-defined]
+               if eid == symbol or eid.endswith("." + symbol) or symbol in str(g._g.nodes[eid].get("name", ""))]
+    if not matched:
+        console.print(f"[yellow]图谱中未找到符号: {symbol}[/yellow]")
+        return
+
+    edges: list[tuple[str, str, dict]] = []
+    if direction in ("both", "callees"):
+        edges.extend((src, tgt, d) for src, tgt, d in g._g.edges(data=True))
+    if direction in ("both", "callers"):
+        edges.extend((tgt, src, d) for src, tgt, d in g._g.edges(data=True))
+
+    start = set(matched)
+    seen = set(start)
+    queue = deque((eid, 0) for eid in matched)
+    while queue:
+        eid, lv = queue.popleft()
+        if lv >= depth:
+            continue
+        for src, tgt, _d in edges:
+            nxt = tgt if src == eid else (src if tgt == eid else None)
+            if nxt is not None and nxt not in seen:
+                seen.add(nxt)
+                queue.append((nxt, lv + 1))
+
+    out_edges = [(src, tgt, d.get("kind", "call")) for src, tgt, d in edges if src in seen and tgt in seen]
+    entities = [{"id": eid,
+                 "kind": g._g.nodes[eid].get("kind", "?"),  # type: ignore[attr-defined]
+                 "name": g._g.nodes[eid].get("name", eid.split(".")[-1]),  # type: ignore[attr-defined]
+                 "file_path": g._g.nodes[eid].get("file_path", "?"),  # type: ignore[attr-defined]
+                 "line_start": g._g.nodes[eid].get("line_start", 0)}  # type: ignore[attr-defined]
+                for eid in sorted(seen)]
+    payload = {"root": matched, "entities": entities, "relations": out_edges}
+    if json_output:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(f"根: {', '.join(matched)}  邻域 {len(entities)} 实体 / {len(out_edges)} 关系（depth={depth}, {direction}）")
+        for e in entities:
+            console.print(f"  [{e['kind']}] {e['name']} ({e['file_path']}:{e['line_start']})")
+
+
+@kg.command()
+@click.option("--commit", default="HEAD", help="分析目标提交")
+@click.option("--max-depth", default=2, type=int, help="传播追踪深度")
+@click.option("-j", "--json-output", is_flag=True)
+def impact(commit: str, max_depth: int, json_output: bool):
+    """commit 级影响传播分析（无 LLM 调用）。"""
+    repo = Path(".").resolve()
+    mg = _mg(repo)
+    result = mg.impact_commit(commit=commit, max_depth=max_depth)
+    if json_output:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        console.print(f"影响分析: commit {commit}")
+        console.print(f"  变更文件: {len(result.get('changed_files', []))}")
+        console.print(f"  变更符号: {len(result.get('changed_symbols', []))}")
+        risk = result.get("risk", {})
+        if risk:
+            console.print(f"  风险: {risk.get('level', '?')} — {risk.get('reason', '')}")
+
+
+@kg.command("health")
+@click.option("-j", "--json-output", is_flag=True)
+def health(json_output: bool):
+    """图谱健康度评分（8 维度 + 仓库债务扫描）。"""
+    repo = Path(".").resolve()
+    mg = _mg(repo)
+    result = asyncio.run(mg.health())
+    if json_output:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        console.print(f"健康度总分: {result.get('total_score', result)}")
 
 
 @kg.command("merge-dynamic")

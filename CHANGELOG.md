@@ -531,6 +531,15 @@
 
 Initial release with MCP integration and knowledge graph support.
 
+## [1.7.1] - 2026-10-15
+
+### Added
+- **`kg deep-query`：LLM 引导的多轮图谱问答**。首查图谱攒上下文，LLM 逐轮提出 follow-up 查询（每轮 ≤3 个并发）并累积分析；LLM 硬编码 verispring deepseek-flash（key 经 `VERISPRING_API_KEY`），训练日志落 `<项目>/.manon/deep-query-last.json`。回归：`tests/test_kg_sync.py::test_deep_query_*`（LLM 桩两轮链路 + 缺 key 拒绝）。
+- **`kg graph` / `kg impact` / `kg health`**：符号调用关系遍历（callers/callees/both × 跳数）、commit 级影响传播、8 维健康度——查询四件 search/deep_query/graph/impact 全部落 CLI。
+
+### Changed
+- **embedding key 成为硬要求，词法兜底删除**：无 `MANON_EMBEDDING_API_KEY` 时 `kg sync/query` 直接拒绝（向量为语义查询必需）；deep-query 同步前置校验向量与 LLM key。回归：缺 key 拒绝两例。
+
 ## [1.7.0] - 2026-10-15
 
 ### Added
