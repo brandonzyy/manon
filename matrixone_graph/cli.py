@@ -104,6 +104,26 @@ def kg():
     pass
 
 
+# ── 网络重试：连接类失败（ConnectError/RemoteProtocolError/ReadTimeout）按 2s/4s 退避重试 ──
+def _with_retry(coro_factory, attempts: int = 4):
+    """coro_factory 每次尝试调用时返回新协程（内部自建连接与客户端）。"""
+    import asyncio as _asyncio
+    import httpx as _httpx
+
+    async def _run():
+        last: Exception | None = None
+        for i in range(attempts):
+            try:
+                return await coro_factory()
+            except (_httpx.ConnectError, _httpx.RemoteProtocolError, _httpx.ReadTimeout) as exc:
+                last = exc
+                if i < attempts - 1:
+                    await _asyncio.sleep(2 ** i * 2)
+        raise last if last else RuntimeError("retry exhausted")
+
+    return asyncio.run(_run())
+
+
 # ── deep-query：LLM 引导的多轮图谱问答（移植自 saas/services/query.py，LLM 硬编码 verispring deepseek-flash）──
 DEEPQUERY_LLM_URL = "https://api.verispring.cn/v1/chat/completions"
 DEEPQUERY_LLM_MODEL = "deepseek-flash"
@@ -121,24 +141,33 @@ If the current context is already enough, return an empty queries list.
 
 
 async def _llm_chat(messages: list[dict], *, max_tokens: int = 4096, timeout: float = 120.0) -> str:
-    """Chat completion → content 字符串（OpenAI 兼容）。key 经 VERISPRING_API_KEY 注入。"""
+    """Chat completion → content 字符串（OpenAI 兼容）。key 经 VERISPRING_API_KEY 注入。连接类失败重试 3 次。"""
+    import asyncio as _asyncio
     import httpx
 
     key = os.environ.get("VERISPRING_API_KEY", "")
     if not key:
         raise RuntimeError("deep-query 需要 VERISPRING_API_KEY（LLM=verispring deepseek-flash）")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
-        resp = await c.post(
-            DEEPQUERY_LLM_URL,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            # deepseek-flash 接受 thinking disabled；GLM-5.x 会报错——换模型需移除
-            json={"model": DEEPQUERY_LLM_MODEL, "max_tokens": max_tokens, "messages": messages,
-                  "thinking": {"type": "disabled"}},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    msg = data.get("choices", [{}])[0].get("message", {})
-    return msg.get("content") or msg.get("reasoning_content") or ""
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
+                resp = await c.post(
+                    DEEPQUERY_LLM_URL,
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    # deepseek-flash 接受 thinking disabled；GLM-5.x 会报错——换模型需移除
+                    json={"model": DEEPQUERY_LLM_MODEL, "max_tokens": max_tokens, "messages": messages,
+                          "thinking": {"type": "disabled"}},
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            msg = data.get("choices", [{}])[0].get("message", {})
+            return msg.get("content") or msg.get("reasoning_content") or ""
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt < 2:
+                await _asyncio.sleep(2 * (attempt + 1))
+    raise last_exc if last_exc else RuntimeError("LLM 调用失败")
 
 
 def _parse_json(text: str) -> dict | list:
@@ -201,9 +230,8 @@ def deep_query(question: str, max_rounds: int, json_output: bool):
     if not os.environ.get("VERISPRING_API_KEY", ""):
         raise click.ClickException("deep-query 需要 VERISPRING_API_KEY（LLM=verispring deepseek-flash）")
 
-    mg = _mg(repo)
-
     async def _run():
+        mg = _mg(repo)
         result = await mg.query(question, top_k=10, depth=1)
         accumulated = result.context or ""
         rounds_detail = [{"round": 0, "query": question,
@@ -231,7 +259,8 @@ def deep_query(question: str, max_rounds: int, json_output: bool):
                     rounds_detail[0]["covered"] = True
                 break
             async def _run_query(q: str):
-                return q, await mg.query(q, top_k=5, depth=1)
+                sub_mg = _mg(repo)
+                return q, await sub_mg.query(q, top_k=5, depth=1)
             results = await asyncio.gather(*[_run_query(q) for q in follow_ups[:3]], return_exceptions=True)
             for q, fr in (r for r in results if isinstance(r, tuple)):
                 if fr.context:
@@ -246,7 +275,7 @@ def deep_query(question: str, max_rounds: int, json_output: bool):
                 "covered": covered, "missing": parsed.get("missing", []) if isinstance(parsed, dict) else [],
                 "coverage_ratio": round(coverage, 3), "llm_analysis": parsed if isinstance(parsed, dict) else {}}, training
 
-    payload, training = asyncio.run(_run())
+    payload, training = _with_retry(lambda: _run())
     try:
         (repo / MANON_DIR / "deep-query-last.json").write_text(
             json.dumps({"question": question, "timestamp": time.time(),
@@ -388,7 +417,7 @@ def sync(full: bool, json_output: bool):
         finally:
             await embedder.close()
 
-    asyncio.run(_embed_and_add())
+    _with_retry(lambda: _embed_and_add())
     vectors_mode = "embedded"
 
     _save_chunks(kg_path, all_chunks)
@@ -449,7 +478,7 @@ def query(text: str, top_k: int, depth: int, json_output: bool):
         finally:
             await embedder.close()
 
-    result = asyncio.run(_do())
+    result = _with_retry(lambda: _do())
 
     if json_output:
         click.echo(json.dumps({
