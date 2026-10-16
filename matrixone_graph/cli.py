@@ -28,10 +28,10 @@ from rich.console import Console
 console = Console()
 DEFAULT_EMBEDDING_URL = "http://localhost:8080"
 
-# 本地索引：项目级 .manon/ 目录 + 硬编码 embedding 供应商
+# 本地索引：项目级 .manon/ 目录 + embedding 供应商（环境变量可覆盖，默认硅基流动 bge-m3）
 MANON_DIR = ".manon"
-EMBED_URL = "https://api.siliconflow.cn/v1"
-EMBED_MODEL = "BAAI/bge-m3"
+EMBED_URL = os.environ.get("MANON_EMBEDDING_URL", "https://api.siliconflow.cn/v1")
+EMBED_MODEL = os.environ.get("MANON_EMBEDDING_MODEL", "BAAI/bge-m3")
 
 
 def _get_embedding_url(url: str | None) -> str:
@@ -134,9 +134,11 @@ def _with_retry(coro_factory, attempts: int = 4):
     return asyncio.run(_run())
 
 
-# ── deep-query：LLM 引导的多轮图谱问答（移植自 saas/services/query.py，LLM 硬编码 verispring deepseek-flash）──
-DEEPQUERY_LLM_URL = "https://api.verispring.cn/v1/chat/completions"
-DEEPQUERY_LLM_MODEL = "deepseek-flash"
+# ── deep-query：LLM 引导的多轮图谱问答（移植自 saas/services/query.py）──
+# LLM 端点/模型/密钥经环境变量覆盖，默认 verispring deepseek-flash：
+#   MANON_DEEPQUERY_LLM_URL / MANON_DEEPQUERY_LLM_MODEL / MANON_DEEPQUERY_API_KEY（缺省回退 VERISPRING_API_KEY）
+DEEPQUERY_LLM_URL = os.environ.get("MANON_DEEPQUERY_LLM_URL", "https://api.verispring.cn/v1/chat/completions")
+DEEPQUERY_LLM_MODEL = os.environ.get("MANON_DEEPQUERY_LLM_MODEL", "deepseek-flash")
 
 _DEEPQUERY_SYSTEM = """You are a code-graph query planner.
 Return JSON with:
@@ -155,19 +157,21 @@ async def _llm_chat(messages: list[dict], *, max_tokens: int = 4096, timeout: fl
     import asyncio as _asyncio
     import httpx
 
-    key = os.environ.get("VERISPRING_API_KEY", "")
+    key = os.environ.get("MANON_DEEPQUERY_API_KEY", "") or os.environ.get("VERISPRING_API_KEY", "")
     if not key:
-        raise RuntimeError("deep-query 需要 VERISPRING_API_KEY（LLM=verispring deepseek-flash）")
+        raise RuntimeError("deep-query 需要 MANON_DEEPQUERY_API_KEY（或回退的 VERISPRING_API_KEY）")
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
+                payload = {"model": DEEPQUERY_LLM_MODEL, "max_tokens": max_tokens, "messages": messages}
+                # thinking disabled 仅 deepseek 系模型接受；其它模型（GLM-5.x 等）省略该字段
+                if "deepseek" in DEEPQUERY_LLM_MODEL.lower():
+                    payload["thinking"] = {"type": "disabled"}
                 resp = await c.post(
                     DEEPQUERY_LLM_URL,
                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    # deepseek-flash 接受 thinking disabled；GLM-5.x 会报错——换模型需移除
-                    json={"model": DEEPQUERY_LLM_MODEL, "max_tokens": max_tokens, "messages": messages,
-                          "thinking": {"type": "disabled"}},
+                    json=payload,
                 )
             resp.raise_for_status()
             data = resp.json()
