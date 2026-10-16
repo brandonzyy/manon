@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
+
+# 按分钟计的限流窗口（硅基流动实测 429/502），秒级退避熬不过：429 优先照服务端
+# Retry-After 等，没给就 20s 起步翻倍，封顶 120s。
+_TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 6
+_PACE_SECONDS = 0.3
+
+
+def _wait_seconds(retry_after: str | None, attempt: int) -> float:
+    if retry_after:
+        try:
+            return min(120.0, float(retry_after))
+        except ValueError:
+            pass
+    return min(120.0, 20.0 * (2 ** attempt))
 
 
 class EmbeddingClient:
@@ -38,6 +55,8 @@ class EmbeddingClient:
         all_vecs: list[list[float]] = []
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
+            if all_vecs:
+                await asyncio.sleep(_PACE_SECONDS)
             vecs = await self._post_batch(batch)
             all_vecs.extend(vecs)
         return all_vecs
@@ -47,10 +66,25 @@ class EmbeddingClient:
         return vecs[0]
 
     async def _post_batch(self, texts: list[str]) -> list[list[float]]:
-        client = await self._get_client()
-        if self.model:
-            return await self._post_openai(client, texts)
-        return await self._post_tei(client, texts)
+        """单批请求：连接类失败与瞬态 HTTP（429/5xx）批内退避重试，已成功的批次不重做。"""
+        last: Exception | None = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                client = await self._get_client()
+                if self.model:
+                    return await self._post_openai(client, texts)
+                return await self._post_tei(client, texts)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _TRANSIENT_STATUS:
+                    raise
+                last = exc
+                wait = _wait_seconds(exc.response.headers.get("retry-after"), attempt)
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadTimeout) as exc:
+                last = exc
+                wait = float(2 ** attempt)
+            if attempt < _MAX_ATTEMPTS - 1:
+                await asyncio.sleep(wait)
+        raise last if last else RuntimeError("embed: retry exhausted")
 
     async def _post_openai(self, client: httpx.AsyncClient, texts: list[str]) -> list[list[float]]:
         """OpenAI-compatible /embeddings endpoint (GLM, OpenAI, etc.)."""
