@@ -2,388 +2,56 @@
 
 # Manon
 
-### 代码库的 AI 架构师
+### 代码库的本地知识图谱
 
-**知识图谱引擎 + 开发技能体系 — 从需求到上线，每一步都基于代码事实。**
+**纯本地的代码知识图谱引擎——解析、增量索引、语义查询、影响分析。无服务器、无数据库服务。**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
-[![MCP Compatible](https://img.shields.io/badge/MCP-compatible-6366f1)](https://modelcontextprotocol.io)
-[![License: BSL-1.1](https://img.shields.io/badge/license-BSL--1.1-orange)](LICENSE)
-
-[快速开始](#-快速开始) · [技能体系](#-技能体系) · [知识图谱](#-知识图谱) · [查询工具](#-查询工具) · [MCP 工具](#-mcp-工具)
-
-[English](README.md)
+[![gates](https://github.com/brandonzyy/manon/actions/workflows/ci.yml/badge.svg)](./.github/workflows/ci.yml)
+License: BSL-1.1
 
 </div>
 
----
+## 它做什么
 
-## ❓ 问题
-
-AI 编程有两个结构性缺陷：
-
-| 缺陷 | 表现 | 后果 |
-|------|------|------|
-| **上下文不足** | 模型看不到调用图、依赖链、模块边界 | **幻觉** — 猜关系、漏副作用 |
-| **流程无结构** | 模型不做需求分析就直接写代码 | **失控** — 范围蔓延、没测试、静默回归 |
-
-这两个缺陷会在三个层面产生 19 种具体失败模式：
-
-| 层面 | 问题 | 典型表现 |
-|------|------|---------|
-| **架构层** | 在看不到全局的情况下做结构决策 | 不必要的抽象层、过度模块化、过早泛化、配置/事件系统过度设计 |
-| **模块层** | 在不了解依赖关系的情况下划分边界 | 单模块功能膨胀、职责不清、跨模块重复、耦合过重 |
-| **代码层** | 在不知道谁调用谁的情况下改代码 | 死代码残留、引入循环依赖、函数拆得过碎、内聚度低 |
-
-对 AI 编程来说，这些问题比人类开发者更严重：
-- **AI 感知不到架构意图** — 它局部优化，写出技术正确但违反系统设计的代码
-- **AI 生成速度远快于验证** — 没有图谱验证，坏模式以机器速度扩散
-- **每次 AI 会话都是从零开始** — 不记得过去的决策，相同的结构性错误在多次对话中反复出现
-
-模型越强，这两个问题越严重 — 强模型 + 差上下文 + 无流程 = 自信地输出垃圾，而且更快。
-
-## 💡 方案
-
-Manon 提供两层能力：
-
-**第一层 — 知识图谱**（基础设施）
-索引每个函数、类、调用关系、导入链和模块边界。向量 + 图混合搜索。模型需要上下文时，精确获取相关代码 — 不多不少。
-
-**第二层 — 开发技能**（工作流）
-两个技能。`/manon` 为项目激活知识图谱；`/assurance` 是工程保障体系的唯一入口 —— 先按读数给项目打分，再分诊到对应循环：补齐工具栈、覆盖循环、行为层审计、结构简化、退役过期门禁。每个循环都由图谱或确定性脚本支撑，决策基于代码事实而非 LLM 想象。
-
-```
-  /manon（激活）                    /assurance（保障）
-  ┌─────┐                        ┌──────────┐
-  │索引  │──▶ 基于图谱写代码 ──▶ │ 按读数   │──▶ 补齐 · 覆盖 · 行为层审计
-  └─────┘                        │ 分诊     │    结构简化 · 退役
-                                 └──────────┘
-```
-
----
-
-## ⚡ 快速开始
-
-### 安装（Claude Code / Codex / ZCode / Kimi Code）
-
-**macOS / Linux**
-```bash
-git clone https://github.com/brandonzyy/manon.git
-cd manon
-bash install.sh
-```
-
-**Windows**
-```cmd
-git clone https://github.com/brandonzyy/manon.git
-cd manon
-install.bat
-```
-
-安装器自动检测编辑器、安装依赖、注册免费账户、配置 MCP + Playwright 并安装所有技能。重启编辑器即可使用。
-
-> **首次使用：** 在 Claude Code 中输入 `/manon` 激活。Manon 会索引项目并进入知识图谱模式。
-
-**官方 SaaS** — 免费、零配置、按区域自动路由，无需搭建服务器。
-
-<details>
-<summary>环境变量（可选）</summary>
-
-| 变量 | 默认值 | 说明 |
-|------|-------|------|
-| `MANON_API_URL` | 自动路由 | 覆盖 API 端点。自托管用 `http://localhost:3700` |
-| `MANON_API_KEY` | 自动生成 | API 密钥（首次使用时自动创建） |
-
-</details>
-
-<details>
-<summary>手动 MCP 配置</summary>
-
-添加到 `~/.claude.json`（Claude Code）或 `~/.kimi-code/mcp.json`（Kimi Code）——两者同为下方 `mcpServers` 结构。ZCode 写 `~/.zcode/cli/config.json`，同一条目嵌在 `mcp.servers` 下；Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.manon]`：
-
-```json
-{
-  "mcpServers": {
-    "manon": {
-      "command": "python",
-      "args": ["/path/to/manon/run_mcp.py"],
-      "env": {}
-    }
-  }
-}
-```
-
-</details>
-
----
-
-## 🎯 技能体系
-
-技能只在纯 LLM 对话无法胜任时才存在 — 需要外部工具集成（图谱 API、覆盖率数据）、确定性流程或结构化输出。如果模型在普通聊天中就能做好，就不需要做成技能。
-
-| 技能 | 角色 | 做什么 |
-|------|------|-------|
-| `/manon` | 激活 | 索引项目、进入图谱模式、装 hooks |
-| `/assurance` | 工程保障 | 唯一入口，按读数分诊：补齐工具栈、覆盖循环、行为层审计、结构简化、退役过期门禁 |
-
-### `/manon` — 激活
-
-每个项目输一次 `/manon`。它会索引代码（目录角色分析决定哪些索引哪些跳过）、以表格呈现索引状态与 8 维代码健康度，并装上强制图谱优先搜索、提交后自动影响分析的 hooks。
-
-### `/assurance` — 工程保障体系
-
-回答「这个项目到底被保护着没有」的唯一入口。先给工具栈打三态分 —— `OK` / `CONFIGURED_NOT_RUN`（配了没跑，**最危险**，它看起来像装了）/ `MISSING` —— 再按读数分诊：
-
-```
-/assurance — 体检 → 分诊 → 五条循环之一：
-             补齐 P1-P6（白捡 → 死面 → CI → 类型 → 覆盖 → 变异，一阶段一个终态）
-             覆盖循环    按 fan-in × 覆盖排未测代码，补能杀死变异体的断言
-             行为层审计  四张契约对账表划范围 → 五类缺陷谱系语义审计
-             结构简化    图谱驱动：19 条原则，A/M 面板 + C 层自动修
-             检查退役    清点执行器/检查器，证明后再删，装棘轮防复发
-```
-
-行为层审计背后的四张确定性对账表（零模型、秒级，也可单独跑进 CI 和 git hook）：
-
-| 表 | 对的是什么账 |
-|---|---|
-| endpoints | 后端声明的路由 ↔ 任何人调用的 URL（跨语言，靠字符串连的边） |
-| configs | 声明的旋钮 ↔ 真正读它的代码（诱饵旋钮 / 只向下游传播的死变量） |
-| states | schema 允许的状态值 ↔ 代码写的和读的（死状态 / 幻想状态） |
-| envelope | 路由入口 → 敏感汇点，中间有没有经过门禁 |
+Manon 用 tree-sitter 把仓库解析成实体/关系图，**存在项目自己的 `.manon/graph/` 里**，
+通过 `manon-kg` CLI 回答代码问题：
 
 ```bash
-python scripts/manon-contract-audit.py <项目路径> --fail-on new --baseline <repo_id>
+# 在项目根目录
+~/manon/manon-kg sync                # 增量索引（SHA256 内容哈希）
+~/manon/manon-kg query "折扣逻辑在哪" -j                     # 语义搜索
+~/manon/manon-kg graph discountFor --direction callers      # 调用关系遍历
+~/manon/manon-kg impact --commit HEAD                       # commit 影响传播
+~/manon/manon-kg deep-query "改了 applyDiscount 会破坏什么？" --max-rounds 2  # LLM 多轮问答
+~/manon/manon-kg health                                     # 8 维健康度评分
 ```
 
-`--fail-on new` 只在**新增**死面时失败，所以接入当天不会把所有人的 push 都挡住。
-
----
-
-## 🔬 知识图谱
-
-### 架构
+## 工作方式
 
 ```
-┌─ 本地端 (manon_mcp) ────────────────┐     ┌─ 云端 (saas) ──────────────────────┐
-│                                      │     │                                      │
-│  IDE (Claude Code / ZCode / ...)     │     │  FastAPI 应用 (saas/main.py)         │
-│       ↕ MCP 协议                     │     │       ↕                              │
-│  manon_mcp/server.py                 │     │  路由层                               │
-│    ├─ tools/   (MCP 工具处理)         │     │    query / indexing / repos / ...    │
-│    ├─ _client  (HTTP → SaaS API)     │     │       ↕                              │
-│    ├─ _sync    (扫描 + 批量上传)      │     │  MatrixoneGraph（门面）               │
-│    └─ _hooks   (git + 编辑器钩子)     │     │    ├─ CodeGraph  (NetworkX 有向图)    │
-│       ↕                              │     │    ├─ VectorIndex (numpy 余弦相似度)  │
-│  core/ast (tree-sitter AST 解析)     │     │    ├─ pipeline   (AST → 图谱)        │
-│  codeindex/ (各语言解析器)            │     │    └─ impact     (commit 影响分析)    │
-│                                      │     │       ↕                              │
-│  ① 扫描文件                           │     │  services/                           │
-│  ② 本地 AST 解析                      │     │    llm.py (deep_query 深度查询)      │
-│  ③ 上传变更文件 ─────────────────────┼────▶│    embedding (向量生成)               │
-│                                      │     │                                      │
-│  ⑤ 查询结果 ◀───────────────────────┼─────┤  ④ 构建图谱 + 向量                    │
-└──────────────────────────────────────┘     └──────────────────────────────────────┘
+codeindex/       — tree-sitter 解析 + 语言探测
+core/            — 增量 AST 同步（SHA256）、契约对账、脚本归属分类
+matrixone_graph/ — 图构建、向量索引、查询管线、CLI（manon-kg）
+skills/          — 开发技能：manon / assurance
 ```
 
-- **代码留在本地** — 只上传 AST 数据，不需要推送到 Git
-- **增量同步** — 文件哈希检测变更，只上传差异部分
-- **混合检索** — 图遍历（结构精确）+ 向量搜索（语义模糊）
+- **增量**：按内容哈希——只有变更文件被重新解析与嵌入，未变更文件走 mtime+size 快路径。
+- **本地优先**：图谱落 `<项目>/.manon/graph/`（JSON 图 + npz 向量）。仅有的网络调用是
+  embedding（硅基流动 `BAAI/bge-m3`，key 走 `MANON_EMBEDDING_API_KEY`）与 deep-query 的
+  LLM（默认 verispring `deepseek-flash`，key 走 `VERISPRING_API_KEY`），全部带指数退避重试。
+- **策展层**：配合编码代理维护的 `.project-map.md` 入口表——地图是任务入口缓存，图谱是符号级真源。
 
-### 代码健康度（8 维度）
+## 安装
 
-| 缩写 | 维度 | 衡量内容 |
-|------|------|---------|
-| MC | 模块耦合度 | 跨模块依赖比例 |
-| CD | 循环依赖 | 循环数量 |
-| FI | 扇入集中度 | 高扇入实体比例 |
-| DC | 死代码 | 零调用者实体比例 |
-| FS | 函数复杂度 | 超大函数比例 |
-| TD | 技术债务 | TODO/FIXME 密度 |
-| MF | 模块碎片化 | 微型模块 + 深路径比例 |
-| RE | 间接层密度 | 桶式重导出比例 |
-
-### 语言支持
-
-**专用解析器**（深度提取 — 符号、调用、导入、继承、路由）：
-Python, TypeScript, JavaScript, Java, PHP
-
-**通用解析器**（符号 + 导入，tree-sitter 自动下载）：
-Go, Rust, C, C++, C#, Ruby, Swift, Kotlin, Scala, Lua, R, Elixir, Dart, Haskell, OCaml, Bash, Zig
-
----
-
-## 📊 效果验证
-
-### 1. 查询智能
-
-图谱查询相比原生工具（Grep/Glob/Read）的提升：
-
-**实际项目基准测试** — OpenClaw 项目，2,100 文件。完整报告：[`docs/MANON_VS_NATIVE_COMPARISON_EN.md`](docs/MANON_VS_NATIVE_COMPARISON_EN.md)
-
-| 维度 | Manon | 原生工具 | 差异 |
-|------|-------|---------|------|
-| **耗时** | ~30 分钟 | ~8-12 小时 | **快 16-24 倍** |
-| **准确率** | 95%+ | 60-70% | **+30%** |
-
-**查询工具基准测试** — 20 个真实查询。完整报告：[`docs/manon-query-tools-evaluation-en.md`](docs/manon-query-tools-evaluation-en.md)
-
-| 指标 | Manon | 原生工具 | 改进 |
-|------|-------|---------|------|
-| 每任务工具调用 | 1 | 13.7 | **减少 91%** |
-| 总 Token 数 | ~19.5K | ~350K | **节省 94%** |
-| 质量评分 | 4.3/5 | 3.2/5 | **+34%** |
-
-### 2. 开发生命周期（自举验证）
-
-Manon 用自己的技能开发自己。以下是真实产出数据，不是合成测试。
-
-**结构简化循环（现为 `/assurance` 的一条循环）**
-
-应用于 Manon 自身代码库（93 文件，800+ 实体）：
-
-| 指标 | 之前 | 之后 | 变化 |
-|------|------|------|------|
-| 代码健康度评分 | 88/100 | 97/100 | **+9** |
-| 死代码实体 | 47 | 29 | **-38%** |
-| 测试覆盖率 | 32% | 61% | **+29pp** |
-| 跨模块关系 | 0 | 48 | 从零修复（图谱 bug） |
-
-该循环识别并自动修复了：死函数、过度碎片化的模块、桶式重导出、循环依赖，并合并了 4 个冗余文件 — 全部在提交前通过图谱验证。
-
-### 3. 自增强循环
-
-基于图谱上下文写代码（hooks 强制图谱优先）→ `/assurance` 在有嫌疑的面上做行为层审计、给 fan-in 最高的代码补覆盖、简化结构、退役不再证明任何东西的门禁 → 发现的问题进入下一轮循环。Manon v1.0→v1.2.4 完全通过这个循环开发；v1.5 起全部收拢到单一入口。
-
----
-
-## 🔍 查询工具
-
-### `search` — 语义代码搜索
-
-将自然语言转为向量嵌入，检索最相关实体，沿图谱边展开。解决"不知道关键词"的问题。
-
-### `graph` — 调用图遍历
-
-方向性遍历（调用者/被调用者/双向），可配置深度。解决"改这个函数会不会影响别的"问题。
-
-### `deep_query` — 多轮深度查询
-
-服务端 LLM 迭代查询。自动识别信息缺口并补充。一次调用覆盖跨模块架构问题。
-
-### `impact` — Commit 影响分析
-
-解析 diff → 提取变更符号 → 沿调用边追踪 2 跳 → 计算风险评分（0-100）。即时 CI/CD 门控。
-
-<details>
-<summary>工具选择指南</summary>
-
-```
-你需要什么？
-├── 找代码（不知道关键词）    → search
-├── 找代码（知道关键词）      → Grep
-├── 追踪调用关系             → graph
-├── 跨模块架构理解           → deep_query
-├── 评估 commit 风险         → impact
-├── 修改代码前               → search + graph
-└── 简单文件查找             → Glob
+```bash
+git clone https://github.com/brandonzyy/manon.git ~/manon
+cd ~/manon && ./install.sh          # venv + 依赖 + manon-kg 包装器
+export MANON_EMBEDDING_API_KEY=sk-...   # 硅基流动
+cd <你的项目> && ~/manon/manon-kg sync && ~/manon/manon-kg status
 ```
 
-</details>
+要求 Python 3.10+。架构与门禁见 [CLAUDE.md](CLAUDE.md)。
 
----
+## 许可
 
-## 🛠️ MCP 工具
-
-> **暴露面**：默认只注册核心工具 `search` / `graph` / `deep_query` / `impact` / `code_health` / `init` / `repos_list`；其余管理类工具需在 MCP env 设 `MANON_PROFILE=full`，或用 `MANON_TOOLS=<逗号分隔短名>` 精确挑选。
-
-| 类别 | 工具 | 说明 |
-|------|------|------|
-| **仓库** | `init` | 自动检测并注册项目 |
-| | `repos_list` | 列出仓库和索引状态 |
-| | `repos_create/get/delete` | 增删查操作 |
-| **索引** | `index_status` | 查看索引进度 |
-| | `manon_push_update` | 增量同步 |
-| **查询** | `search` | 语义代码搜索 |
-| | `graph` | 调用图遍历 |
-| | `impact` | Commit 影响分析 |
-| | `deep_query` | 多轮深度查询 |
-| | `code_health` | 8 维度健康评分 |
-| **自动化** | `setup_hooks` | 安装 git pre-push 钩子 |
-| **工具** | `config/account/usage` | 配置和账户信息 |
-
-### 自动化（Hooks）
-
-| 钩子 | 触发时机 | 作用 |
-|------|---------|------|
-| **git pre-push** | `git push` 后 | 自动更新图谱 + 输出健康度变化 |
-| **PreToolUse** | Grep/Glob/Agent 前 | 提醒先查图谱 |
-| **PostToolUse** | `git commit` 后 | 触发 `impact` 分析 |
-
----
-
-## ⚙️ 配置
-
-所有配置存储在 `~/.manon/config.json`，自动创建。
-
-| 配置项 | 默认值 | 说明 |
-|--------|-------|------|
-| `api_key` | 自动生成 | 免费密钥 |
-| `api_url` | 按区域路由 | 服务端点 |
-| `projects` | `{}` | 本地项目注册表 |
-
-通过 `MANON_API_KEY`、`MANON_API_URL` 环境变量覆盖。
-
-> **自托管：** 设置 `MANON_API_URL=http://localhost:3700`。参见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
-
----
-
-## 📋 版本历史
-
-| 版本 | 日期 | 摘要 |
-|------|------|------|
-| **v1.6.2** | 2026-08-27 | 安装器新增 ZCode + Kimi Code，平台收拢为 Claude Code / Codex / ZCode / Kimi Code（移除 Cursor / Windsurf / Zed / Continue / CodeBuddy / OpenCode）；修复 `~/.codex` 缺失时安装中断 |
-| **v1.6.1** | 2026-08-27 | /assurance 补齐第六件：依赖审计 + 密钥扫描；检查器两副本判据对齐 |
-| **v1.6.0** | 2026-08-27 | 技能整合：/dao /audit /retire-checks 并入 /assurance；/experience /idea 退役；只留两个技能（/manon + /assurance） |
-| **v1.5.1** | 2026-08-26 | 补上 /retire-checks（1.5.0 漏装）；check_skills.py 门禁（装块覆盖 + 交叉引用两条不变量） |
-| **v1.5.0** | 2026-08-26 | /assurance 技能（三态体检、分诊入口）；/tc 退役并入 P5 覆盖循环；dao/audit 的 SKILL.md 压进 100 行 + references/ |
-| **v1.4.3** | 2026-08-24 | 契约对账 schema 生命周期 + 写入越界判据；测试 38→55；CaseOS 死面 21→15 |
-| **v1.4.2** | 2026-08-24 | 契约对账策略文件不再把自己算成证据（豁免清单曾把整表清零）；测试 31→37 |
-| **v1.4.1** | 2026-08-24 | 修掉契约对账四类假阳性（同文件调用方、同模块常量、MIME 当状态、列 DEFAULT 值） |
-| **v1.4.0** | 2026-08-24 | 契约对账：四张对账表、MCP 工具、零模型 CLI、/audit 技能、.manon-contract.yaml；跳过 venv 后缀目录（18.5s→1.2s） |
-| **v1.2.4** | 2026-03-22 | `/idea` + `/exp` 技能；HANDLES 边类型；Playwright MCP 自动配置；完整技能生态 |
-| **v1.2.3** | 2026-03-22 | `/tc` 技能；健康维度 MF/RE；`_resolve()` repo_id 容错；dao 代码简化；发布工具 |
-| **v1.2.2** | 2026-03-21 | Bug 修复：install.sh 崩溃、Windows MANON_DIR、幻影节点；TS/JS 覆盖率；扫描加速 |
-| **v1.2.1** | 2026-03-20 | 知识图谱质量升级：幻影节点修复、跨模块边恢复、类型推断；关系 +74%；健康度 97/100 |
-| **v1.2.0** | 2026-03-19 | 脚本分类器；LLM 分类端点；+115 测试；健康度 94/100 |
-| **v1.1.2** | 2026-03-19 | 通过 `/dao` 大规模清理：死代码移除，测试覆盖率 32%→61% |
-| **v1.1.0** | 2026-03-18 | `/dao` 技能集成；MCP 工具整合 |
-| **v1.0.0** | 2026-03-16 | 架构简化；完整测试套件 |
-| **v0.2.0** | 2026-02-23 | 首个开源版本 |
-
----
-
-## 📋 环境要求
-
-- Python 3.10+（Windows 上通过 `winget` 自动安装）
-- MCP 客户端：Claude Code、Codex、ZCode 或 Kimi Code
-- 网络连接
-
-## 🏗️ 自托管
-
-参见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)：Ollama 本地部署、OpenAI 兼容 LLM 配置、多用户设置。
-
-## 🤝 贡献
-
-参见 [`CONTRIBUTING.md`](CONTRIBUTING.md) 了解开发环境设置和贡献指南。
-
-## 💬 社区与支持
-
-- **Issues**：[报告 Bug 或提交需求](https://github.com/brandonzyy/manon/issues)
-- **Discussions**：[提问或分享想法](https://github.com/brandonzyy/manon/discussions)
-
-## 📄 许可证
-
-MIT 协议 — 详见 [LICENSE](LICENSE)。
-
-Copyright (c) 2026 一码行云（杭州）信息科技有限公司
+BSL-1.1。

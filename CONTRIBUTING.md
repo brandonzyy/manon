@@ -16,8 +16,6 @@ python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
 # Install dependencies
-pip install -r manon_mcp/requirements.txt
-pip install -r saas/requirements.txt
 
 # Install in development mode
 pip install -e .
@@ -26,8 +24,6 @@ pip install -e .
 ## Project Structure
 
 ```
-manon_mcp/  - MCP server (IDE integration)
-saas/       - Backend API server
 core/       - Core utilities
 web/        - Web interface (optional)
 docs/       - Documentation
@@ -56,8 +52,6 @@ git checkout -b fix/bug-description
 # Test MCP tools
 python run_mcp.py
 
-# Test SaaS backend
-python -m saas.main
 ```
 
 ### 4. Commit Messages

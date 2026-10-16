@@ -154,7 +154,7 @@ class ScriptClassifier:
         """
         Args:
             project_packages: Top-level package names in this project.
-                Python: dirs with __init__.py (e.g. ['core', 'manon_mcp']).
+                Python: dirs with __init__.py (e.g. ['core', 'matrixone_graph']).
                 TS/JS:  dirs with package.json or standard source dirs.
         """
         self.project_packages = set(project_packages)

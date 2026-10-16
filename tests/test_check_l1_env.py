@@ -50,7 +50,7 @@ class TestSentinelsNameRealProductDeps:
 
     @pytest.mark.parametrize("dist", [d for _m, d in check_l1.PRODUCT_ONLY])
     def test_declared_in_product_requirements(self, dist: str) -> None:
-        text = _requirements("requirements.txt", "manon_mcp/requirements.txt")
+        text = _requirements("requirements.txt")
         assert dist.lower() in text, f"{dist} 不在产品依赖表里，它不能当哨兵"
 
     @pytest.mark.parametrize("dist", [d for _m, d in check_l1.PRODUCT_ONLY])

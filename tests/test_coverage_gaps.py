@@ -142,21 +142,6 @@ class TestConfigLoad:
 
 # ── manon_mcp/tools/__init__.py gap ─────────────────────────────────────────
 
-class TestRegisterAllTools:
-    def test_register_all_tools_calls_all(self):
-        from manon_mcp.tools import register_all_tools
-        from manon_mcp.tools.deps import ToolDependencies
-
-        # Create mock MCP and deps
-        mock_mcp = MagicMock()
-        mock_mcp.tool = MagicMock(return_value=lambda f: f)
-
-        mock_deps = MagicMock()  # plain mock so all attribute access auto-creates
-
-        # Should not raise
-        register_all_tools(mock_mcp, mock_deps)
-
-
 # ── codeindex/parser.py gaps ─────────────────────────────────────────────────
 
 class TestCallFromDict:

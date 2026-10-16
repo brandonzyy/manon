@@ -530,3 +530,41 @@
 ## [0.2.0] - 2026-02-23
 
 Initial release with MCP integration and knowledge graph support.
+
+## [2.0.0] - 2026-10-16
+
+### Removed（破坏性：MCP 与 SaaS 全面退役，纯本地架构）
+- **`manon_mcp/` 整体删除**：MCP stdio 服务、工具注册、钩子、安装配置写入全部退役；消费方已迁移到 `manon-kg` CLI（v1.7.x）。
+- **`saas/` 整体删除**：自建后端（:3700）、租户/配额/计费、admin CLI、R760 部署脚本（deploy-r760.py，gitignore 未跟踪文件另从盘上清除）、docker-compose 死文件。服务端停服与部署清理见运维记录。
+- **测试同步退役**：MCP/saas/e2e 相关 22 个测试文件删除；`tests/test_worktree_repo_reuse.py` 随 MCP init 流程退役（main_worktree 核心逻辑保留在 core/ast/project.py）。
+- **过时文档删除**：ARCHITECTURE（路径已失真）、DEPLOYMENT、查询工具评估两篇、tmp 草稿、install.bat。
+
+### Changed
+- **查询四件全落 `manon-kg` CLI**（v1.7.1 完成，本版成体系）：sync/query/deep-query/graph/impact/health/status/clear。
+- **requirements 收敛为本地集**：移除 fastapi/uvicorn/websockets/pydantic-settings/aiosqlite/mcp/questionary 之外多余项；单文件依赖清单（manon_mcp/requirements.txt 已删）。
+- **CI**：覆盖率与依赖安装去掉 manon_mcp；L1 baselines regenerate（lint 73 / typing 20 / dead 6 / contract 24 / deps 0）。
+- **check_skills**：INSTALLERS 移除 install.bat；skills 安装改为 `install.sh --install-skills`（可选，装到 ~/.agents/skills）。
+- **文档重写**：README/README_CN/CLAUDE.md 纯本地定位；manon skill 改 CLI 用法。
+
+## [1.7.1] - 2026-10-15
+
+### Added
+- **`kg deep-query`：LLM 引导的多轮图谱问答**。首查图谱攒上下文，LLM 逐轮提出 follow-up 查询（每轮 ≤3 个并发）并累积分析；LLM 硬编码 verispring deepseek-flash（key 经 `VERISPRING_API_KEY`），训练日志落 `<项目>/.manon/deep-query-last.json`。回归：`tests/test_kg_sync.py::test_deep_query_*`（LLM 桩两轮链路 + 缺 key 拒绝）。
+- **`kg graph` / `kg impact` / `kg health`**：符号调用关系遍历（callers/callees/both × 跳数）、commit 级影响传播、8 维健康度——查询四件 search/deep_query/graph/impact 全部落 CLI。
+
+### Changed
+- **embedding key 成为硬要求，词法兜底删除**：无 `MANON_EMBEDDING_API_KEY` 时 `kg sync/query` 直接拒绝（向量为语义查询必需）；deep-query 同步前置校验向量与 LLM key。回归：缺 key 拒绝两例。
+
+## [1.7.0] - 2026-10-15
+
+### Added
+- **`kg sync`：项目本地增量索引**。`manon-kg sync` 在项目根把增量图谱落进 `<项目>/.manon/graph/`（graph.json/vectors/chunks/meta），增量判定沿用 `core/ast/scanner` 的 SHA256 内容哈希（mtime+size 快路径），按文件替换实体/边/chunks 并做 stale reconcile 与 phantom 清理。回归：`tests/test_kg_sync.py`（建图/幂等/新符号/删除清理/全量重建五例）。
+- **`manon-kg` CLI 入口**：任意 cwd 可用的包装脚本（PYTHONPATH 注入仓根 + venv 解释器），cli.py 补 `__main__` 守卫——此前 `-m` 执行静默无操作。
+- **scout 维护约定**：常驻测绘兵每个任务后 `kg sync`，定位查询用 `kg query`；写入 `.project-map.md` 的入口表与图谱互为两层（map=任务入口缓存，图谱=符号级真源）。
+
+### Changed
+- **embedding 硬编码硅基流动 BAAI/bge-m3**（`MANON_EMBEDDING_API_KEY` 只注入 key）；key 缺失时跳过向量并以词法兜底（实体限定名/chunk 词重叠评分 + depth 跳数邻域），`kg query/status` 读 `.manon/graph` 而非 `.codeindex/kg`。
+- **cli.py 不再依赖 saas**：`kg sync` 所需的 parse 重建/reexport 重定向从 `saas/routers/indexing.py` 移植为本地纯实现；`prune_phantoms`/reconcile 对齐 saas `_load_and_process_batch` 语义。
+
+### Fixed
+- `python -m matrixone_graph.cli` 此前无 `__main__` 守卫，静默无操作。
