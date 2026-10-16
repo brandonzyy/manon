@@ -105,7 +105,10 @@ def kg():
     pass
 
 
-# ── 网络重试：连接类失败（ConnectError/RemoteProtocolError/ReadTimeout）按 2s/4s 退避重试 ──
+# ── 网络重试：连接类失败与瞬态 HTTP（429/5xx，嵌入服务限流最常见）按 2s/4s 退避重试 ──
+_TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
 def _with_retry(coro_factory, attempts: int = 4):
     """coro_factory 每次尝试调用时返回新协程（内部自建连接与客户端）。"""
     import asyncio as _asyncio
@@ -117,6 +120,12 @@ def _with_retry(coro_factory, attempts: int = 4):
             try:
                 return await coro_factory()
             except (_httpx.ConnectError, _httpx.RemoteProtocolError, _httpx.ReadTimeout) as exc:
+                last = exc
+                if i < attempts - 1:
+                    await _asyncio.sleep(2 ** i * 2)
+            except _httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _TRANSIENT_STATUS:
+                    raise
                 last = exc
                 if i < attempts - 1:
                     await _asyncio.sleep(2 ** i * 2)
@@ -142,7 +151,7 @@ If the current context is already enough, return an empty queries list.
 
 
 async def _llm_chat(messages: list[dict], *, max_tokens: int = 4096, timeout: float = 120.0) -> str:
-    """Chat completion → content 字符串（OpenAI 兼容）。key 经 VERISPRING_API_KEY 注入。连接类失败重试 3 次。"""
+    """Chat completion → content 字符串（OpenAI 兼容）。key 经 VERISPRING_API_KEY 注入。连接类与瞬态 HTTP（429/5xx）失败重试 3 次。"""
     import asyncio as _asyncio
     import httpx
 
@@ -165,6 +174,12 @@ async def _llm_chat(messages: list[dict], *, max_tokens: int = 4096, timeout: fl
             msg = data.get("choices", [{}])[0].get("message", {})
             return msg.get("content") or msg.get("reasoning_content") or ""
         except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt < 2:
+                await _asyncio.sleep(2 * (attempt + 1))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in _TRANSIENT_STATUS:
+                raise
             last_exc = exc
             if attempt < 2:
                 await _asyncio.sleep(2 * (attempt + 1))
